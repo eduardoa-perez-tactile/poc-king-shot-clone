@@ -3,6 +3,7 @@ export type UnitType = 'infantry' | 'archer' | 'cavalry'
 export interface UnitDef {
   type: UnitType
   name: string
+  description: string
   baseCost: number
   squadSize: number
   stats: {
@@ -18,6 +19,7 @@ export const UNIT_DEFS: Record<UnitType, UnitDef> = {
   infantry: {
     type: 'infantry',
     name: 'Infantry',
+    description: 'Frontline melee squads that soak damage and hold ground.',
     baseCost: 20,
     squadSize: 10,
     stats: {
@@ -31,6 +33,7 @@ export const UNIT_DEFS: Record<UnitType, UnitDef> = {
   archer: {
     type: 'archer',
     name: 'Archers',
+    description: 'Ranged squads that punish from afar but crumble in close quarters.',
     baseCost: 25,
     squadSize: 8,
     stats: {
@@ -44,6 +47,7 @@ export const UNIT_DEFS: Record<UnitType, UnitDef> = {
   cavalry: {
     type: 'cavalry',
     name: 'Cavalry',
+    description: 'Fast shock troops that flank quickly and hit hard.',
     baseCost: 30,
     squadSize: 6,
     stats: {

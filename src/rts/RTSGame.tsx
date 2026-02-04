@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { createGridForCombat, createSimState, buildCombatResult, issueOrder, stepSim } from './sim'
 import { renderScene, screenToWorld, clampCamera, Camera } from './render'
 import { CombatDefinition, CombatResult, EntityState, Order, SimState, Vec2 } from './types'
+import { UNIT_DEFS } from '../config/units'
 import { Grid } from './pathfinding'
 import { RunState } from '../run/types'
 
@@ -30,6 +31,7 @@ export const RTSGame: React.FC<{
   const [sim, setSim] = useState<SimState>(() => createSimState(combat, run))
   const simRef = useRef(sim)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [inspectedId, setInspectedId] = useState<string | null>(null)
   const [dragBox, setDragBox] = useState<{ start: Vec2; end: Vec2 } | null>(null)
   const [paused, setPaused] = useState(false)
   const [commandMode, setCommandMode] = useState<'move' | 'attackMove'>('move')
@@ -117,7 +119,7 @@ export const RTSGame: React.FC<{
       if (clamped.x !== camera.x || clamped.y !== camera.y) {
         setCamera(clamped)
       }
-      renderScene(ctx, simRef.current, clamped, selectedIds, gridRef.current)
+      renderScene(ctx, simRef.current, clamped, selectedIds, gridRef.current, inspectedId)
 
       if (dragBox) {
         ctx.strokeStyle = '#38bdf8'
@@ -134,7 +136,7 @@ export const RTSGame: React.FC<{
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
-  }, [paused, dragBox, camera, combat.map.height, combat.map.width, onComplete, selectedIds])
+  }, [paused, dragBox, camera, combat.map.height, combat.map.width, onComplete, selectedIds, inspectedId])
 
   const handleMouseDown = (event: React.MouseEvent<HTMLCanvasElement>) => {
     if (event.button !== 0) return
@@ -161,8 +163,20 @@ export const RTSGame: React.FC<{
 
     if (dx < 6 && dy < 6) {
       const world = screenToWorld({ x: end.x, y: end.y }, camera)
-      const target = getEntityAt(simRef.current.entities, world, 'player')
-      setSelectedIds(target ? [target.id] : [])
+      const playerTarget = getEntityAt(simRef.current.entities, world, 'player')
+      const enemyTarget = getEntityAt(simRef.current.entities, world, 'enemy')
+
+      if (playerTarget) {
+        setSelectedIds([playerTarget.id])
+      } else if (enemyTarget) {
+        setInspectedId(enemyTarget.id)
+      } else if (selectedIds.length > 0) {
+        const orderType = commandMode === 'attackMove' ? 'attackMove' : 'move'
+        issueToSelected({ type: orderType, targetPos: world })
+        setCommandMode('move')
+      } else {
+        setSelectedIds([])
+      }
     } else {
       const minX = Math.min(start.x, end.x)
       const maxX = Math.max(start.x, end.x)
@@ -190,6 +204,7 @@ export const RTSGame: React.FC<{
 
     const enemy = getEntityAt(simRef.current.entities, world, 'enemy')
     if (enemy) {
+      setInspectedId(enemy.id)
       issueToSelected({ type: 'attack', targetId: enemy.id, targetPos: { ...enemy.pos } })
     } else {
       const orderType = commandMode === 'attackMove' ? 'attackMove' : 'move'
@@ -207,9 +222,12 @@ export const RTSGame: React.FC<{
   }
 
   const selectedEntity = sim.entities.find((entity) => entity.id === selectedIds[0])
+  const inspectedEntity = sim.entities.find((entity) => entity.id === inspectedId && entity.team === 'enemy')
   const enemiesRemaining = sim.entities.filter((entity) => entity.team === 'enemy').length
   const hq = sim.entities.find((entity) => entity.kind === 'hq')
   const hqHp = hq ? `${Math.round(hq.hp)}/${Math.round(hq.maxHp)}` : '0'
+  const selectedInfo = selectedEntity && selectedEntity.kind !== 'hq' ? UNIT_DEFS[selectedEntity.kind] : null
+  const inspectedInfo = inspectedEntity && inspectedEntity.kind !== 'hq' ? UNIT_DEFS[inspectedEntity.kind] : null
 
   return (
     <div className="rts">
@@ -235,15 +253,28 @@ export const RTSGame: React.FC<{
           <h4>Selected</h4>
           {selectedEntity ? (
             <div>
-              <div>Type: {selectedEntity.kind}</div>
+              <div>Type: {selectedInfo ? selectedInfo.name : 'HQ'}</div>
+              {selectedInfo && <div className="muted">{selectedInfo.description}</div>}
               <div>HP: {Math.round(selectedEntity.hp)}/{Math.round(selectedEntity.maxHp)}</div>
               <div>Order: {selectedEntity.order.type}</div>
             </div>
           ) : (
             <div className="muted">No unit selected.</div>
           )}
+          <h4>Inspected Enemy</h4>
+          {inspectedEntity ? (
+            <div>
+              <div>Type: {inspectedInfo ? inspectedInfo.name : inspectedEntity.kind}</div>
+              {inspectedEntity.isBoss && <div className="muted">Boss unit</div>}
+              {inspectedInfo && <div className="muted">{inspectedInfo.description}</div>}
+              <div>HP: {Math.round(inspectedEntity.hp)}/{Math.round(inspectedEntity.maxHp)}</div>
+            </div>
+          ) : (
+            <div className="muted">Click an enemy to inspect.</div>
+          )}
           <div className="rts-help">
-            <div className="muted">Hotkeys: A attack-move, S stop, Ctrl+1/2/3 assign group, 1/2/3 recall.</div>
+            <div className="muted">Left-click units to select. Left-click ground to move. Right-click to attack or move.</div>
+            <div className="muted">Click an enemy to inspect. Hotkeys: A attack-move, S stop, Ctrl+1/2/3 assign group, 1/2/3 recall.</div>
           </div>
           <button className="btn" onClick={() => setPaused(true)}>Pause</button>
         </div>
