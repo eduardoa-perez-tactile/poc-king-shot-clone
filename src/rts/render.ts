@@ -31,6 +31,8 @@ const drawPads = (
   pads: BuildingPad[],
   buildings: RunBuilding[],
   hoveredPadId: string | null,
+  selectedPadId: string | null,
+  pulse: number,
   cam: Camera
 ) => {
   const buildingByPad = new Map(buildings.map((building) => [building.padId, building]))
@@ -41,6 +43,7 @@ const drawPads = (
     const h = rect.h * cam.zoom
     const building = buildingByPad.get(pad.id)
     const hovered = hoveredPadId === pad.id
+    const selected = selectedPadId === pad.id
 
     if (building) {
       ctx.fillStyle = '#1f2937'
@@ -52,6 +55,11 @@ const drawPads = (
       ctx.strokeStyle = hovered ? '#38bdf8' : '#334155'
       ctx.lineWidth = hovered ? 3 : 2
       ctx.strokeRect(topLeft.x, topLeft.y, w, h)
+      if (selected) {
+        ctx.strokeStyle = 'rgba(76, 201, 240, 0.9)'
+        ctx.lineWidth = 2.5 * pulse
+        ctx.strokeRect(topLeft.x - 4 * cam.zoom, topLeft.y - 4 * cam.zoom, w + 8 * cam.zoom, h + 8 * cam.zoom)
+      }
 
       ctx.fillStyle = '#e2e8f0'
       ctx.font = `${12 * cam.zoom}px 'Space Mono', monospace`
@@ -77,6 +85,11 @@ const drawPads = (
       ctx.strokeStyle = hovered ? '#38bdf8' : 'rgba(148, 163, 184, 0.6)'
       ctx.lineWidth = hovered ? 2 : 1
       ctx.strokeRect(topLeft.x, topLeft.y, w, h)
+      if (selected) {
+        ctx.strokeStyle = 'rgba(76, 201, 240, 0.9)'
+        ctx.lineWidth = 2.5 * pulse
+        ctx.strokeRect(topLeft.x - 4 * cam.zoom, topLeft.y - 4 * cam.zoom, w + 8 * cam.zoom, h + 8 * cam.zoom)
+      }
       if (hovered) {
         ctx.fillStyle = '#e2e8f0'
         ctx.font = `${12 * cam.zoom}px 'Space Mono', monospace`
@@ -127,6 +140,7 @@ export const renderScene = (
     pads: BuildingPad[]
     buildings: RunBuilding[]
     hoveredPadId: string | null
+    selectedPadId?: string | null
   }
 ) => {
   const width = ctx.canvas.width
@@ -177,7 +191,8 @@ export const renderScene = (
   })
 
   if (overlays) {
-    drawPads(ctx, overlays.pads, overlays.buildings, overlays.hoveredPadId, cam)
+    const pulse = 1 + Math.sin(sim.time * 3) * 0.15
+    drawPads(ctx, overlays.pads, overlays.buildings, overlays.hoveredPadId, overlays.selectedPadId ?? null, pulse, cam)
   }
 
   selection.forEach((id) => {

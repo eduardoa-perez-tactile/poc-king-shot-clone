@@ -1,16 +1,54 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=Space+Grotesk:wght@400;600;700&family=Space+Mono:wght@400;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 :root {
   color-scheme: light;
-  --bg: #0b1220;
-  --panel: #111827;
-  --panel-2: #0f172a;
-  --text: #e2e8f0;
-  --muted: #94a3b8;
-  --accent: #38bdf8;
-  --accent-2: #22c55e;
-  --danger: #ef4444;
-  --border: #1f2937;
+  --color-bg: #0a0f16;
+  --color-surface: #101827;
+  --color-surface-2: #0e1624;
+  --color-text: #e6edf6;
+  --color-muted: #91a2b8;
+  --color-accent: #4cc9f0;
+  --color-danger: #ef4444;
+  --color-success: #22c55e;
+  --border: #1f2a3a;
+
+  --radius-xl: 16px;
+  --radius-2xl: 22px;
+  --radius-3xl: 28px;
+
+  --shadow-soft: 0 14px 38px rgba(2, 6, 23, 0.45);
+  --shadow-lift: 0 12px 22px rgba(2, 6, 23, 0.45), 0 0 0 1px rgba(76, 201, 240, 0.08);
+  --shadow-glow: 0 0 30px rgba(76, 201, 240, 0.3);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+
+  --type-xs: 12px;
+  --type-sm: 14px;
+  --type-md: 16px;
+  --type-lg: 18px;
+  --type-xl: 22px;
+  --type-2xl: 26px;
+  --type-3xl: 32px;
+
+  --bg: var(--color-bg);
+  --panel: var(--color-surface);
+  --panel-2: var(--color-surface-2);
+  --text: var(--color-text);
+  --muted: var(--color-muted);
+  --accent: var(--color-accent);
+  --accent-2: var(--color-success);
+  --danger: var(--color-danger);
 }
 
 * {
@@ -20,8 +58,16 @@
 body {
   margin: 0;
   font-family: 'Space Grotesk', system-ui, sans-serif;
-  background: radial-gradient(circle at top, #111827 0%, #0b1220 60%);
+  background: radial-gradient(circle at top, rgba(23, 37, 84, 0.6), #0a0f16 55%);
   color: var(--text);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 .app {
@@ -723,4 +769,70 @@ select {
   .town-top {
     grid-template-columns: 1fr;
   }
+}
+
+@keyframes battlePulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 rgba(76, 201, 240, 0.4);
+  }
+  50% {
+    transform: scale(1.03);
+    box-shadow: 0 0 28px rgba(76, 201, 240, 0.45);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 rgba(76, 201, 240, 0.4);
+  }
+}
+
+@keyframes battleShine {
+  0% {
+    transform: translateX(-120%);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.7;
+  }
+  100% {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+}
+
+@keyframes toastProgress {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+.battle-glow {
+  animation: battlePulse 2.4s ease-in-out infinite;
+}
+
+.battle-shine::after {
+  content: '';
+  position: absolute;
+  top: -40%;
+  left: 0;
+  width: 60%;
+  height: 180%;
+  background: linear-gradient(120deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  transform: translateX(-120%);
+  animation: battleShine 2.8s ease-in-out infinite;
+}
+
+.toast-progress {
+  transform-origin: left;
+  animation-name: toastProgress;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+.cooldown-overlay {
+  background: conic-gradient(rgba(2, 6, 23, 0.75) calc(var(--cooldown, 0) * 1%), transparent 0);
+  transition: opacity 120ms ease;
 }

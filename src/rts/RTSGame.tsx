@@ -197,7 +197,8 @@ export const RTSGame: React.FC<{
       renderScene(ctx, simRef.current, clamped, selectedIds, gridRef.current, {
         pads: buildingPads,
         buildings,
-        hoveredPadId
+        hoveredPadId,
+        selectedPadId: null
       })
 
       if (dragBox) {
