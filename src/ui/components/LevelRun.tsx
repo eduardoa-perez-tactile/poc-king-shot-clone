@@ -1,11 +1,15 @@
-import React from 'react'
-import { BUILDING_DEFS, BUILDING_LIST } from '../../config/buildings'
+import React, { useEffect, useMemo, useState } from 'react'
+import { BuildingId, BUILDING_DEFS } from '../../config/buildings'
 import { LEVELS } from '../../config/levels'
-import { UNIT_DEFS, UnitType } from '../../config/units'
-import { getIncomeBreakdown, getSquadCap, getAvailableUnitTypes, canAfford } from '../../run/economy'
+import { UNIT_DEFS } from '../../config/units'
+import { getIncomeBreakdown, getSquadCap } from '../../run/economy'
 import { useRunStore } from '../../run/store'
 import { buildCombatDefinition } from '../../rts/combat'
 import { RTSGame } from '../../rts/RTSGame'
+import { BuildPanel } from './BuildPanel'
+import { BuildingPanel } from './BuildingPanel'
+import { DayEndOverlay } from './DayEndOverlay'
+import { Toast, ToastStack } from './ToastStack'
 
 const formatNumber = (value: number) => value.toLocaleString()
 
@@ -20,228 +24,173 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
     resolveCombat,
     startNewDay
   } = useRunStore()
+  const [panel, setPanel] = useState<{ padId: string; mode: 'build' | 'details' } | null>(null)
+  const [toasts, setToasts] = useState<Toast[]>([])
 
   if (!activeRun) return null
   const level = LEVELS.find((entry) => entry.id === activeRun.levelId)
   if (!level) return null
 
-  const income = getIncomeBreakdown(activeRun)
+  const combatDefinition = buildCombatDefinition(activeRun)
   const squadCap = getSquadCap(activeRun)
-  const availableTypes = getAvailableUnitTypes(activeRun)
 
-  const handleBuySquad = (type: UnitType) => {
-    buySquad(type)
+  const buildingByPad = useMemo(() => {
+    return new Map(activeRun.buildings.map((building) => [building.padId, building]))
+  }, [activeRun.buildings])
+
+  const addToast = (toast: Omit<Toast, 'id'>) => {
+    const id = `toast_${Date.now()}_${Math.random()}`
+    setToasts((prev) => [...prev, { ...toast, id }])
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((item) => item.id !== id))
+    }, 2600)
   }
 
-  const combatDefinition = buildCombatDefinition(activeRun)
+  const dismissToast = (id: string) => {
+    setToasts((prev) => prev.filter((item) => item.id !== id))
+  }
+
+  const handlePadClick = (padId: string) => {
+    if (runPhase !== 'build') {
+      addToast({ message: 'Cannot build during combat.' })
+      return
+    }
+    const existing = buildingByPad.get(padId)
+    setPanel({ padId, mode: existing ? 'details' : 'build' })
+  }
+
+  const handleBuild = (padId: string, buildingId: BuildingId) => {
+    const cost = BUILDING_DEFS[buildingId].baseCost
+    if (activeRun.gold < cost) {
+      addToast({ message: 'Not enough gold.' })
+      return
+    }
+    buyBuilding(buildingId, padId)
+    setPanel(null)
+  }
+
+  const handleUpgrade = (padId: string) => {
+    const building = buildingByPad.get(padId)
+    if (!building) return
+    const def = BUILDING_DEFS[building.id]
+    if (building.level >= def.maxLevel) {
+      addToast({ message: 'Building already at max level.' })
+      return
+    }
+    const cost = Math.floor(def.upgradeBase * Math.pow(def.upgradeScale, building.level))
+    if (activeRun.gold < cost) {
+      addToast({ message: 'Not enough gold.' })
+      return
+    }
+    upgradeBuilding(padId)
+    setPanel(null)
+  }
+
+  const handleRecruit = (padId: string) => {
+    const building = buildingByPad.get(padId)
+    if (!building) return
+    const def = BUILDING_DEFS[building.id]
+    if (!def.unlocksUnit) return
+    const unit = UNIT_DEFS[def.unlocksUnit]
+    if (activeRun.unitRoster.length >= squadCap) {
+      addToast({ message: 'Squad cap reached.' })
+      return
+    }
+    if (activeRun.gold < unit.baseCost) {
+      addToast({ message: 'Not enough gold.' })
+      return
+    }
+    buySquad(def.unlocksUnit)
+  }
+
+  useEffect(() => {
+    if (!panel) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPanel(null)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [panel])
+
+  useEffect(() => {
+    if (runPhase !== 'build') {
+      setPanel(null)
+    }
+  }, [runPhase])
+
+  const phaseLabel = runPhase === 'combat' ? 'Combat' : runPhase === 'day_end' ? 'Day End' : 'Build'
+  const dayIncome = activeRun.lastIncome ?? getIncomeBreakdown(activeRun, 0)
+  const activePad = panel ? level.buildingPads.find((pad) => pad.id === panel.padId) ?? null : null
+  const activeBuilding = panel ? buildingByPad.get(panel.padId) ?? null : null
 
   return (
     <div className="level-run">
       <div className="top-bar">
         <div>
           <h2>{level.name}</h2>
-          <div className="muted">Day {activeRun.dayNumber} · Gold {formatNumber(activeRun.gold)}</div>
+          <div className="muted">Day {activeRun.dayNumber} · Gold {formatNumber(activeRun.gold)} · {phaseLabel}</div>
         </div>
         <div className="top-actions">
+          <button className="btn success" onClick={startCombat} disabled={runPhase !== 'build'}>
+            Battle Cry
+          </button>
           <button className="btn ghost" onClick={onExit}>Exit</button>
         </div>
       </div>
 
-      {runPhase === 'combat' && (
-        <div className="combat-wrapper">
-          <div className="goals-panel compact">
-            <h4>Goals</h4>
-            {level.goals.map((goal) => {
-              const value = activeRun.goalsProgress[goal.id]
-              const done = typeof value === 'boolean' ? value : value >= goal.target
-              return (
-                <div key={goal.id} className={`goal-row ${done ? 'done' : ''}`}>
-                  <div>{goal.label}</div>
-                  <div>{typeof value === 'boolean' ? (value ? 'Done' : '—') : `${value}/${goal.target}`}</div>
-                </div>
-              )
-            })}
-          </div>
-          <RTSGame
-            combat={combatDefinition}
-            run={activeRun}
-            onComplete={(result) =>
-              resolveCombat({
-                victory: result.victory,
-                lostSquadIds: result.lostSquadIds,
-                bossDefeated: result.bossDefeated,
-                hqHpPercent: result.hqHpPercent
-              })
-            }
-            onExit={onExit}
+      <div className="map-stage">
+        <RTSGame
+          combat={combatDefinition}
+          run={activeRun}
+          phase={runPhase === 'combat' ? 'combat' : 'build'}
+          buildingPads={level.buildingPads}
+          buildings={activeRun.buildings}
+          onPadClick={handlePadClick}
+          onPadBlocked={() => addToast({ message: 'Cannot build during combat.' })}
+          onComplete={(result) =>
+            resolveCombat({
+              victory: result.victory,
+              lostSquadIds: result.lostSquadIds,
+              bossDefeated: result.bossDefeated,
+              hqHpPercent: result.hqHpPercent
+            })
+          }
+          onExit={onExit}
+        />
+
+        {panel && activePad && panel.mode === 'build' && (
+          <BuildPanel
+            pad={activePad}
+            gold={activeRun.gold}
+            onBuild={(buildingId) => handleBuild(activePad.id, buildingId)}
+            onClose={() => setPanel(null)}
           />
-        </div>
-      )}
+        )}
 
-      {runPhase !== 'combat' && (
-        <div className="build-phase">
-          <div className="build-header">
-            <div>
-              <div className="muted">Build Phase</div>
-              <div className="build-metrics">
-                <div>Expected Income: {formatNumber(income.total)}</div>
-                <div>Squad Cap: {activeRun.unitRoster.length}/{squadCap}</div>
-                <div>Days Survived: {activeRun.daysSurvived}</div>
-              </div>
-            </div>
-            <button
-              className="btn success"
-              onClick={startCombat}
-              disabled={runPhase !== 'build' || activeRun.unitRoster.length === 0}
-            >
-              Battle Cry
-            </button>
-          </div>
+        {panel && activeBuilding && panel.mode === 'details' && (
+          <BuildingPanel
+            building={activeBuilding}
+            gold={activeRun.gold}
+            squadCount={activeRun.unitRoster.length}
+            squadCap={squadCap}
+            onUpgrade={() => handleUpgrade(activeBuilding.padId)}
+            onRecruit={() => handleRecruit(activeBuilding.padId)}
+            onClose={() => setPanel(null)}
+          />
+        )}
 
-          <div className="build-grid">
-            <div className="panel">
-              <h3>Buildings</h3>
-              <div className="list">
-                {BUILDING_LIST.map((building) => {
-                  const owned = activeRun.buildings.find((b) => b.id === building.id)
-                  const cost = owned ? Math.floor(building.upgradeBase * Math.pow(building.upgradeScale, owned.level)) : building.baseCost
-                  const canUpgrade = owned && owned.level < building.maxLevel
-                  const affordable = canAfford(activeRun.gold, cost)
-                  return (
-                    <div key={building.id} className="list-row">
-                      <div>
-                        <div className="list-title">{building.name}{owned ? ` Lv ${owned.level}` : ''}</div>
-                        <div className="muted">{building.description}</div>
-                      </div>
-                      <div className="list-actions">
-                        <div className="muted">Cost {formatNumber(cost)}</div>
-                        {owned ? (
-                          <button
-                            className="btn"
-                            disabled={!canUpgrade || !affordable}
-                            onClick={() => upgradeBuilding(building.id)}
-                          >
-                            Upgrade
-                          </button>
-                        ) : (
-                          <button className="btn" disabled={!affordable} onClick={() => buyBuilding(building.id)}>
-                            Buy
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
+        {runPhase === 'day_end' && (
+          <DayEndOverlay
+            dayNumber={activeRun.dayNumber}
+            breakdown={dayIncome}
+            onNextDay={startNewDay}
+          />
+        )}
 
-            <div className="panel">
-              <h3>Squad Training</h3>
-              <div className="list">
-                {(Object.keys(UNIT_DEFS) as UnitType[]).map((type) => {
-                  const unit = UNIT_DEFS[type]
-                  const unlocked = availableTypes.includes(type)
-                  const affordable = canAfford(activeRun.gold, unit.baseCost)
-                  return (
-                    <div key={type} className={`list-row ${unlocked ? '' : 'locked'}`}>
-                      <div>
-                        <div className="list-title">{unit.name}</div>
-                        <div className="muted">Squad Size {unit.squadSize}</div>
-                      </div>
-                      <div className="list-actions">
-                        <div className="muted">Cost {unit.baseCost}</div>
-                        <button
-                          className="btn"
-                          disabled={!unlocked || !affordable || activeRun.unitRoster.length >= squadCap}
-                          onClick={() => handleBuySquad(type)}
-                        >
-                          Buy Squad
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-
-            <div className="panel">
-              <h3>Roster</h3>
-              {activeRun.unitRoster.length === 0 && <div className="muted">No squads recruited yet.</div>}
-              <div className="list">
-                {activeRun.unitRoster.map((squad) => (
-                  <div key={squad.id} className="list-row">
-                    <div>
-                      <div className="list-title">{UNIT_DEFS[squad.type].name}</div>
-                      <div className="muted">Squad Size {squad.size}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="panel">
-              <h3>Income Breakdown</h3>
-              <div className="list">
-                {income.items.map((item) => (
-                  <div key={item.id} className="list-row">
-                    <div>
-                      <div className="list-title">{BUILDING_DEFS[item.id].name} Lv {item.level}</div>
-                      <div className="muted">+{item.amount} gold</div>
-                    </div>
-                  </div>
-                ))}
-                <div className="list-row total">
-                  <div className="list-title">Total</div>
-                  <div className="list-title">+{income.total} gold</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="panel">
-              <h3>Goals</h3>
-              <div className="list">
-                {level.goals.map((goal) => {
-                  const value = activeRun.goalsProgress[goal.id]
-                  const done = typeof value === 'boolean' ? value : value >= goal.target
-                  return (
-                    <div key={goal.id} className={`list-row ${done ? 'done' : ''}`}>
-                      <div>
-                        <div className="list-title">{goal.label}</div>
-                        <div className="muted">
-                          {typeof value === 'boolean' ? (value ? 'Complete' : 'In progress') : `${value}/${goal.target}`}
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {runPhase === 'day_end' && (
-        <div className="overlay">
-          <div className="overlay-card">
-            <h2>Survived Day {activeRun.dayNumber}</h2>
-            <p className="muted">Collect income and prepare for the next day.</p>
-            <div className="panel compact">
-              <h4>Income Breakdown</h4>
-              {income.items.map((item) => (
-                <div key={item.id} className="list-row">
-                  <div>{BUILDING_DEFS[item.id].name} Lv {item.level}</div>
-                  <div>+{item.amount}</div>
-                </div>
-              ))}
-              <div className="list-row total">
-                <div>Total</div>
-                <div>+{income.total}</div>
-              </div>
-            </div>
-            <button className="btn success" onClick={startNewDay}>Start New Day</button>
-          </div>
-        </div>
-      )}
+        <ToastStack toasts={toasts} onDismiss={dismissToast} />
+      </div>
     </div>
   )
 }

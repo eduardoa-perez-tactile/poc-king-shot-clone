@@ -1,5 +1,5 @@
 import { BuildingId, BUILDING_DEFS } from '../config/buildings'
-import { getDayPlan, getLevelById, LevelDefinition, LevelGoal } from '../config/levels'
+import { getDayPlan, getLevelById, LevelDefinition, LevelGoal, HeroRuntime } from '../config/levels'
 import { UnitType, UNIT_DEFS } from '../config/units'
 import { IncomeBreakdown, MetaState, RunBuilding, RunPhase, RunSquad, RunState } from './types'
 import { getBuildingPurchaseCost, getBuildingUpgradeCost, getIncomeBreakdown, getSquadCap, getUnitCost } from './economy'
@@ -30,20 +30,21 @@ export const createRunState = (levelId: string): RunState => {
     bossDefeatedDays: [],
     hqHpByDay: {},
     lastIncome: undefined,
+    heroProgress: { hp: 0, attack: 0 },
     difficultyScaling: 1
   }
 }
 
-export const addBuilding = (run: RunState, id: BuildingId): RunState => {
-  if (run.buildings.some((building) => building.id === id)) return run
-  return { ...run, buildings: [...run.buildings, { id, level: 1 }] }
+export const addBuilding = (run: RunState, id: BuildingId, padId: string): RunState => {
+  if (run.buildings.some((building) => building.padId === padId)) return run
+  return { ...run, buildings: [...run.buildings, { id, level: 1, padId }] }
 }
 
-export const upgradeBuilding = (run: RunState, id: BuildingId): RunState => {
+export const upgradeBuilding = (run: RunState, padId: string): RunState => {
   return {
     ...run,
     buildings: run.buildings.map((building) =>
-      building.id === id ? { ...building, level: building.level + 1 } : building
+      building.padId === padId ? { ...building, level: building.level + 1 } : building
     )
   }
 }
@@ -63,14 +64,21 @@ export const removeSquads = (run: RunState, squadIds: string[]): RunState => {
   return { ...run, unitRoster: remaining }
 }
 
-export const applyIncome = (run: RunState): { run: RunState; breakdown: IncomeBreakdown } => {
-  const breakdown = getIncomeBreakdown(run)
-  const gold = run.gold + breakdown.total + breakdown.bonuses
+export const getDayRewardGold = (level: LevelDefinition, dayNumber: number) => {
+  const base = level.dayRewardGold
+  const scale = level.dayRewardScale ?? 0
+  return Math.max(0, Math.floor(base + Math.max(0, dayNumber - 1) * scale))
+}
+
+export const applyDayEndRewards = (run: RunState, level: LevelDefinition): { run: RunState; breakdown: IncomeBreakdown } => {
+  const reward = getDayRewardGold(level, run.dayNumber)
+  const breakdown = getIncomeBreakdown(run, reward)
+  const gold = run.gold + breakdown.total
   return {
     run: {
       ...run,
       gold,
-      totalGoldEarned: run.totalGoldEarned + breakdown.total + breakdown.bonuses,
+      totalGoldEarned: run.totalGoldEarned + breakdown.total,
       lastIncome: breakdown
     },
     breakdown
@@ -114,12 +122,12 @@ export const areGoalsComplete = (run: RunState, level: LevelDefinition) =>
 
 export const canAffordBuilding = (run: RunState, id: BuildingId) => run.gold >= getBuildingPurchaseCost(id)
 
-export const canUpgradeBuilding = (run: RunState, id: BuildingId) => {
-  const def = BUILDING_DEFS[id]
-  const current = run.buildings.find((building) => building.id === id)?.level ?? 0
-  if (current === 0) return false
-  if (current >= def.maxLevel) return false
-  const cost = getBuildingUpgradeCost(id, current + 1)
+export const canUpgradeBuilding = (run: RunState, padId: string) => {
+  const current = run.buildings.find((building) => building.padId === padId)
+  if (!current) return false
+  const def = BUILDING_DEFS[current.id]
+  if (current.level >= def.maxLevel) return false
+  const cost = getBuildingUpgradeCost(current.id, current.level + 1)
   return run.gold >= cost
 }
 
@@ -161,4 +169,23 @@ export const getStartingBuildings = (levelId: string): RunBuilding[] => {
   const level = getLevelById(levelId)
   if (!level) return []
   return level.startingBuildings.map((building) => ({ ...building }))
+}
+
+export const getHeroRuntime = (run: RunState): HeroRuntime => {
+  const level = getRunLevel(run)
+  const base = level.heroLoadout.baseStats
+  const bonus = run.heroProgress ?? { hp: 0, attack: 0 }
+  return {
+    id: level.heroLoadout.id,
+    name: level.heroLoadout.name,
+    description: level.heroLoadout.description,
+    stats: {
+      hp: base.hp + bonus.hp,
+      attack: base.attack + bonus.attack,
+      range: base.range,
+      speed: base.speed,
+      cooldown: base.cooldown
+    },
+    abilities: level.heroLoadout.abilities
+  }
 }

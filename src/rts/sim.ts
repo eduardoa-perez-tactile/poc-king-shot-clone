@@ -94,6 +94,25 @@ const createHQ = (pos: Vec2, hp: number): EntityState => ({
   buffs: []
 })
 
+const createHeroEntity = (pos: Vec2, hp: number, attack: number, range: number, speed: number, cooldown: number): EntityState => ({
+  id: ENTITY_ID(),
+  team: 'player',
+  kind: 'hero',
+  pos: { ...pos },
+  radius: 18,
+  hp,
+  maxHp: hp,
+  attack,
+  range,
+  speed,
+  cooldown,
+  cooldownLeft: 0,
+  order: { type: 'stop' },
+  targetId: undefined,
+  path: [],
+  buffs: []
+})
+
 const emptyStats = (): CombatStats => ({
   time: 0,
   kills: 0,
@@ -101,10 +120,20 @@ const emptyStats = (): CombatStats => ({
   lostSquads: []
 })
 
-export const createSimState = (combat: CombatDefinition, run: RunState): SimState => {
+export const createSimState = (
+  combat: CombatDefinition,
+  run: RunState,
+  options?: { heroPos?: Vec2; heroHp?: number }
+): SimState => {
   const entities: EntityState[] = []
   const hqHp = combat.hqBaseHp + getHQBonusHp(run)
   entities.push(createHQ(combat.map.playerHQ, hqHp))
+
+  const heroStats = combat.hero.stats
+  const heroHp = options?.heroHp ?? heroStats.hp
+  const heroPos = options?.heroPos ?? combat.map.playerSpawn
+  const hero = createHeroEntity(heroPos, heroHp, heroStats.attack, heroStats.range, heroStats.speed, heroStats.cooldown)
+  entities.push(hero)
 
   const statMultipliers = getUnitStatMultipliers(run)
   run.unitRoster.forEach((squad) => {
@@ -130,7 +159,9 @@ export const createSimState = (combat: CombatDefinition, run: RunState): SimStat
     stats: emptyStats(),
     waveIndex: 0,
     nextWaveAt: 0,
-    bossDefeated: false
+    bossDefeated: false,
+    heroEntityId: hero.id,
+    heroAbilityCooldowns: { q: 0, e: 0 }
   }
 }
 
@@ -210,7 +241,7 @@ const spawnWave = (sim: SimState) => {
   sim.waveIndex += 1
 }
 
-export const stepSim = (state: SimState, dt: number, grid: Grid): SimState => {
+export const stepSim = (state: SimState, dt: number, grid: Grid, mode: 'build' | 'combat'): SimState => {
   if (state.status !== 'running') return state
   const time = state.time + dt
   const entities = state.entities.map((entity) => ({ ...entity, pos: { ...entity.pos }, buffs: [...entity.buffs] }))
@@ -221,22 +252,24 @@ export const stepSim = (state: SimState, dt: number, grid: Grid): SimState => {
 
   const enemiesRemaining = entities.filter((entity) => entity.team === 'enemy').length
 
-  if (sim.combat.waveMode === 'timed') {
-    while (
-      sim.waveIndex < sim.combat.waves.length &&
-      time >= (sim.combat.waves[sim.waveIndex].spawnTimeSec ?? 0)
-    ) {
-      spawnWave(sim)
+  if (mode === 'combat') {
+    if (sim.combat.waveMode === 'timed') {
+      while (
+        sim.waveIndex < sim.combat.waves.length &&
+        time >= (sim.combat.waves[sim.waveIndex].spawnTimeSec ?? 0)
+      ) {
+        spawnWave(sim)
+      }
+    } else {
+      const ready = sim.waveIndex === 0 ? time >= sim.nextWaveAt : enemiesRemaining === 0 && time >= sim.nextWaveAt
+      if (sim.waveIndex < sim.combat.waves.length && ready) {
+        spawnWave(sim)
+        sim.nextWaveAt = time + sim.combat.waveDelaySec
+      }
     }
-  } else {
-    const ready = sim.waveIndex === 0 ? time >= sim.nextWaveAt : enemiesRemaining === 0 && time >= sim.nextWaveAt
-    if (sim.waveIndex < sim.combat.waves.length && ready) {
-      spawnWave(sim)
-      sim.nextWaveAt = time + sim.combat.waveDelaySec
-    }
-  }
 
-  issueDefaultEnemyOrders(sim, grid)
+    issueDefaultEnemyOrders(sim, grid)
+  }
 
   const entityMap = new Map(entities.map((e) => [e.id, e]))
 
@@ -351,16 +384,53 @@ export const stepSim = (state: SimState, dt: number, grid: Grid): SimState => {
   sim.entities = alive
   stats.time = time
 
-  const playerHQ = alive.find((entity) => entity.team === 'player' && entity.kind === 'hq')
-  const enemyRemaining = alive.filter((entity) => entity.team === 'enemy').length
+  if (mode === 'combat') {
+    const playerHQ = alive.find((entity) => entity.team === 'player' && entity.kind === 'hq')
+    const enemyRemaining = alive.filter((entity) => entity.team === 'enemy').length
 
-  if (!playerHQ) {
-    sim.status = 'lose'
-  } else if (sim.waveIndex >= sim.combat.waves.length && enemyRemaining === 0) {
-    sim.status = 'win'
+    if (!playerHQ) {
+      sim.status = 'lose'
+    } else if (sim.waveIndex >= sim.combat.waves.length && enemyRemaining === 0) {
+      sim.status = 'win'
+    }
   }
 
   return sim
+}
+
+export const useHeroAbility = (state: SimState, ability: 'q' | 'e'): SimState => {
+  const heroId = state.heroEntityId
+  if (!heroId) return state
+  const heroDef = state.combat.hero.abilities[ability]
+  if (!heroDef) return state
+  if (state.time < state.heroAbilityCooldowns[ability]) return state
+  const entities = state.entities.map((entity) => ({ ...entity, pos: { ...entity.pos }, buffs: [...entity.buffs] }))
+  const heroIndex = entities.findIndex((entity) => entity.id === heroId)
+  if (heroIndex === -1) return state
+  const hero = entities[heroIndex]
+
+  if (ability === 'q' && heroDef.damage && heroDef.radius) {
+    entities.forEach((entity) => {
+      if (entity.team !== 'enemy') return
+      const dist = distance(hero.pos, entity.pos)
+      if (dist <= heroDef.radius) {
+        entity.hp -= heroDef.damage
+      }
+    })
+  }
+
+  if (ability === 'e') {
+    if (heroDef.heal) {
+      hero.hp = Math.min(hero.maxHp, hero.hp + heroDef.heal)
+    }
+  }
+
+  const heroAbilityCooldowns = {
+    ...state.heroAbilityCooldowns,
+    [ability]: state.time + heroDef.cooldown
+  }
+  entities[heroIndex] = hero
+  return { ...state, entities, heroAbilityCooldowns }
 }
 
 export const issueOrder = (state: SimState, ids: string[], order: Order, grid: Grid): SimState => {

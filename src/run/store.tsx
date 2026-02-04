@@ -5,7 +5,7 @@ import { loadSave, saveGame, clearSave } from '../storage/runSave'
 import { getBuildingPurchaseCost, getBuildingUpgradeCost, getUnitCost } from './economy'
 import {
   addBuilding,
-  applyIncome,
+  applyDayEndRewards,
   areGoalsComplete,
   buySquad,
   canBuySquad,
@@ -37,8 +37,8 @@ interface RunStore {
   startRun: (levelId: string) => void
   abandonRun: () => void
   retryRun: () => void
-  buyBuilding: (id: BuildingId) => void
-  upgradeBuilding: (id: BuildingId) => void
+  buyBuilding: (id: BuildingId, padId: string) => void
+  upgradeBuilding: (padId: string) => void
   buySquad: (type: UnitType) => void
   startCombat: () => void
   resolveCombat: (outcome: CombatOutcome) => void
@@ -60,7 +60,7 @@ const normalizeRunPhase = (phase: RunPhase): RunPhase => (phase === 'combat' ? '
 export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const saved = useMemo(() => loadSave(), [])
   const [meta, setMeta] = useState<MetaState>(() => saved?.meta ?? createInitialMeta())
-  const [activeRun, setActiveRun] = useState<RunState | null>(() => saved?.activeRun ?? null)
+  const [activeRun, setActiveRun] = useState<RunState | null>(() => normalizeRun(saved?.activeRun ?? null))
   const [runPhase, setRunPhase] = useState<RunPhase>(() => (saved?.runPhase ? normalizeRunPhase(saved.runPhase) : 'build'))
   const [lastCombat, setLastCombat] = useState<CombatOutcome | undefined>(undefined)
 
@@ -88,27 +88,27 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     startRun(activeRun.levelId)
   }
 
-  const buyBuildingAction = (id: BuildingId) => {
+  const buyBuildingAction = (id: BuildingId, padId: string) => {
     if (!activeRun || runPhase !== 'build') return
     const cost = getBuildingPurchaseCost(id)
     if (activeRun.gold < cost) return
-    if (activeRun.buildings.some((building) => building.id === id)) return
+    if (activeRun.buildings.some((building) => building.padId === padId)) return
     const next = recomputeGoalsProgress(
-      { ...addBuilding(activeRun, id), gold: activeRun.gold - cost },
+      { ...addBuilding(activeRun, id, padId), gold: activeRun.gold - cost },
       getRunLevel(activeRun)
     )
     setActiveRun(next)
   }
 
-  const upgradeBuildingAction = (id: BuildingId) => {
+  const upgradeBuildingAction = (padId: string) => {
     if (!activeRun || runPhase !== 'build') return
-    const current = activeRun.buildings.find((building) => building.id === id)
+    const current = activeRun.buildings.find((building) => building.padId === padId)
     if (!current) return
-    const cost = getBuildingUpgradeCost(id, current.level + 1)
+    const cost = getBuildingUpgradeCost(current.id, current.level + 1)
     if (activeRun.gold < cost) return
-    if (!canUpgradeBuilding(activeRun, id)) return
+    if (!canUpgradeBuilding(activeRun, padId)) return
     const next = recomputeGoalsProgress(
-      { ...upgradeBuilding(activeRun, id), gold: activeRun.gold - cost },
+      { ...upgradeBuilding(activeRun, padId), gold: activeRun.gold - cost },
       getRunLevel(activeRun)
     )
     setActiveRun(next)
@@ -127,7 +127,6 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const startCombat = () => {
     if (!activeRun || runPhase !== 'build') return
-    if (activeRun.unitRoster.length === 0) return
     setRunPhase('combat')
   }
 
@@ -139,7 +138,8 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const withHp = markHqHp(withBoss, withBoss.dayNumber, outcome.hqHpPercent)
     const daysSurvived = outcome.victory ? Math.max(withHp.daysSurvived, withHp.dayNumber) : withHp.daysSurvived
     const runWithDays = { ...withHp, daysSurvived }
-    const next = recomputeGoalsProgress(runWithDays, level)
+    const paid = outcome.victory ? applyDayEndRewards(runWithDays, level) : { run: runWithDays, breakdown: undefined }
+    const next = recomputeGoalsProgress(paid.run, level)
     setActiveRun(next)
     setLastCombat(outcome)
     if (outcome.victory) {
@@ -152,8 +152,7 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const startNewDay = () => {
     if (!activeRun) return
     const level = getRunLevel(activeRun)
-    const paid = applyIncome(activeRun)
-    let next = recomputeGoalsProgress(paid.run, level)
+    let next = recomputeGoalsProgress(activeRun, level)
     if (areGoalsComplete(next, level)) {
       setRunPhase('win')
       setActiveRun(next)
@@ -177,7 +176,13 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
       return
     }
-    next = { ...next, dayNumber: next.dayNumber + 1 }
+    const growth = level.heroLoadout.growthPerDay ?? { hp: 0, attack: 0 }
+    const heroProgress = next.heroProgress ?? { hp: 0, attack: 0 }
+    next = {
+      ...next,
+      dayNumber: next.dayNumber + 1,
+      heroProgress: { hp: heroProgress.hp + growth.hp, attack: heroProgress.attack + growth.attack }
+    }
     setActiveRun(next)
     setRunPhase('build')
   }
@@ -218,3 +223,24 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 const levelIndexById = (id: string) => LEVELS.findIndex((level) => level.id === id)
 
 const getLevelByIndex = (index: number) => LEVELS[index] ?? null
+
+const normalizeRun = (run: RunState | null): RunState | null => {
+  if (!run) return null
+  const level = getLevelById(run.levelId)
+  if (!level) return run
+  const usedPads = new Set<string>()
+  const pads = level.buildingPads
+  const buildings = run.buildings.map((building, index) => {
+    if ('padId' in building && building.padId) {
+      usedPads.add(building.padId)
+      return building
+    }
+    const preferred = pads.find((pad) => !usedPads.has(pad.id) && pad.allowedTypes.includes(building.id))
+    const fallback = pads.find((pad) => !usedPads.has(pad.id)) ?? pads[0]
+    const padId = preferred?.id ?? fallback?.id ?? `pad_${index}`
+    usedPads.add(padId)
+    return { ...building, padId }
+  })
+  const heroProgress = run.heroProgress ?? { hp: 0, attack: 0 }
+  return { ...run, buildings, heroProgress }
+}

@@ -1,4 +1,4 @@
-import { getRunDayPlan, getRunLevel } from '../run/runState'
+import { getHeroRuntime, getRunDayPlan, getRunLevel } from '../run/runState'
 import { RunState } from '../run/types'
 import { CombatDefinition } from './types'
 
@@ -7,6 +7,7 @@ export const buildCombatDefinition = (run: RunState): CombatDefinition => {
   const dayPlan = getRunDayPlan(run)
   return {
     dayNumber: run.dayNumber,
+    hero: getHeroRuntime(run),
     map: level.map,
     waves: dayPlan.waves.map((wave) => ({
       id: wave.id,

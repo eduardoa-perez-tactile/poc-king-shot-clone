@@ -1,3 +1,4 @@
+import { HeroRuntime } from '../config/levels'
 import { UnitType } from '../config/units'
 
 export type Team = 'player' | 'enemy'
@@ -14,7 +15,7 @@ export interface Rect {
   h: number
 }
 
-export type EntityKind = UnitType | 'hq'
+export type EntityKind = UnitType | 'hq' | 'hero'
 
 export interface Order {
   type: 'move' | 'attack' | 'attackMove' | 'stop'
@@ -74,6 +75,7 @@ export interface CombatWave {
 
 export interface CombatDefinition {
   dayNumber: number
+  hero: HeroRuntime
   map: {
     width: number
     height: number
@@ -117,4 +119,6 @@ export interface SimState {
   waveIndex: number
   nextWaveAt: number
   bossDefeated: boolean
+  heroEntityId?: string
+  heroAbilityCooldowns: { q: number; e: number }
 }

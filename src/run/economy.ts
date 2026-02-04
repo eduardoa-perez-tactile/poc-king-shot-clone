@@ -3,7 +3,7 @@ import { UnitType, UNIT_DEFS } from '../config/units'
 import { IncomeBreakdown, RunState } from './types'
 
 export const getBuildingLevel = (run: RunState, id: BuildingId) =>
-  run.buildings.find((building) => building.id === id)?.level ?? 0
+  run.buildings.reduce((sum, building) => (building.id === id ? sum + building.level : sum), 0)
 
 export const hasBuilding = (run: RunState, id: BuildingId) => getBuildingLevel(run, id) > 0
 
@@ -32,7 +32,7 @@ export const getAvailableUnitTypes = (run: RunState): UnitType[] => {
 
 export const getUnitCost = (type: UnitType) => UNIT_DEFS[type].baseCost
 
-export const getIncomeBreakdown = (run: RunState): IncomeBreakdown => {
+export const getIncomeBreakdown = (run: RunState, reward = 0): IncomeBreakdown => {
   const items = run.buildings
     .map((building) => {
       const def = BUILDING_DEFS[building.id]
@@ -41,8 +41,10 @@ export const getIncomeBreakdown = (run: RunState): IncomeBreakdown => {
       return { id: building.id, name: def.name, level: building.level, amount }
     })
     .filter((item): item is NonNullable<typeof item> => Boolean(item))
-  const total = items.reduce((sum, item) => sum + item.amount, 0)
-  return { total, items, bonuses: 0 }
+  const buildingTotal = items.reduce((sum, item) => sum + item.amount, 0)
+  const bonuses = 0
+  const total = buildingTotal + reward + bonuses
+  return { total, items, bonuses, reward, buildingTotal }
 }
 
 export const getUnitStatMultipliers = (run: RunState) => {

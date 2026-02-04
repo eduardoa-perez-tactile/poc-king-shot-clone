@@ -258,6 +258,12 @@ body {
   flex-direction: column;
 }
 
+.map-stage {
+  flex: 1;
+  padding: 16px 20px 24px;
+  position: relative;
+}
+
 .build-phase {
   padding: 20px;
   display: flex;
@@ -357,6 +363,32 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.overlay-card.build-panel {
+  width: min(680px, 92vw);
+  gap: 16px;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+.day-end-card {
+  width: min(520px, 92vw);
 }
 
 .panel.compact {
@@ -582,6 +614,14 @@ select {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.rts-hero {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .rts-help {

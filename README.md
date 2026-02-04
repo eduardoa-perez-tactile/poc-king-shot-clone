@@ -12,20 +12,20 @@ npm install
 npm run dev
 ```
 
-## New Day Cycle Loop
+## Map-Centric Day Cycle Loop
 
-1. Main Menu → Level Select → Day 1 Build Phase.
-2. Spend gold on buildings and squad recruitment.
+1. Main Menu → Level Select → Mission Map Scene (single scene).
+2. Control the hero in real time and click building pads to construct or upgrade.
 3. Press **Battle Cry** to start real-time wave combat.
-4. Survive all waves to complete the day.
-5. Start a new day to receive income and repeat.
+4. Survive all waves to complete the day and collect rewards.
+5. Enter Build Mode on the same map, spend gold, then rally again.
 6. Complete all level goals to win and unlock the next level.
 
 ## Main Systems
 
 - **RunState**: A single shared state for the level run (day, gold, buildings, squads, goals).
-- **Build Phase**: Buy/upgrade buildings, recruit squads, and view goals.
-- **Combat Phase**: Real-time wave defense on the RTS canvas.
+- **Build Phase**: Click map pads to build/upgrade, recruit squads, and prepare.
+- **Combat Phase**: Real-time wave defense on the same map scene.
 - **Goals**: Survive a target day, defeat bosses, and/or earn gold.
 
 ## Controls (RTS)
@@ -33,14 +33,15 @@ npm run dev
 - Left click selects units (drag to box select).
 - Right click issues move/attack commands.
 - `A` attack-move, `S` stop.
+- `Q`/`E` hero abilities.
 - `Ctrl+1/2/3` assign control groups, `1/2/3` recall.
 - Mouse wheel zoom, arrow keys pan camera.
 
-## RTS Notes
+## Map Build Notes
 
-- Units are represented as **squad entities** (each entity = multiple troops).
-- Right-click on enemy issues **attack**; right-click on ground issues **move**.
-- Use squads to defend your HQ from wave assaults.
+- All construction and upgrades happen directly on the mission map.
+- Buildings can only be placed on predefined **building pads**.
+- Click empty pads to build, click existing buildings to upgrade or recruit.
 
 ## Levels
 

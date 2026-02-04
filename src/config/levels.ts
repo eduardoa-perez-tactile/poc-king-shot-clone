@@ -25,6 +25,55 @@ export interface DayPlan {
   waves: DayWave[]
 }
 
+export interface HeroAbilityDef {
+  id: 'q' | 'e'
+  name: string
+  description: string
+  cooldown: number
+  damage?: number
+  radius?: number
+  heal?: number
+  dash?: number
+}
+
+export interface HeroStats {
+  hp: number
+  attack: number
+  range: number
+  speed: number
+  cooldown: number
+}
+
+export interface HeroLoadout {
+  id: string
+  name: string
+  description: string
+  baseStats: HeroStats
+  growthPerDay?: { hp: number; attack: number }
+  abilities: {
+    q: HeroAbilityDef
+    e: HeroAbilityDef
+  }
+}
+
+export interface HeroRuntime {
+  id: string
+  name: string
+  description: string
+  stats: HeroStats
+  abilities: {
+    q: HeroAbilityDef
+    e: HeroAbilityDef
+  }
+}
+
+export interface BuildingPad {
+  id: string
+  x: number
+  y: number
+  allowedTypes: BuildingId[]
+}
+
 export type GoalType =
   | 'survive_days'
   | 'defeat_boss_day'
@@ -44,7 +93,11 @@ export interface LevelDefinition {
   name: string
   description: string
   startGold: number
-  startingBuildings: { id: BuildingId; level: number }[]
+  dayRewardGold: number
+  dayRewardScale?: number
+  heroLoadout: HeroLoadout
+  buildingPads: BuildingPad[]
+  startingBuildings: { id: BuildingId; level: number; padId: string }[]
   goals: LevelGoal[]
   days: DayPlan[]
   map: {
@@ -57,16 +110,90 @@ export interface LevelDefinition {
   }
 }
 
+const DEFAULT_PADS: BuildingPad[] = [
+  {
+    id: 'pad_a',
+    x: 200,
+    y: 260,
+    allowedTypes: ['barracks', 'range', 'stable']
+  },
+  {
+    id: 'pad_b',
+    x: 200,
+    y: 340,
+    allowedTypes: ['gold_mine', 'house', 'watchtower']
+  },
+  {
+    id: 'pad_c',
+    x: 200,
+    y: 420,
+    allowedTypes: ['gold_mine', 'house', 'blacksmith']
+  },
+  {
+    id: 'pad_d',
+    x: 260,
+    y: 260,
+    allowedTypes: ['barracks', 'range', 'stable']
+  },
+  {
+    id: 'pad_e',
+    x: 260,
+    y: 340,
+    allowedTypes: ['house', 'watchtower', 'blacksmith']
+  },
+  {
+    id: 'pad_f',
+    x: 260,
+    y: 420,
+    allowedTypes: ['gold_mine', 'blacksmith', 'stable']
+  }
+]
+
+const DEFAULT_HERO: HeroLoadout = {
+  id: 'vanguard',
+  name: 'Vanguard',
+  description: 'A hardened champion who anchors the defense each day.',
+  baseStats: {
+    hp: 320,
+    attack: 16,
+    range: 70,
+    speed: 120,
+    cooldown: 0.8
+  },
+  growthPerDay: { hp: 22, attack: 2 },
+  abilities: {
+    q: {
+      id: 'q',
+      name: 'Cleave',
+      description: 'A wide strike that damages nearby enemies.',
+      cooldown: 8,
+      damage: 90,
+      radius: 120
+    },
+    e: {
+      id: 'e',
+      name: 'Second Wind',
+      description: 'Recover health to stay in the fight.',
+      cooldown: 12,
+      heal: 80
+    }
+  }
+}
+
 export const LEVELS: LevelDefinition[] = [
   {
     id: 'level_1',
     name: 'Frontier Dawn',
     description: 'Stabilize the frontier through three brutal days.',
     startGold: 50,
+    dayRewardGold: 30,
+    dayRewardScale: 5,
+    heroLoadout: DEFAULT_HERO,
+    buildingPads: DEFAULT_PADS,
     startingBuildings: [
-      { id: 'gold_mine', level: 1 },
-      { id: 'house', level: 1 },
-      { id: 'barracks', level: 1 }
+      { id: 'gold_mine', level: 1, padId: 'pad_c' },
+      { id: 'house', level: 1, padId: 'pad_b' },
+      { id: 'barracks', level: 1, padId: 'pad_a' }
     ],
     goals: [
       { id: 'goal_survive_3', type: 'survive_days', label: 'Survive until Day 3', target: 3 },
@@ -172,11 +299,15 @@ export const LEVELS: LevelDefinition[] = [
     name: 'Iron Reprisal',
     description: 'Hold the line and crush the boss raid on Day 4.',
     startGold: 70,
+    dayRewardGold: 40,
+    dayRewardScale: 6,
+    heroLoadout: DEFAULT_HERO,
+    buildingPads: DEFAULT_PADS,
     startingBuildings: [
-      { id: 'gold_mine', level: 1 },
-      { id: 'house', level: 1 },
-      { id: 'barracks', level: 1 },
-      { id: 'range', level: 1 }
+      { id: 'gold_mine', level: 1, padId: 'pad_c' },
+      { id: 'house', level: 1, padId: 'pad_b' },
+      { id: 'barracks', level: 1, padId: 'pad_a' },
+      { id: 'range', level: 1, padId: 'pad_d' }
     ],
     goals: [
       { id: 'goal_survive_4', type: 'survive_days', label: 'Survive until Day 4', target: 4 },
@@ -252,12 +383,16 @@ export const LEVELS: LevelDefinition[] = [
     name: 'Last Rampart',
     description: 'Endure five days and build a war chest.',
     startGold: 90,
+    dayRewardGold: 50,
+    dayRewardScale: 8,
+    heroLoadout: DEFAULT_HERO,
+    buildingPads: DEFAULT_PADS,
     startingBuildings: [
-      { id: 'gold_mine', level: 1 },
-      { id: 'house', level: 1 },
-      { id: 'barracks', level: 1 },
-      { id: 'range', level: 1 },
-      { id: 'stable', level: 1 }
+      { id: 'gold_mine', level: 1, padId: 'pad_c' },
+      { id: 'house', level: 1, padId: 'pad_b' },
+      { id: 'barracks', level: 1, padId: 'pad_a' },
+      { id: 'range', level: 1, padId: 'pad_d' },
+      { id: 'stable', level: 1, padId: 'pad_f' }
     ],
     goals: [
       { id: 'goal_survive_5', type: 'survive_days', label: 'Survive until Day 5', target: 5 },
