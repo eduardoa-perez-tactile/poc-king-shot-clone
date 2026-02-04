@@ -1,4 +1,4 @@
-import { Resources, TroopType } from '../game/types'
+import { UnitType } from '../config/units'
 
 export type Team = 'player' | 'enemy'
 
@@ -14,7 +14,7 @@ export interface Rect {
   h: number
 }
 
-export type EntityKind = TroopType | 'hero' | 'hq'
+export type EntityKind = UnitType | 'hq'
 
 export interface Order {
   type: 'move' | 'attack' | 'attackMove' | 'stop'
@@ -46,6 +46,8 @@ export interface EntityState {
   path: Vec2[]
   troopCount?: number
   buffs: EntityBuff[]
+  squadId?: string
+  isBoss?: boolean
 }
 
 export interface Projectile {
@@ -57,59 +59,21 @@ export interface Projectile {
   team: Team
 }
 
-export interface HeroAbility {
-  id: string
-  name: string
-  description: string
-  cooldown: number
-  cooldownLeft: number
-  type: 'area' | 'target'
-  radius: number
-}
-
-export interface HeroState {
-  entityId: string
-  abilities: HeroAbility[]
-  aura: {
-    radius: number
-    attackMultiplier: number
-  }
-}
-
-export interface MissionObjectiveSurvive {
-  type: 'survive'
-  durationSec: number
-}
-
-export interface MissionObjectiveDestroyHQ {
-  type: 'destroy_hq'
-}
-
-export type MissionObjective = MissionObjectiveSurvive | MissionObjectiveDestroyHQ
-
-export interface MissionUnitGroup {
-  type: TroopType
+export interface WaveUnitGroup {
+  type: UnitType
   squads: number
-  squadSize: number
+  squadSize?: number
 }
 
-export interface MissionWave {
-  timeSec: number
-  units: MissionUnitGroup[]
-}
-
-export interface MissionDefinition {
+export interface CombatWave {
   id: string
-  name: string
-  description: string
-  difficulty: 'Easy' | 'Medium' | 'Hard'
-  objective: MissionObjective
-  rewards: {
-    resources: Resources
-    xpItems: number
-    keys: { gold: number; platinum: number }
-  }
-  unlockAfter?: string
+  units: WaveUnitGroup[]
+  spawnTimeSec?: number
+  isBoss?: boolean
+}
+
+export interface CombatDefinition {
+  dayNumber: number
   map: {
     width: number
     height: number
@@ -117,27 +81,30 @@ export interface MissionDefinition {
     playerSpawn: Vec2
     enemySpawn: Vec2
     playerHQ: Vec2
-    enemyHQ?: Vec2
   }
-  startingUnits: MissionUnitGroup[]
-  waves: MissionWave[]
+  waves: CombatWave[]
+  waveMode: 'sequential' | 'timed'
+  waveDelaySec: number
+  enemyModifiers: {
+    hpMultiplier: number
+    attackMultiplier: number
+  }
+  hqBaseHp: number
 }
 
-export interface MissionStats {
+export interface CombatStats {
   time: number
   kills: number
   losses: number
-  casualties: { infantry: number; archer: number; cavalry: number }
+  lostSquads: string[]
 }
 
-export interface MissionResult {
+export interface CombatResult {
   victory: boolean
-  stats: MissionStats
-  rewards: {
-    resources: Resources
-    xpItems: number
-    keys: { gold: number; platinum: number }
-  }
+  stats: CombatStats
+  lostSquadIds: string[]
+  bossDefeated: boolean
+  hqHpPercent: number
 }
 
 export interface SimState {
@@ -145,8 +112,9 @@ export interface SimState {
   status: 'running' | 'win' | 'lose'
   entities: EntityState[]
   projectiles: Projectile[]
-  hero?: HeroState
-  mission: MissionDefinition
-  stats: MissionStats
+  combat: CombatDefinition
+  stats: CombatStats
   waveIndex: number
+  nextWaveAt: number
+  bossDefeated: boolean
 }

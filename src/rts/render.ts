@@ -52,7 +52,7 @@ export const renderScene = (
     ctx.stroke()
   }
 
-  sim.mission.map.obstacles.forEach((ob) => {
+  sim.combat.map.obstacles.forEach((ob) => {
     const topLeft = worldToScreen({ x: ob.x, y: ob.y }, cam)
     ctx.fillStyle = '#1f2937'
     ctx.fillRect(topLeft.x, topLeft.y, ob.w * cam.zoom, ob.h * cam.zoom)
@@ -62,8 +62,7 @@ export const renderScene = (
     const screen = worldToScreen(entity.pos, cam)
     const isSelected = selection.includes(entity.id)
     ctx.fillStyle = entity.team === 'player' ? '#38bdf8' : '#ef4444'
-    if (entity.kind === 'hero') ctx.fillStyle = '#facc15'
-    if (entity.kind === 'hq') ctx.fillStyle = entity.team === 'player' ? '#2563eb' : '#b91c1c'
+    if (entity.kind === 'hq') ctx.fillStyle = '#2563eb'
     ctx.beginPath()
     ctx.arc(screen.x, screen.y, entity.radius * cam.zoom, 0, Math.PI * 2)
     ctx.fill()

@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { GameState } from '../game/types'
-import { createGridForMission, createSimState, buildMissionResult, issueOrder, stepSim, useAbility } from './sim'
+import React, { useEffect, useRef, useState } from 'react'
+import { createGridForCombat, createSimState, buildCombatResult, issueOrder, stepSim } from './sim'
 import { renderScene, screenToWorld, clampCamera, Camera } from './render'
-import { EntityState, MissionDefinition, MissionResult, Order, SimState, Vec2 } from './types'
+import { CombatDefinition, CombatResult, EntityState, Order, SimState, Vec2 } from './types'
 import { Grid } from './pathfinding'
+import { RunState } from '../run/types'
 
 const FIXED_DT = 1 / 30
 
@@ -22,22 +22,20 @@ const getEntityAt = (entities: EntityState[], pos: Vec2, team: 'player' | 'enemy
 }
 
 export const RTSGame: React.FC<{
-  mission: MissionDefinition
-  meta: GameState
-  leaderHeroId?: string
-  onComplete: (result: MissionResult, casualties: { infantry: number; archer: number; cavalry: number }) => void
+  combat: CombatDefinition
+  run: RunState
+  onComplete: (result: CombatResult) => void
   onExit: () => void
-}> = ({ mission, meta, leaderHeroId, onComplete, onExit }) => {
-  const [sim, setSim] = useState<SimState>(() => createSimState(mission, meta, leaderHeroId))
+}> = ({ combat, run, onComplete, onExit }) => {
+  const [sim, setSim] = useState<SimState>(() => createSimState(combat, run))
   const simRef = useRef(sim)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [dragBox, setDragBox] = useState<{ start: Vec2; end: Vec2 } | null>(null)
   const [paused, setPaused] = useState(false)
   const [commandMode, setCommandMode] = useState<'move' | 'attackMove'>('move')
-  const [activeAbility, setActiveAbility] = useState<string | null>(null)
   const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 1 })
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const gridRef = useRef<Grid>(createGridForMission(mission))
+  const gridRef = useRef<Grid>(createGridForCombat(combat))
   const rafRef = useRef<number | null>(null)
   const controlGroups = useRef<Record<number, string[]>>({})
   const endedRef = useRef(false)
@@ -109,13 +107,13 @@ export const RTSGame: React.FC<{
           acc -= FIXED_DT
           if (next.status !== 'running' && !endedRef.current) {
             endedRef.current = true
-            const result = buildMissionResult(next)
-            onComplete(result, next.stats.casualties)
+            const result = buildCombatResult(next)
+            onComplete(result)
           }
         }
       }
 
-      const clamped = clampCamera(camera, canvas.width, canvas.height, mission.map.width, mission.map.height)
+      const clamped = clampCamera(camera, canvas.width, canvas.height, combat.map.width, combat.map.height)
       if (clamped.x !== camera.x || clamped.y !== camera.y) {
         setCamera(clamped)
       }
@@ -136,11 +134,10 @@ export const RTSGame: React.FC<{
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
-  }, [paused, dragBox, camera, mission.map.height, mission.map.width, onComplete, selectedIds])
+  }, [paused, dragBox, camera, combat.map.height, combat.map.width, onComplete, selectedIds])
 
   const handleMouseDown = (event: React.MouseEvent<HTMLCanvasElement>) => {
     if (event.button !== 0) return
-    if (activeAbility) return
     const rect = event.currentTarget.getBoundingClientRect()
     const start = { x: event.clientX - rect.left, y: event.clientY - rect.top }
     setDragBox({ start, end: start })
@@ -157,14 +154,6 @@ export const RTSGame: React.FC<{
     if (event.button !== 0) return
     const rect = event.currentTarget.getBoundingClientRect()
     const end = { x: event.clientX - rect.left, y: event.clientY - rect.top }
-    if (activeAbility) {
-      const world = screenToWorld({ x: end.x, y: end.y }, camera)
-      const next = useAbility(simRef.current, activeAbility, world)
-      simRef.current = next
-      setSim(next)
-      setActiveAbility(null)
-      return
-    }
     if (!dragBox) return
     const { start } = dragBox
     const dx = Math.abs(end.x - start.x)
@@ -199,14 +188,6 @@ export const RTSGame: React.FC<{
     const rect = event.currentTarget.getBoundingClientRect()
     const world = screenToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, camera)
 
-    if (activeAbility) {
-      const next = useAbility(simRef.current, activeAbility, world)
-      simRef.current = next
-      setSim(next)
-      setActiveAbility(null)
-      return
-    }
-
     const enemy = getEntityAt(simRef.current.entities, world, 'enemy')
     if (enemy) {
       issueToSelected({ type: 'attack', targetId: enemy.id, targetPos: { ...enemy.pos } })
@@ -225,20 +206,18 @@ export const RTSGame: React.FC<{
     })
   }
 
-  const hero = sim.hero
   const selectedEntity = sim.entities.find((entity) => entity.id === selectedIds[0])
-  const objectiveText = mission.objective.type === 'survive'
-    ? `Survive ${Math.max(0, Math.ceil(mission.objective.durationSec - sim.time))}s`
-    : 'Destroy the enemy HQ'
-
-  const abilities = hero?.abilities ?? []
+  const enemiesRemaining = sim.entities.filter((entity) => entity.team === 'enemy').length
+  const hq = sim.entities.find((entity) => entity.kind === 'hq')
+  const hqHp = hq ? `${Math.round(hq.hp)}/${Math.round(hq.maxHp)}` : '0'
 
   return (
     <div className="rts">
       <div className="rts-top">
-        <div>{mission.name}</div>
-        <div className="muted">Objective: {objectiveText}</div>
-        <div className="muted">Time: {Math.floor(sim.time)}s</div>
+        <div>Day {combat.dayNumber} Combat</div>
+        <div className="muted">Wave {Math.min(sim.waveIndex + 1, combat.waves.length)}/{combat.waves.length}</div>
+        <div className="muted">Enemies: {enemiesRemaining}</div>
+        <div className="muted">HQ: {hqHp}</div>
       </div>
       <div className="rts-body">
         <canvas
@@ -263,19 +242,6 @@ export const RTSGame: React.FC<{
           ) : (
             <div className="muted">No unit selected.</div>
           )}
-          <h4>Hero Abilities</h4>
-          {abilities.length === 0 && <div className="muted">No hero selected.</div>}
-          {abilities.map((ability) => (
-            <button
-              key={ability.id}
-              className={`btn ${ability.cooldownLeft <= 0 ? 'success' : ''}`}
-              disabled={ability.cooldownLeft > 0}
-              onClick={() => setActiveAbility(ability.id)}
-            >
-              {ability.name} {ability.cooldownLeft > 0 ? `(${ability.cooldownLeft.toFixed(1)}s)` : ''}
-            </button>
-          ))}
-          {activeAbility && <div className="muted">Right click a target area.</div>}
           <div className="rts-help">
             <div className="muted">Hotkeys: A attack-move, S stop, Ctrl+1/2/3 assign group, 1/2/3 recall.</div>
           </div>
@@ -288,14 +254,14 @@ export const RTSGame: React.FC<{
             <h3>Paused</h3>
             <button className="btn success" onClick={() => setPaused(false)}>Resume</button>
             <button className="btn" onClick={() => {
-              const next = createSimState(mission, meta, leaderHeroId)
+              const next = createSimState(combat, run)
               simRef.current = next
               setSim(next)
               setSelectedIds([])
               setPaused(false)
               endedRef.current = false
-            }}>Restart</button>
-            <button className="btn" onClick={onExit}>Quit to Menu</button>
+            }}>Restart Day</button>
+            <button className="btn" onClick={onExit}>Quit to Level Select</button>
           </div>
         </div>
       )}
