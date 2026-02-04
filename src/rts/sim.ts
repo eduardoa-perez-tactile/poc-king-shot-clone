@@ -237,6 +237,36 @@ const issueDefaultEnemyOrders = (state: SimState, grid: Grid) => {
   })
 }
 
+const tryImmediateAttack = (
+  attacker: EntityState,
+  target: EntityState,
+  projectiles: Projectile[],
+  effects: CombatEffect[],
+  time: number
+) => {
+  const dist = distance(attacker.pos, target.pos)
+  if (dist > attacker.range) return
+  if (attacker.cooldownLeft > 0) return
+  const isUnit = attacker.kind === 'infantry' || attacker.kind === 'archer' || attacker.kind === 'cavalry'
+  const targetIsUnit = target.kind === 'infantry' || target.kind === 'archer' || target.kind === 'cavalry'
+  const multiplier = isUnit && targetIsUnit ? typeMultiplier(attacker.kind as UnitType, target.kind as UnitType) : 1
+  const dmg = attacker.attack * multiplier
+  if (attacker.kind === 'archer') {
+    projectiles.push({
+      id: PROJECTILE_ID(),
+      pos: { ...attacker.pos },
+      targetId: target.id,
+      speed: 240,
+      damage: dmg,
+      team: attacker.team
+    })
+  } else {
+    target.hp -= dmg
+    addEffect(effects, 'hit', target.pos, 18, '#f97316', time, 0.2)
+  }
+  attacker.cooldownLeft = attacker.cooldown
+}
+
 const spawnWave = (sim: SimState) => {
   const wave = sim.combat.waves[sim.waveIndex]
   if (!wave) return
@@ -323,28 +353,8 @@ export const stepSim = (state: SimState, dt: number, grid: Grid, mode: 'build' |
 
       const activeTarget = entity.targetId ? entityMap.get(entity.targetId) : undefined
       if (activeTarget) {
-        const dist = distance(entity.pos, activeTarget.pos)
-        if (dist <= entity.range) {
-          if (entity.cooldownLeft <= 0) {
-            const isUnit = entity.kind === 'infantry' || entity.kind === 'archer' || entity.kind === 'cavalry'
-            const targetIsUnit = activeTarget.kind === 'infantry' || activeTarget.kind === 'archer' || activeTarget.kind === 'cavalry'
-            const multiplier = isUnit && targetIsUnit ? typeMultiplier(entity.kind, activeTarget.kind) : 1
-            const dmg = entity.attack * multiplier
-            if (entity.kind === 'archer') {
-              projectiles.push({
-                id: PROJECTILE_ID(),
-                pos: { ...entity.pos },
-                targetId: activeTarget.id,
-                speed: 240,
-                damage: dmg,
-                team: entity.team
-              })
-            } else {
-              activeTarget.hp -= dmg
-              addEffect(effects, 'hit', activeTarget.pos, 18, '#f97316', time, 0.2)
-            }
-            entity.cooldownLeft = entity.cooldown
-          }
+        if (distance(entity.pos, activeTarget.pos) <= entity.range) {
+          tryImmediateAttack(entity, activeTarget, projectiles, effects, time)
         } else {
           ensurePath(grid, entity, activeTarget.pos)
           moveAlongPath(entity, dt)
@@ -362,12 +372,10 @@ export const stepSim = (state: SimState, dt: number, grid: Grid, mode: 'build' |
       }
     }
 
-    if (entity.kind === 'hero' && entity.order.type === 'move') {
+    if (entity.kind !== 'hq' && entity.order.type === 'move') {
       const auto = findClosestEnemy(entity, entities, entity.range)
-      if (auto && entity.cooldownLeft <= 0) {
-        auto.hp -= entity.attack
-        addEffect(effects, 'hit', auto.pos, 20, '#f59e0b', time, 0.25)
-        entity.cooldownLeft = entity.cooldown
+      if (auto) {
+        tryImmediateAttack(entity, auto, projectiles, effects, time)
       }
     }
 
