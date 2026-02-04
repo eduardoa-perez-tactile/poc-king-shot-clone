@@ -45,8 +45,12 @@ const drawPads = (
     if (building) {
       ctx.fillStyle = '#1f2937'
       ctx.fillRect(topLeft.x, topLeft.y, w, h)
-      ctx.strokeStyle = '#334155'
-      ctx.lineWidth = 2
+      if (hovered) {
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.12)'
+        ctx.fillRect(topLeft.x, topLeft.y, w, h)
+      }
+      ctx.strokeStyle = hovered ? '#38bdf8' : '#334155'
+      ctx.lineWidth = hovered ? 3 : 2
       ctx.strokeRect(topLeft.x, topLeft.y, w, h)
 
       ctx.fillStyle = '#e2e8f0'
@@ -63,6 +67,12 @@ const drawPads = (
       ctx.fillStyle = '#38bdf8'
       ctx.font = `${11 * cam.zoom}px 'Space Mono', monospace`
       ctx.fillText(`L${building.level}`, topLeft.x + w - 10 * cam.zoom, topLeft.y + 10 * cam.zoom)
+
+      if (hovered) {
+        ctx.fillStyle = '#e2e8f0'
+        ctx.font = `${11 * cam.zoom}px 'Space Mono', monospace`
+        ctx.fillText('Upgrade', topLeft.x + w / 2, topLeft.y + h - 12 * cam.zoom)
+      }
     } else {
       ctx.strokeStyle = hovered ? '#38bdf8' : 'rgba(148, 163, 184, 0.6)'
       ctx.lineWidth = hovered ? 2 : 1

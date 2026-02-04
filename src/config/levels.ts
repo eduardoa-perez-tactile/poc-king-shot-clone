@@ -113,38 +113,38 @@ export interface LevelDefinition {
 const DEFAULT_PADS: BuildingPad[] = [
   {
     id: 'pad_a',
-    x: 200,
-    y: 260,
+    x: 220,
+    y: 180,
     allowedTypes: ['barracks', 'range', 'stable']
   },
   {
     id: 'pad_b',
-    x: 200,
-    y: 340,
+    x: 360,
+    y: 320,
     allowedTypes: ['gold_mine', 'house', 'watchtower']
   },
   {
     id: 'pad_c',
-    x: 200,
-    y: 420,
+    x: 520,
+    y: 140,
     allowedTypes: ['gold_mine', 'house', 'blacksmith']
   },
   {
     id: 'pad_d',
-    x: 260,
-    y: 260,
+    x: 320,
+    y: 620,
     allowedTypes: ['barracks', 'range', 'stable']
   },
   {
     id: 'pad_e',
-    x: 260,
+    x: 620,
     y: 340,
     allowedTypes: ['house', 'watchtower', 'blacksmith']
   },
   {
     id: 'pad_f',
-    x: 260,
-    y: 420,
+    x: 840,
+    y: 220,
     allowedTypes: ['gold_mine', 'blacksmith', 'stable']
   }
 ]
