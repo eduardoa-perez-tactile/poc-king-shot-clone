@@ -7,12 +7,16 @@ export interface RunBuilding {
   id: BuildingId
   level: number
   padId: string
+  hp: number
+  maxHp: number
 }
 
 export interface RunSquad {
   id: string
   type: UnitType
   size: number
+  spawnPos?: { x: number; y: number }
+  spawnPadId?: string
 }
 
 export interface IncomeLineItem {

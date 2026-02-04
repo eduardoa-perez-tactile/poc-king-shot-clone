@@ -154,28 +154,28 @@ const DEFAULT_HERO: HeroLoadout = {
   name: 'Vanguard',
   description: 'A hardened champion who anchors the defense each day.',
   baseStats: {
-    hp: 320,
-    attack: 16,
-    range: 70,
-    speed: 120,
-    cooldown: 0.8
+    hp: 2000,
+    attack: 52,
+    range: 110,
+    speed: 140,
+    cooldown: 0.6
   },
-  growthPerDay: { hp: 22, attack: 2 },
+  growthPerDay: { hp: 140, attack: 8 },
   abilities: {
     q: {
       id: 'q',
       name: 'Cleave',
       description: 'A wide strike that damages nearby enemies.',
       cooldown: 8,
-      damage: 90,
-      radius: 120
+      damage: 220,
+      radius: 170
     },
     e: {
       id: 'e',
       name: 'Second Wind',
       description: 'Recover health to stay in the fight.',
       cooldown: 12,
-      heal: 80
+      heal: 300
     }
   }
 }
@@ -289,9 +289,9 @@ export const LEVELS: LevelDefinition[] = [
         { x: 680, y: 420, w: 140, h: 120 },
         { x: 220, y: 520, w: 160, h: 80 }
       ],
-      playerSpawn: { x: 220, y: 400 },
+      playerSpawn: { x: 340, y: 340 },
       enemySpawn: { x: 980, y: 400 },
-      playerHQ: { x: 160, y: 400 }
+      playerHQ: { x: 120, y: 340 }
     }
   },
   {
@@ -373,9 +373,9 @@ export const LEVELS: LevelDefinition[] = [
         { x: 520, y: 520, w: 140, h: 160 },
         { x: 300, y: 320, w: 120, h: 160 }
       ],
-      playerSpawn: { x: 240, y: 400 },
+      playerSpawn: { x: 340, y: 340 },
       enemySpawn: { x: 960, y: 400 },
-      playerHQ: { x: 160, y: 400 }
+      playerHQ: { x: 120, y: 340 }
     }
   },
   {
@@ -461,9 +461,9 @@ export const LEVELS: LevelDefinition[] = [
         { x: 420, y: 260, w: 160, h: 120 },
         { x: 700, y: 440, w: 160, h: 120 }
       ],
-      playerSpawn: { x: 220, y: 400 },
+      playerSpawn: { x: 340, y: 340 },
       enemySpawn: { x: 980, y: 400 },
-      playerHQ: { x: 160, y: 400 }
+      playerHQ: { x: 120, y: 340 }
     }
   }
 ]

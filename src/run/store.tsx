@@ -16,9 +16,11 @@ import {
   markBossDefeated,
   markHqHp,
   recomputeGoalsProgress,
+  resetBuildingHp,
   removeSquads,
   upgradeBuilding
 } from './runState'
+import { getBuildingMaxHp } from './economy'
 import { MetaState, RunPhase, RunState } from './types'
 import { BuildingId } from '../config/buildings'
 
@@ -39,7 +41,7 @@ interface RunStore {
   retryRun: () => void
   buyBuilding: (id: BuildingId, padId: string) => void
   upgradeBuilding: (padId: string) => void
-  buySquad: (type: UnitType) => void
+  buySquad: (type: UnitType, spawnPos?: { x: number; y: number }, spawnPadId?: string) => void
   startCombat: () => void
   resolveCombat: (outcome: CombatOutcome) => void
   startNewDay: () => void
@@ -114,12 +116,12 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveRun(next)
   }
 
-  const buySquadAction = (type: UnitType) => {
+  const buySquadAction = (type: UnitType, spawnPos?: { x: number; y: number }, spawnPadId?: string) => {
     if (!activeRun || runPhase !== 'build') return
     if (!canBuySquad(activeRun, type)) return
     const cost = getUnitCost(type)
     const next = recomputeGoalsProgress(
-      { ...buySquad(activeRun, type), gold: activeRun.gold - cost },
+      { ...buySquad(activeRun, type, spawnPos, spawnPadId), gold: activeRun.gold - cost },
       getRunLevel(activeRun)
     )
     setActiveRun(next)
@@ -138,7 +140,8 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const withHp = markHqHp(withBoss, withBoss.dayNumber, outcome.hqHpPercent)
     const daysSurvived = outcome.victory ? Math.max(withHp.daysSurvived, withHp.dayNumber) : withHp.daysSurvived
     const runWithDays = { ...withHp, daysSurvived }
-    const paid = outcome.victory ? applyDayEndRewards(runWithDays, level) : { run: runWithDays, breakdown: undefined }
+    const healedBuildings = outcome.victory ? resetBuildingHp(runWithDays) : runWithDays
+    const paid = outcome.victory ? applyDayEndRewards(healedBuildings, level) : { run: healedBuildings, breakdown: undefined }
     const next = recomputeGoalsProgress(paid.run, level)
     setActiveRun(next)
     setLastCombat(outcome)
@@ -233,13 +236,19 @@ const normalizeRun = (run: RunState | null): RunState | null => {
   const buildings = run.buildings.map((building, index) => {
     if ('padId' in building && building.padId) {
       usedPads.add(building.padId)
-      return building
+      const maxHp = (building as typeof building & { maxHp?: number }).maxHp
+      if (typeof maxHp === 'number') {
+        return building
+      }
+      const nextMax = getBuildingMaxHp(building.id, building.level)
+      return { ...building, hp: nextMax, maxHp: nextMax }
     }
     const preferred = pads.find((pad) => !usedPads.has(pad.id) && pad.allowedTypes.includes(building.id))
     const fallback = pads.find((pad) => !usedPads.has(pad.id)) ?? pads[0]
     const padId = preferred?.id ?? fallback?.id ?? `pad_${index}`
     usedPads.add(padId)
-    return { ...building, padId }
+    const nextMax = getBuildingMaxHp(building.id, building.level)
+    return { ...building, padId, hp: nextMax, maxHp: nextMax }
   })
   const heroProgress = run.heroProgress ?? { hp: 0, attack: 0 }
   return { ...run, buildings, heroProgress }

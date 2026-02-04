@@ -2,7 +2,14 @@ import { BuildingId, BUILDING_DEFS } from '../config/buildings'
 import { getDayPlan, getLevelById, LevelDefinition, LevelGoal, HeroRuntime } from '../config/levels'
 import { UnitType, UNIT_DEFS } from '../config/units'
 import { IncomeBreakdown, MetaState, RunBuilding, RunPhase, RunSquad, RunState } from './types'
-import { getBuildingPurchaseCost, getBuildingUpgradeCost, getIncomeBreakdown, getSquadCap, getUnitCost } from './economy'
+import {
+  getBuildingPurchaseCost,
+  getBuildingUpgradeCost,
+  getBuildingMaxHp,
+  getIncomeBreakdown,
+  getSquadCap,
+  getUnitCost
+} from './economy'
 
 const SQUAD_ID = (() => {
   let id = 0
@@ -24,7 +31,10 @@ export const createRunState = (levelId: string): RunState => {
     daysSurvived: 0,
     gold: level.startGold,
     totalGoldEarned: 0,
-    buildings: level.startingBuildings.map((building) => ({ ...building })),
+    buildings: level.startingBuildings.map((building) => {
+      const maxHp = getBuildingMaxHp(building.id, building.level)
+      return { ...building, hp: maxHp, maxHp }
+    }),
     unitRoster: [],
     goalsProgress: {},
     bossDefeatedDays: [],
@@ -37,23 +47,32 @@ export const createRunState = (levelId: string): RunState => {
 
 export const addBuilding = (run: RunState, id: BuildingId, padId: string): RunState => {
   if (run.buildings.some((building) => building.padId === padId)) return run
-  return { ...run, buildings: [...run.buildings, { id, level: 1, padId }] }
+  const maxHp = getBuildingMaxHp(id, 1)
+  return { ...run, buildings: [...run.buildings, { id, level: 1, padId, hp: maxHp, maxHp }] }
 }
 
 export const upgradeBuilding = (run: RunState, padId: string): RunState => {
   return {
     ...run,
     buildings: run.buildings.map((building) =>
-      building.padId === padId ? { ...building, level: building.level + 1 } : building
+      building.padId === padId
+        ? (() => {
+            const nextLevel = building.level + 1
+            const maxHp = getBuildingMaxHp(building.id, nextLevel)
+            return { ...building, level: nextLevel, hp: maxHp, maxHp }
+          })()
+        : building
     )
   }
 }
 
-export const buySquad = (run: RunState, type: UnitType): RunState => {
+export const buySquad = (run: RunState, type: UnitType, spawnPos?: { x: number; y: number }, spawnPadId?: string): RunState => {
   const squad: RunSquad = {
     id: SQUAD_ID(),
     type,
-    size: UNIT_DEFS[type].squadSize
+    size: UNIT_DEFS[type].squadSize,
+    spawnPos,
+    spawnPadId
   }
   return { ...run, unitRoster: [...run.unitRoster, squad] }
 }
@@ -168,7 +187,10 @@ export const getBuildCosts = () => ({
 export const getStartingBuildings = (levelId: string): RunBuilding[] => {
   const level = getLevelById(levelId)
   if (!level) return []
-  return level.startingBuildings.map((building) => ({ ...building }))
+  return level.startingBuildings.map((building) => {
+    const maxHp = getBuildingMaxHp(building.id, building.level)
+    return { ...building, hp: maxHp, maxHp }
+  })
 }
 
 export const getHeroRuntime = (run: RunState): HeroRuntime => {
@@ -189,3 +211,11 @@ export const getHeroRuntime = (run: RunState): HeroRuntime => {
     abilities: level.heroLoadout.abilities
   }
 }
+
+export const resetBuildingHp = (run: RunState): RunState => ({
+  ...run,
+  buildings: run.buildings.map((building) => ({
+    ...building,
+    hp: building.maxHp
+  }))
+})

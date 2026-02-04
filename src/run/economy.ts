@@ -9,6 +9,13 @@ export const hasBuilding = (run: RunState, id: BuildingId) => getBuildingLevel(r
 
 export const getBuildingPurchaseCost = (id: BuildingId) => BUILDING_DEFS[id].baseCost
 
+export const getBuildingMaxHp = (id: BuildingId, level: number) => {
+  const base = 800
+  const perLevel = 200
+  const scaled = base + perLevel * Math.max(1, level)
+  return Math.max(300, Math.floor(scaled))
+}
+
 export const getBuildingUpgradeCost = (id: BuildingId, nextLevel: number) => {
   const def = BUILDING_DEFS[id]
   const scaled = def.upgradeBase * Math.pow(def.upgradeScale, Math.max(0, nextLevel - 1))

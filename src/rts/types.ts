@@ -101,6 +101,15 @@ export interface CombatStats {
   lostSquads: string[]
 }
 
+export interface CombatEffect {
+  kind: 'hit' | 'aoe' | 'heal'
+  pos: Vec2
+  radius: number
+  color: string
+  bornAt: number
+  expiresAt: number
+}
+
 export interface CombatResult {
   victory: boolean
   stats: CombatStats
@@ -114,6 +123,7 @@ export interface SimState {
   status: 'running' | 'win' | 'lose'
   entities: EntityState[]
   projectiles: Projectile[]
+  effects: CombatEffect[]
   combat: CombatDefinition
   stats: CombatStats
   waveIndex: number

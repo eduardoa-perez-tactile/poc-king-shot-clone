@@ -6,12 +6,23 @@ import { getIncomeBreakdown, getSquadCap } from '../../run/economy'
 import { useRunStore } from '../../run/store'
 import { buildCombatDefinition } from '../../rts/combat'
 import { RTSGame } from '../../rts/RTSGame'
+import { hitTestPad } from '../../rts/pads'
 import { BuildPanel } from './BuildPanel'
 import { BuildingPanel } from './BuildingPanel'
 import { DayEndOverlay } from './DayEndOverlay'
 import { Toast, ToastStack } from './ToastStack'
 
 const formatNumber = (value: number) => value.toLocaleString()
+const SQUAD_SPAWN_OFFSETS = [
+  { x: -90, y: -70 },
+  { x: 0, y: -80 },
+  { x: 90, y: -70 },
+  { x: -110, y: 0 },
+  { x: 110, y: 0 },
+  { x: -90, y: 70 },
+  { x: 0, y: 80 },
+  { x: 90, y: 70 }
+]
 
 export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
   const {
@@ -100,7 +111,39 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
       addToast({ message: 'Not enough gold.' })
       return
     }
-    buySquad(def.unlocksUnit)
+    const pad = level.buildingPads.find((entry) => entry.id === padId)
+    if (!pad) {
+      buySquad(def.unlocksUnit)
+      return
+    }
+    const hq = level.map.playerHQ
+    const hqRect = {
+      x: hq.x - 36,
+      y: hq.y - 24,
+      w: 72,
+      h: 48
+    }
+    const used = activeRun.unitRoster
+      .filter((squad) => squad.spawnPadId === padId && squad.spawnPos)
+      .map((squad) => squad.spawnPos as { x: number; y: number })
+    const next = SQUAD_SPAWN_OFFSETS.find((offset) => {
+      const candidate = { x: pad.x + offset.x, y: pad.y + offset.y }
+      if (level.buildingPads.some((entry) => hitTestPad(entry, candidate))) return false
+      if (
+        candidate.x >= hqRect.x &&
+        candidate.x <= hqRect.x + hqRect.w &&
+        candidate.y >= hqRect.y &&
+        candidate.y <= hqRect.y + hqRect.h
+      ) {
+        return false
+      }
+      return !used.some((pos) => Math.hypot(pos.x - candidate.x, pos.y - candidate.y) < 10)
+    })
+    if (!next) {
+      addToast({ message: 'No space near this building.' })
+      return
+    }
+    buySquad(def.unlocksUnit, { x: pad.x + next.x, y: pad.y + next.y }, padId)
   }
 
   useEffect(() => {
@@ -145,6 +188,7 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
           combat={combatDefinition}
           run={activeRun}
           phase={runPhase === 'combat' ? 'combat' : 'build'}
+          resetOnBuild={runPhase === 'day_end'}
           buildingPads={level.buildingPads}
           buildings={activeRun.buildings}
           onPadClick={handlePadClick}

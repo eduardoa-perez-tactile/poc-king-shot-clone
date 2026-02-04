@@ -28,13 +28,14 @@ export const RTSGame: React.FC<{
   combat: CombatDefinition
   run: RunState
   phase: 'build' | 'combat'
+  resetOnBuild?: boolean
   buildingPads: BuildingPad[]
   buildings: RunBuilding[]
   onPadClick: (padId: string) => void
   onPadBlocked: () => void
   onComplete: (result: CombatResult) => void
   onExit: () => void
-}> = ({ combat, run, phase, buildingPads, buildings, onPadClick, onPadBlocked, onComplete, onExit }) => {
+}> = ({ combat, run, phase, resetOnBuild, buildingPads, buildings, onPadClick, onPadBlocked, onComplete, onExit }) => {
   const [sim, setSim] = useState<SimState>(() => createSimState(combat, run))
   const simRef = useRef(sim)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -59,10 +60,14 @@ export const RTSGame: React.FC<{
 
   useEffect(() => {
     if (combat.dayNumber !== dayRef.current) {
-      const next = createSimState(combat, run)
+      const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
+      const next = createSimState(combat, run, {
+        heroPos: hero ? { ...hero.pos } : combat.map.playerSpawn,
+        heroHp: hero?.hp
+      })
       simRef.current = next
       setSim(next)
-      setSelectedIds(next.heroEntityId ? [next.heroEntityId] : [])
+      setSelectedIds([])
       setPaused(false)
       controlGroups.current = {}
       endedRef.current = false
@@ -82,7 +87,7 @@ export const RTSGame: React.FC<{
       })
       simRef.current = next
       setSim(next)
-      setSelectedIds(next.heroEntityId ? [next.heroEntityId] : [])
+      setSelectedIds([])
       controlGroups.current = {}
       endedRef.current = false
     }
@@ -90,11 +95,11 @@ export const RTSGame: React.FC<{
       const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
       const next = createSimState(combat, run, {
         heroPos: hero ? { ...hero.pos } : combat.map.playerSpawn,
-        heroHp: hero?.hp
+        heroHp: resetOnBuild ? undefined : hero?.hp
       })
       simRef.current = next
       setSim(next)
-      setSelectedIds(next.heroEntityId ? [next.heroEntityId] : [])
+      setSelectedIds([])
       controlGroups.current = {}
       endedRef.current = false
     }

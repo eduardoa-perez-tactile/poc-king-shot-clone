@@ -4,6 +4,7 @@ import { RunState } from '../run/types'
 import { buildGrid, findPath, Grid } from './pathfinding'
 import {
   CombatDefinition,
+  CombatEffect,
   CombatResult,
   CombatStats,
   EntityState,
@@ -120,6 +121,25 @@ const emptyStats = (): CombatStats => ({
   lostSquads: []
 })
 
+const addEffect = (
+  effects: CombatEffect[],
+  kind: CombatEffect['kind'],
+  pos: Vec2,
+  radius: number,
+  color: string,
+  time: number,
+  duration: number
+) => {
+  effects.push({
+    kind,
+    pos: { ...pos },
+    radius,
+    color,
+    bornAt: time,
+    expiresAt: time + duration
+  })
+}
+
 export const createSimState = (
   combat: CombatDefinition,
   run: RunState,
@@ -138,11 +158,13 @@ export const createSimState = (
   const statMultipliers = getUnitStatMultipliers(run)
   run.unitRoster.forEach((squad) => {
     const mult = statMultipliers[squad.type]
+    const basePos = squad.spawnPos ?? combat.map.playerSpawn
+    const spawnPos = squad.spawnPos ? { ...basePos } : jitter(basePos)
     entities.push(
       createTroopEntity(
         squad.type,
         'player',
-        jitter(combat.map.playerSpawn),
+        spawnPos,
         squad.size,
         { hp: 1 + mult.hp, attack: 1 + mult.attack },
         squad.id
@@ -155,6 +177,7 @@ export const createSimState = (
     status: 'running',
     entities,
     projectiles: [],
+    effects: [],
     combat,
     stats: emptyStats(),
     waveIndex: 0,
@@ -246,9 +269,10 @@ export const stepSim = (state: SimState, dt: number, grid: Grid, mode: 'build' |
   const time = state.time + dt
   const entities = state.entities.map((entity) => ({ ...entity, pos: { ...entity.pos }, buffs: [...entity.buffs] }))
   const projectiles = state.projectiles.map((proj) => ({ ...proj, pos: { ...proj.pos } }))
+  const effects = state.effects.filter((effect) => effect.expiresAt > time).map((effect) => ({ ...effect }))
   const stats: CombatStats = { ...state.stats, lostSquads: [...state.stats.lostSquads] }
 
-  const sim: SimState = { ...state, time, entities, projectiles, stats }
+  const sim: SimState = { ...state, time, entities, projectiles, effects, stats }
 
   const enemiesRemaining = entities.filter((entity) => entity.team === 'enemy').length
 
@@ -317,6 +341,7 @@ export const stepSim = (state: SimState, dt: number, grid: Grid, mode: 'build' |
               })
             } else {
               activeTarget.hp -= dmg
+              addEffect(effects, 'hit', activeTarget.pos, 18, '#f97316', time, 0.2)
             }
             entity.cooldownLeft = entity.cooldown
           }
@@ -334,6 +359,15 @@ export const stepSim = (state: SimState, dt: number, grid: Grid, mode: 'build' |
       const auto = findClosestEnemy(entity, entities, 200)
       if (auto) {
         entity.targetId = auto.id
+      }
+    }
+
+    if (entity.kind === 'hero' && entity.order.type === 'move') {
+      const auto = findClosestEnemy(entity, entities, entity.range)
+      if (auto && entity.cooldownLeft <= 0) {
+        auto.hp -= entity.attack
+        addEffect(effects, 'hit', auto.pos, 20, '#f59e0b', time, 0.25)
+        entity.cooldownLeft = entity.cooldown
       }
     }
 
@@ -355,6 +389,7 @@ export const stepSim = (state: SimState, dt: number, grid: Grid, mode: 'build' |
     const dist = distance(proj.pos, target.pos)
     if (dist < 6) {
       target.hp -= proj.damage
+      addEffect(effects, 'hit', target.pos, 16, '#38bdf8', time, 0.2)
       proj.speed = 0
       return
     }
@@ -405,6 +440,7 @@ export const useHeroAbility = (state: SimState, ability: 'q' | 'e'): SimState =>
   if (!heroDef) return state
   if (state.time < state.heroAbilityCooldowns[ability]) return state
   const entities = state.entities.map((entity) => ({ ...entity, pos: { ...entity.pos }, buffs: [...entity.buffs] }))
+  const effects = state.effects.map((effect) => ({ ...effect }))
   const heroIndex = entities.findIndex((entity) => entity.id === heroId)
   if (heroIndex === -1) return state
   const hero = entities[heroIndex]
@@ -415,13 +451,16 @@ export const useHeroAbility = (state: SimState, ability: 'q' | 'e'): SimState =>
       const dist = distance(hero.pos, entity.pos)
       if (dist <= heroDef.radius) {
         entity.hp -= heroDef.damage
+        addEffect(effects, 'hit', entity.pos, 22, '#fde047', state.time, 0.25)
       }
     })
+    addEffect(effects, 'aoe', hero.pos, heroDef.radius, '#facc15', state.time, 0.35)
   }
 
   if (ability === 'e') {
     if (heroDef.heal) {
       hero.hp = Math.min(hero.maxHp, hero.hp + heroDef.heal)
+      addEffect(effects, 'heal', hero.pos, 80, '#22c55e', state.time, 0.4)
     }
   }
 
@@ -430,7 +469,7 @@ export const useHeroAbility = (state: SimState, ability: 'q' | 'e'): SimState =>
     [ability]: state.time + heroDef.cooldown
   }
   entities[heroIndex] = hero
-  return { ...state, entities, heroAbilityCooldowns }
+  return { ...state, entities, effects, heroAbilityCooldowns }
 }
 
 export const issueOrder = (state: SimState, ids: string[], order: Order, grid: Grid): SimState => {

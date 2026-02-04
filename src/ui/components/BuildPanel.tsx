@@ -44,8 +44,9 @@ export const BuildPanel: React.FC<{
           {pad.allowedTypes.map((id) => {
             const def = BUILDING_DEFS[id]
             const canAfford = gold >= def.baseCost
+            const shortfall = Math.max(0, def.baseCost - gold)
             return (
-              <div key={id} className="list-row">
+              <div key={id} className={`list-row option-card ${canAfford ? 'ready' : 'locked'}`}>
                 <div>
                   <div className="list-title">{def.name}</div>
                   <div className="muted">{def.description}</div>
@@ -53,7 +54,8 @@ export const BuildPanel: React.FC<{
                 </div>
                 <div className="list-actions">
                   <div className="muted">Cost {def.baseCost}</div>
-                  <button className="btn" disabled={!canAfford} onClick={() => onBuild(id)}>
+                  {shortfall > 0 && <div className="muted">Need {shortfall} more</div>}
+                  <button className={`btn ${canAfford ? 'success' : ''}`} disabled={!canAfford} onClick={() => onBuild(id)}>
                     Build
                   </button>
                 </div>

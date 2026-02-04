@@ -39,9 +39,11 @@ export const BuildingPanel: React.FC<{
   const nextLevel = building.level + 1
   const upgradeCost = isMax ? 0 : getBuildingUpgradeCost(building.id, nextLevel)
   const canUpgrade = !isMax && gold >= upgradeCost
+  const upgradeShortfall = Math.max(0, upgradeCost - gold)
   const unitType = def.unlocksUnit
   const unitCost = unitType ? UNIT_DEFS[unitType].baseCost : 0
   const canRecruit = Boolean(unitType) && gold >= unitCost && squadCount < squadCap
+  const recruitShortfall = Math.max(0, unitCost - gold)
 
   return (
     <div className="overlay">
@@ -67,7 +69,8 @@ export const BuildingPanel: React.FC<{
             <>
               <div className="muted">Next Level Effects: {describeLevelEffects(building, nextLevel) || 'No bonuses.'}</div>
               <div className="muted">Upgrade Cost: {formatNumber(upgradeCost)}</div>
-              <button className="btn" disabled={!canUpgrade} onClick={onUpgrade}>Upgrade</button>
+              {upgradeShortfall > 0 && <div className="muted">Need {formatNumber(upgradeShortfall)} more gold.</div>}
+              <button className={`btn ${canUpgrade ? 'success' : ''}`} disabled={!canUpgrade} onClick={onUpgrade}>Upgrade</button>
             </>
           )}
         </div>
@@ -77,7 +80,9 @@ export const BuildingPanel: React.FC<{
             <div className="list-title">Recruit Squad</div>
             <div className="muted">{UNIT_DEFS[unitType].name} squad · Cost {formatNumber(unitCost)}</div>
             <div className="muted">Squad Cap {squadCount}/{squadCap}</div>
-            <button className="btn" disabled={!canRecruit} onClick={onRecruit}>Recruit</button>
+            {recruitShortfall > 0 && <div className="muted">Need {formatNumber(recruitShortfall)} more gold.</div>}
+            {squadCount >= squadCap && <div className="muted">No squad slots available.</div>}
+            <button className={`btn ${canRecruit ? 'success' : ''}`} disabled={!canRecruit} onClick={onRecruit}>Recruit</button>
           </div>
         )}
       </div>

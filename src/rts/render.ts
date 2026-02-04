@@ -2,7 +2,7 @@ import { BuildingPad } from '../config/levels'
 import { BUILDING_DEFS } from '../config/buildings'
 import { RunBuilding } from '../run/types'
 import { Grid } from './pathfinding'
-import { getPadRect } from './pads'
+import { PAD_SIZE, getPadRect } from './pads'
 import { EntityState, SimState, Vec2 } from './types'
 
 export interface Camera {
@@ -78,6 +78,35 @@ const drawPads = (
   })
 }
 
+const drawHQ = (ctx: CanvasRenderingContext2D, entity: EntityState, cam: Camera) => {
+  const rect = {
+    x: entity.pos.x - PAD_SIZE.w / 2,
+    y: entity.pos.y - PAD_SIZE.h / 2,
+    w: PAD_SIZE.w,
+    h: PAD_SIZE.h
+  }
+  const topLeft = worldToScreen({ x: rect.x, y: rect.y }, cam)
+  ctx.fillStyle = '#1f2937'
+  ctx.fillRect(topLeft.x, topLeft.y, rect.w * cam.zoom, rect.h * cam.zoom)
+  ctx.strokeStyle = '#2563eb'
+  ctx.lineWidth = 2
+  ctx.strokeRect(topLeft.x, topLeft.y, rect.w * cam.zoom, rect.h * cam.zoom)
+  ctx.fillStyle = '#e2e8f0'
+  ctx.font = `${12 * cam.zoom}px 'Space Mono', monospace`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('HQ', topLeft.x + (rect.w * cam.zoom) / 2, topLeft.y + (rect.h * cam.zoom) / 2)
+}
+
+const drawRange = (ctx: CanvasRenderingContext2D, entity: EntityState, cam: Camera) => {
+  const screen = worldToScreen(entity.pos, cam)
+  ctx.beginPath()
+  ctx.arc(screen.x, screen.y, entity.range * cam.zoom, 0, Math.PI * 2)
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)'
+  ctx.lineWidth = 2
+  ctx.stroke()
+}
+
 export const renderScene = (
   ctx: CanvasRenderingContext2D,
   sim: SimState,
@@ -119,22 +148,49 @@ export const renderScene = (
     ctx.fillRect(topLeft.x, topLeft.y, ob.w * cam.zoom, ob.h * cam.zoom)
   })
 
+  sim.effects.forEach((effect) => {
+    const screen = worldToScreen(effect.pos, cam)
+    const life = effect.expiresAt - effect.bornAt
+    const remaining = Math.max(0, effect.expiresAt - sim.time)
+    const alpha = life > 0 ? Math.min(1, remaining / life) : 0.2
+    const radius = effect.radius * (1 + (1 - alpha) * 0.2) * cam.zoom
+    ctx.beginPath()
+    ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2)
+    if (effect.kind === 'hit') {
+      ctx.fillStyle = `${effect.color}${Math.floor(alpha * 255).toString(16).padStart(2, '0')}`
+      ctx.fill()
+    } else {
+      ctx.strokeStyle = `${effect.color}${Math.floor(alpha * 255).toString(16).padStart(2, '0')}`
+      ctx.lineWidth = 2 * cam.zoom
+      ctx.stroke()
+    }
+  })
+
   if (overlays) {
     drawPads(ctx, overlays.pads, overlays.buildings, overlays.hoveredPadId, cam)
   }
 
+  selection.forEach((id) => {
+    const entity = sim.entities.find((entry) => entry.id === id)
+    if (!entity || entity.kind === 'hq') return
+    drawRange(ctx, entity, cam)
+  })
+
   sim.entities.forEach((entity) => {
     const screen = worldToScreen(entity.pos, cam)
     const isSelected = selection.includes(entity.id)
-    if (entity.team === 'player') {
-      ctx.fillStyle = entity.kind === 'hero' ? '#f59e0b' : '#38bdf8'
+    if (entity.kind === 'hq') {
+      drawHQ(ctx, entity, cam)
     } else {
-      ctx.fillStyle = '#ef4444'
+      if (entity.team === 'player') {
+        ctx.fillStyle = entity.kind === 'hero' ? '#f59e0b' : '#38bdf8'
+      } else {
+        ctx.fillStyle = '#ef4444'
+      }
+      ctx.beginPath()
+      ctx.arc(screen.x, screen.y, entity.radius * cam.zoom, 0, Math.PI * 2)
+      ctx.fill()
     }
-    if (entity.kind === 'hq') ctx.fillStyle = '#2563eb'
-    ctx.beginPath()
-    ctx.arc(screen.x, screen.y, entity.radius * cam.zoom, 0, Math.PI * 2)
-    ctx.fill()
 
     if (isSelected) {
       ctx.strokeStyle = '#22c55e'
