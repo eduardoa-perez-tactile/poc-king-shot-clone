@@ -1,8 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { GameState } from '../game/types'
-import { createGridForMission, createSimState, buildMissionResult, issueOrder, stepSim, useAbility } from './sim'
+import React, { useEffect, useRef, useState } from 'react'
+import { BuildingPad } from '../config/levels'
+import { RunBuilding, RunState } from '../run/types'
+import { createGridForCombat, createSimState, buildCombatResult, issueOrder, stepSim, useHeroAbility } from './sim'
 import { renderScene, screenToWorld, clampCamera, Camera } from './render'
-import { EntityState, MissionDefinition, MissionResult, Order, SimState, Vec2 } from './types'
+import { hitTestPad } from './pads'
+import { CombatDefinition, CombatResult, EntityState, Order, SimState, Vec2 } from './types'
+import { UNIT_DEFS } from '../config/units'
 import { Grid } from './pathfinding'
 
 const FIXED_DT = 1 / 30
@@ -22,40 +25,112 @@ const getEntityAt = (entities: EntityState[], pos: Vec2, team: 'player' | 'enemy
 }
 
 export const RTSGame: React.FC<{
-  mission: MissionDefinition
-  meta: GameState
-  leaderHeroId?: string
-  onComplete: (result: MissionResult, casualties: { infantry: number; archer: number; cavalry: number }) => void
+  combat: CombatDefinition
+  run: RunState
+  phase: 'build' | 'combat'
+  resetOnBuild?: boolean
+  buildingPads: BuildingPad[]
+  buildings: RunBuilding[]
+  onPadClick: (padId: string) => void
+  onPadBlocked: () => void
+  onComplete: (result: CombatResult) => void
   onExit: () => void
-}> = ({ mission, meta, leaderHeroId, onComplete, onExit }) => {
-  const [sim, setSim] = useState<SimState>(() => createSimState(mission, meta, leaderHeroId))
+}> = ({ combat, run, phase, resetOnBuild, buildingPads, buildings, onPadClick, onPadBlocked, onComplete, onExit }) => {
+  const [sim, setSim] = useState<SimState>(() => createSimState(combat, run))
   const simRef = useRef(sim)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [hoveredEnemyId, setHoveredEnemyId] = useState<string | null>(null)
+  const [hoveredPadId, setHoveredPadId] = useState<string | null>(null)
   const [dragBox, setDragBox] = useState<{ start: Vec2; end: Vec2 } | null>(null)
   const [paused, setPaused] = useState(false)
   const [commandMode, setCommandMode] = useState<'move' | 'attackMove'>('move')
-  const [activeAbility, setActiveAbility] = useState<string | null>(null)
   const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 1 })
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const gridRef = useRef<Grid>(createGridForMission(mission))
+  const gridRef = useRef<Grid>(createGridForCombat(combat))
   const rafRef = useRef<number | null>(null)
+  const dragMovedRef = useRef(false)
   const controlGroups = useRef<Record<number, string[]>>({})
   const endedRef = useRef(false)
+  const phaseRef = useRef(phase)
+  const dayRef = useRef(combat.dayNumber)
 
   useEffect(() => {
     simRef.current = sim
   }, [sim])
 
   useEffect(() => {
+    if (combat.dayNumber !== dayRef.current) {
+      const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
+      const next = createSimState(combat, run, {
+        heroPos: hero ? { ...hero.pos } : combat.map.playerSpawn,
+        heroHp: hero?.hp
+      })
+      simRef.current = next
+      setSim(next)
+      setSelectedIds([])
+      setPaused(false)
+      controlGroups.current = {}
+      endedRef.current = false
+      dayRef.current = combat.dayNumber
+    }
+  }, [combat, run])
+
+  useEffect(() => {
+    if (phaseRef.current === phase) return
+    const prev = phaseRef.current
+    phaseRef.current = phase
+    if (prev === 'build' && phase === 'combat') {
+      const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
+      const next = createSimState(combat, run, {
+        heroPos: hero ? { ...hero.pos } : combat.map.playerSpawn,
+        heroHp: hero?.hp
+      })
+      simRef.current = next
+      setSim(next)
+      setSelectedIds([])
+      controlGroups.current = {}
+      endedRef.current = false
+    }
+    if (prev === 'combat' && phase === 'build') {
+      const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
+      const next = createSimState(combat, run, {
+        heroPos: hero ? { ...hero.pos } : combat.map.playerSpawn,
+        heroHp: resetOnBuild ? undefined : hero?.hp
+      })
+      simRef.current = next
+      setSim(next)
+      setSelectedIds([])
+      controlGroups.current = {}
+      endedRef.current = false
+    }
+    if (phase === 'build') {
+      setPaused(false)
+    }
+  }, [phase, combat, run])
+
+  useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setPaused((prev) => !prev)
+        if (phase === 'combat') {
+          setPaused((prev) => !prev)
+        }
+        return
       }
       if (event.key.toLowerCase() === 'a') {
         setCommandMode('attackMove')
       }
       if (event.key.toLowerCase() === 's') {
         issueToSelected({ type: 'stop' })
+      }
+      if ((event.key === 'q' || event.key === 'Q') && phase === 'combat' && !paused) {
+        const next = useHeroAbility(simRef.current, 'q')
+        simRef.current = next
+        setSim(next)
+      }
+      if ((event.key === 'e' || event.key === 'E') && phase === 'combat' && !paused) {
+        const next = useHeroAbility(simRef.current, 'e')
+        simRef.current = next
+        setSim(next)
       }
       if (event.ctrlKey && ['1', '2', '3'].includes(event.key)) {
         controlGroups.current[Number(event.key)] = [...selectedIds]
@@ -79,7 +154,7 @@ export const RTSGame: React.FC<{
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [selectedIds])
+  }, [selectedIds, phase, paused])
 
   const issueToSelected = (order: Order) => {
     if (selectedIds.length === 0) return
@@ -104,22 +179,27 @@ export const RTSGame: React.FC<{
 
       if (!paused) {
         while (acc >= FIXED_DT) {
-          const next = stepSim(simRef.current, FIXED_DT, gridRef.current)
+          const next = stepSim(simRef.current, FIXED_DT, gridRef.current, phase === 'combat' ? 'combat' : 'build')
           simRef.current = next
           acc -= FIXED_DT
           if (next.status !== 'running' && !endedRef.current) {
             endedRef.current = true
-            const result = buildMissionResult(next)
-            onComplete(result, next.stats.casualties)
+            const result = buildCombatResult(next)
+            onComplete(result)
           }
         }
       }
 
-      const clamped = clampCamera(camera, canvas.width, canvas.height, mission.map.width, mission.map.height)
+      const clamped = clampCamera(camera, canvas.width, canvas.height, combat.map.width, combat.map.height)
       if (clamped.x !== camera.x || clamped.y !== camera.y) {
         setCamera(clamped)
       }
-      renderScene(ctx, simRef.current, clamped, selectedIds, gridRef.current)
+      renderScene(ctx, simRef.current, clamped, selectedIds, gridRef.current, {
+        pads: buildingPads,
+        buildings,
+        hoveredPadId,
+        selectedPadId: null
+      })
 
       if (dragBox) {
         ctx.strokeStyle = '#38bdf8'
@@ -136,44 +216,76 @@ export const RTSGame: React.FC<{
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
-  }, [paused, dragBox, camera, mission.map.height, mission.map.width, onComplete, selectedIds])
+  }, [paused, dragBox, camera, combat.map.height, combat.map.width, onComplete, selectedIds, phase, buildingPads, buildings, hoveredPadId])
 
   const handleMouseDown = (event: React.MouseEvent<HTMLCanvasElement>) => {
     if (event.button !== 0) return
-    if (activeAbility) return
     const rect = event.currentTarget.getBoundingClientRect()
     const start = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    dragMovedRef.current = false
     setDragBox({ start, end: start })
   }
 
   const handleMouseMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!dragBox) return
     const rect = event.currentTarget.getBoundingClientRect()
     const end = { x: event.clientX - rect.left, y: event.clientY - rect.top }
-    setDragBox({ ...dragBox, end })
+    if (dragBox) {
+      if (!dragMovedRef.current) {
+        const dx = Math.abs(end.x - dragBox.start.x)
+        const dy = Math.abs(end.y - dragBox.start.y)
+        if (dx > 6 || dy > 6) dragMovedRef.current = true
+      }
+      setHoveredEnemyId(null)
+      setHoveredPadId(null)
+      setDragBox({ ...dragBox, end })
+      return
+    }
+
+    const world = screenToWorld({ x: end.x, y: end.y }, camera)
+    const pad = buildingPads.find((entry) => hitTestPad(entry, world)) ?? null
+    setHoveredPadId(pad ? pad.id : null)
+    const enemyTarget = getEntityAt(simRef.current.entities, world, 'enemy')
+    const nextHover = enemyTarget ? enemyTarget.id : null
+    if (nextHover !== hoveredEnemyId) setHoveredEnemyId(nextHover)
   }
 
   const handleMouseUp = (event: React.MouseEvent<HTMLCanvasElement>) => {
     if (event.button !== 0) return
     const rect = event.currentTarget.getBoundingClientRect()
     const end = { x: event.clientX - rect.left, y: event.clientY - rect.top }
-    if (activeAbility) {
-      const world = screenToWorld({ x: end.x, y: end.y }, camera)
-      const next = useAbility(simRef.current, activeAbility, world)
-      simRef.current = next
-      setSim(next)
-      setActiveAbility(null)
-      return
-    }
     if (!dragBox) return
     const { start } = dragBox
     const dx = Math.abs(end.x - start.x)
     const dy = Math.abs(end.y - start.y)
+    const wasDrag = dragMovedRef.current
 
-    if (dx < 6 && dy < 6) {
+    if (!wasDrag && dx < 6 && dy < 6) {
       const world = screenToWorld({ x: end.x, y: end.y }, camera)
-      const target = getEntityAt(simRef.current.entities, world, 'player')
-      setSelectedIds(target ? [target.id] : [])
+      const pad = buildingPads.find((entry) => hitTestPad(entry, world))
+      if (pad) {
+        if (phase === 'build') {
+          onPadClick(pad.id)
+        } else {
+          onPadBlocked()
+        }
+        setDragBox(null)
+        return
+      }
+      const playerTarget = getEntityAt(simRef.current.entities, world, 'player')
+
+      if (playerTarget) {
+        if (selectedIds.length === 1 && selectedIds[0] === playerTarget.id) {
+          setSelectedIds([])
+        } else {
+          setSelectedIds([playerTarget.id])
+        }
+      } else if (selectedIds.length > 0) {
+        const orderType = commandMode === 'attackMove' ? 'attackMove' : 'move'
+        issueToSelected({ type: orderType, targetPos: world })
+        setCommandMode('move')
+      } else {
+        setSelectedIds([])
+      }
     } else {
       const minX = Math.min(start.x, end.x)
       const maxX = Math.max(start.x, end.x)
@@ -199,14 +311,6 @@ export const RTSGame: React.FC<{
     const rect = event.currentTarget.getBoundingClientRect()
     const world = screenToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, camera)
 
-    if (activeAbility) {
-      const next = useAbility(simRef.current, activeAbility, world)
-      simRef.current = next
-      setSim(next)
-      setActiveAbility(null)
-      return
-    }
-
     const enemy = getEntityAt(simRef.current.entities, world, 'enemy')
     if (enemy) {
       issueToSelected({ type: 'attack', targetId: enemy.id, targetPos: { ...enemy.pos } })
@@ -225,61 +329,112 @@ export const RTSGame: React.FC<{
     })
   }
 
-  const hero = sim.hero
   const selectedEntity = sim.entities.find((entity) => entity.id === selectedIds[0])
-  const objectiveText = mission.objective.type === 'survive'
-    ? `Survive ${Math.max(0, Math.ceil(mission.objective.durationSec - sim.time))}s`
-    : 'Destroy the enemy HQ'
-
-  const abilities = hero?.abilities ?? []
+  const hoveredEnemy = sim.entities.find((entity) => entity.id === hoveredEnemyId && entity.team === 'enemy')
+  const enemiesRemaining = sim.entities.filter((entity) => entity.team === 'enemy').length
+  const hq = sim.entities.find((entity) => entity.kind === 'hq')
+  const hqHp = hq ? `${Math.round(hq.hp)}/${Math.round(hq.maxHp)}` : '0'
+  const heroEntity = sim.entities.find((entity) => entity.kind === 'hero')
+  const heroRuntime = combat.hero
+  const selectedInfo =
+    selectedEntity && selectedEntity.kind !== 'hq'
+      ? selectedEntity.kind === 'hero'
+        ? { name: heroRuntime.name, description: heroRuntime.description }
+        : UNIT_DEFS[selectedEntity.kind]
+      : null
+  const hoveredInfo = hoveredEnemy && hoveredEnemy.kind !== 'hq' ? UNIT_DEFS[hoveredEnemy.kind] : null
+  const heroCooldowns = sim.heroAbilityCooldowns
+  const qReadyIn = Math.max(0, heroCooldowns.q - sim.time)
+  const eReadyIn = Math.max(0, heroCooldowns.e - sim.time)
+  const tooltipPosition = (() => {
+    if (!hoveredEnemy) return null
+    const canvas = canvasRef.current
+    if (!canvas) return null
+    const tooltipW = 220
+    const tooltipH = 84
+    const screenX = (hoveredEnemy.pos.x - camera.x) * camera.zoom
+    const screenY = (hoveredEnemy.pos.y - camera.y) * camera.zoom
+    const pad = 12
+    let x = screenX + 16
+    let y = screenY - tooltipH - 16
+    if (x + tooltipW > canvas.width - pad) x = screenX - tooltipW - 16
+    if (x < pad) x = pad
+    if (y < pad) y = screenY + 16
+    if (y + tooltipH > canvas.height - pad) y = canvas.height - tooltipH - pad
+    return { x, y }
+  })()
 
   return (
     <div className="rts">
       <div className="rts-top">
-        <div>{mission.name}</div>
-        <div className="muted">Objective: {objectiveText}</div>
-        <div className="muted">Time: {Math.floor(sim.time)}s</div>
+        <div>Day {combat.dayNumber} · {phase === 'combat' ? 'Combat' : 'Build'}</div>
+        {phase === 'combat' && (
+          <>
+            <div className="muted">Wave {Math.min(sim.waveIndex + 1, combat.waves.length)}/{combat.waves.length}</div>
+            <div className="muted">Enemies: {enemiesRemaining}</div>
+          </>
+        )}
+        <div className="muted">HQ: {hqHp}</div>
       </div>
       <div className="rts-body">
-        <canvas
-          ref={canvasRef}
-          className="rts-canvas"
-          width={900}
-          height={540}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onContextMenu={handleContextMenu}
-          onWheel={handleWheel}
-        />
+        <div className="rts-canvas-wrap">
+          <canvas
+            ref={canvasRef}
+            className="rts-canvas"
+            width={900}
+            height={540}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onContextMenu={handleContextMenu}
+            onWheel={handleWheel}
+            onMouseLeave={() => {
+              setHoveredEnemyId(null)
+              setHoveredPadId(null)
+            }}
+          />
+          {hoveredEnemy && hoveredInfo && tooltipPosition && (
+            <div
+              className="rts-tooltip"
+              style={{ left: `${tooltipPosition.x}px`, top: `${tooltipPosition.y}px` }}
+            >
+              <div className="rts-tooltip-title">{hoveredInfo.name}{hoveredEnemy.isBoss ? ' (Boss)' : ''}</div>
+              <div className="muted">{hoveredInfo.description}</div>
+              <div className="muted">HP {Math.round(hoveredEnemy.hp)}/{Math.round(hoveredEnemy.maxHp)}</div>
+            </div>
+          )}
+        </div>
         <div className="rts-panel">
           <h4>Selected</h4>
           {selectedEntity ? (
             <div>
-              <div>Type: {selectedEntity.kind}</div>
+              <div>Type: {selectedInfo ? selectedInfo.name : 'HQ'}</div>
+              {selectedInfo && <div className="muted">{selectedInfo.description}</div>}
               <div>HP: {Math.round(selectedEntity.hp)}/{Math.round(selectedEntity.maxHp)}</div>
               <div>Order: {selectedEntity.order.type}</div>
             </div>
           ) : (
             <div className="muted">No unit selected.</div>
           )}
-          <h4>Hero Abilities</h4>
-          {abilities.length === 0 && <div className="muted">No hero selected.</div>}
-          {abilities.map((ability) => (
-            <button
-              key={ability.id}
-              className={`btn ${ability.cooldownLeft <= 0 ? 'success' : ''}`}
-              disabled={ability.cooldownLeft > 0}
-              onClick={() => setActiveAbility(ability.id)}
-            >
-              {ability.name} {ability.cooldownLeft > 0 ? `(${ability.cooldownLeft.toFixed(1)}s)` : ''}
-            </button>
-          ))}
-          {activeAbility && <div className="muted">Right click a target area.</div>}
+          {heroEntity && (
+            <div className="rts-hero">
+              <h4>Hero</h4>
+              <div>{heroRuntime.name}</div>
+              <div className="muted">{heroRuntime.description}</div>
+              <div>HP: {Math.round(heroEntity.hp)}/{Math.round(heroEntity.maxHp)}</div>
+              <div className="muted">
+                Q {heroRuntime.abilities.q.name}: {qReadyIn <= 0 ? 'Ready' : `${qReadyIn.toFixed(1)}s`}
+              </div>
+              <div className="muted">
+                E {heroRuntime.abilities.e.name}: {eReadyIn <= 0 ? 'Ready' : `${eReadyIn.toFixed(1)}s`}
+              </div>
+            </div>
+          )}
           <div className="rts-help">
-            <div className="muted">Hotkeys: A attack-move, S stop, Ctrl+1/2/3 assign group, 1/2/3 recall.</div>
+            <div className="muted">Left-click units to select. Left-click ground to move. Right-click to attack or move.</div>
+            <div className="muted">Hover an enemy to inspect. Hotkeys: A attack-move, S stop, Q/E hero abilities, Ctrl+1/2/3 assign group, 1/2/3 recall.</div>
           </div>
-          <button className="btn" onClick={() => setPaused(true)}>Pause</button>
+          {phase === 'combat' && <button className="btn" onClick={() => setPaused(true)}>Pause</button>}
         </div>
       </div>
       {paused && (
@@ -288,14 +443,14 @@ export const RTSGame: React.FC<{
             <h3>Paused</h3>
             <button className="btn success" onClick={() => setPaused(false)}>Resume</button>
             <button className="btn" onClick={() => {
-              const next = createSimState(mission, meta, leaderHeroId)
+              const next = createSimState(combat, run)
               simRef.current = next
               setSim(next)
               setSelectedIds([])
               setPaused(false)
               endedRef.current = false
-            }}>Restart</button>
-            <button className="btn" onClick={onExit}>Quit to Menu</button>
+            }}>Restart Day</button>
+            <button className="btn" onClick={onExit}>Quit to Level Select</button>
           </div>
         </div>
       )}

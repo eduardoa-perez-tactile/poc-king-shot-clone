@@ -1,6 +1,6 @@
-# Governor: RTS Chronicle (Single Player)
+# Governor: Day Cycle (Single Player)
 
-A playable single-player RTS prototype inspired by “Kingshot”-style gameplay. Rebuild a town, manage resources, recruit heroes, train troops, and fight **real-time missions** on a top-down map. Everything runs locally with `localStorage` persistence.
+A playable single-player, browser-based RTS prototype built around a **Day Cycle** loop: build and upgrade inside the level, rally your squads, and survive real-time waves to advance each day. Everything runs locally with `localStorage` persistence.
 
 ## How To Run
 
@@ -12,59 +12,59 @@ npm install
 npm run dev
 ```
 
-## Game Cycle
+## Map-Centric Day Cycle Loop
 
-1. Main Menu → Mission Select → Real-time Mission → End Screen.
-2. Mission wins grant rewards and unlock new missions.
-3. Settlement screens remain for building, heroes, troops, and quests.
+1. Main Menu → Level Select → Mission Map Scene (single scene).
+2. Control the hero in real time and click building pads to construct or upgrade.
+3. Press **Battle Cry** to start real-time wave combat.
+4. Survive all waves to complete the day and collect rewards.
+5. Enter Build Mode on the same map, spend gold, then rally again.
+6. Complete all level goals to win and unlock the next level.
 
 ## Main Systems
 
-- **Town**: Build and upgrade structures, collect passive resources.
-- **Heroes**: Summon, level up, and equip gear.
-- **Troops**: Train infantry/archer/cavalry and manage capacity.
-- **Quests & Events**: Daily + chapter quests and a timed event.
-- **Missions (RTS)**: Real-time combat with hero abilities and AI waves.
+- **RunState**: A single shared state for the level run (day, gold, buildings, squads, goals).
+- **Build Phase**: Click map pads to build/upgrade, recruit squads, and prepare.
+- **Combat Phase**: Real-time wave defense on the same map scene.
+- **Goals**: Survive a target day, defeat bosses, and/or earn gold.
 
 ## Controls (RTS)
 
 - Left click selects units (drag to box select).
 - Right click issues move/attack commands.
 - `A` attack-move, `S` stop.
+- `Q`/`E` hero abilities.
 - `Ctrl+1/2/3` assign control groups, `1/2/3` recall.
 - Mouse wheel zoom, arrow keys pan camera.
 
-## RTS Notes
+## Map Build Notes
 
-- Units are represented as **squad entities** (each entity = multiple troops).
-- Right-click on enemy issues **attack**; right-click on ground issues **move**.
-- Hero abilities are activated from the right panel, then **right-click** to place.
+- All construction and upgrades happen directly on the mission map.
+- Buildings can only be placed on predefined **building pads**.
+- Click empty pads to build, click existing buildings to upgrade or recruit.
 
-## Missions
+## Levels
 
-- **Mission 1**: Survive 3 minutes (tutorial skirmish).
-- **Mission 2**: Destroy enemy HQ (moderate defenses).
-- **Mission 3**: Survive 6 minutes (escalating waves).
+- **Level 1**: Survive until Day 3 and earn 120 total gold.
+- **Level 2**: Survive until Day 4 and defeat the Day 4 boss wave.
+- **Level 3**: Survive until Day 5 and build a war chest.
 
 ## Project Structure
 
-- `src/game` — Meta economy, buildings, heroes, troops, quests, save state
-- `src/rts` — Real-time simulation, pathfinding, rendering, missions
-- `src/ui` — React UI screens and components
-- `src/config` — Balance tables and definitions
+- `src/run` — RunState, economy, goals, and loop logic
+- `src/rts` — Real-time simulation, pathfinding, rendering, combat
+- `src/ui` — React UI screens and overlays
+- `src/config` — Levels, buildings, units, waves
 - `src/storage` — Save/load (`localStorage`)
 
 ## Balance Tweaks
 
-All tuning lives in `src/config/balance.ts` and `src/rts/missions.ts`:
+All tuning lives in:
 
-- Building costs, production, and upgrade times
-- Troop costs and training times
-- Hero/gear definitions
-- Quest templates and event milestones
-- Enemy stats and reward tables
-- Mission objectives, rewards, and wave schedules
+- `src/config/buildings.ts` — building costs, upgrades, and income
+- `src/config/units.ts` — squad costs and stats
+- `src/config/levels.ts` — day plans, wave compositions, and goals
 
 ## Save/Load
 
-Game state saves automatically to `localStorage`. Use Settings → Reset Game to clear the save.
+Progress saves automatically to `localStorage`. Use Main Menu → Reset Save to clear the save.
