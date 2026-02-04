@@ -1,0 +1,304 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { GameState } from '../game/types'
+import { createGridForMission, createSimState, buildMissionResult, issueOrder, stepSim, useAbility } from './sim'
+import { renderScene, screenToWorld, clampCamera, Camera } from './render'
+import { EntityState, MissionDefinition, MissionResult, Order, SimState, Vec2 } from './types'
+import { Grid } from './pathfinding'
+
+const FIXED_DT = 1 / 30
+
+const getEntityAt = (entities: EntityState[], pos: Vec2, team: 'player' | 'enemy') => {
+  let best: EntityState | null = null
+  let bestDist = Infinity
+  entities.forEach((entity) => {
+    if (entity.team !== team) return
+    const dist = Math.hypot(entity.pos.x - pos.x, entity.pos.y - pos.y)
+    if (dist < entity.radius + 6 && dist < bestDist) {
+      best = entity
+      bestDist = dist
+    }
+  })
+  return best
+}
+
+export const RTSGame: React.FC<{
+  mission: MissionDefinition
+  meta: GameState
+  leaderHeroId?: string
+  onComplete: (result: MissionResult, casualties: { infantry: number; archer: number; cavalry: number }) => void
+  onExit: () => void
+}> = ({ mission, meta, leaderHeroId, onComplete, onExit }) => {
+  const [sim, setSim] = useState<SimState>(() => createSimState(mission, meta, leaderHeroId))
+  const simRef = useRef(sim)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [dragBox, setDragBox] = useState<{ start: Vec2; end: Vec2 } | null>(null)
+  const [paused, setPaused] = useState(false)
+  const [commandMode, setCommandMode] = useState<'move' | 'attackMove'>('move')
+  const [activeAbility, setActiveAbility] = useState<string | null>(null)
+  const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 1 })
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const gridRef = useRef<Grid>(createGridForMission(mission))
+  const rafRef = useRef<number | null>(null)
+  const controlGroups = useRef<Record<number, string[]>>({})
+  const endedRef = useRef(false)
+
+  useEffect(() => {
+    simRef.current = sim
+  }, [sim])
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPaused((prev) => !prev)
+      }
+      if (event.key.toLowerCase() === 'a') {
+        setCommandMode('attackMove')
+      }
+      if (event.key.toLowerCase() === 's') {
+        issueToSelected({ type: 'stop' })
+      }
+      if (event.ctrlKey && ['1', '2', '3'].includes(event.key)) {
+        controlGroups.current[Number(event.key)] = [...selectedIds]
+      }
+      if (!event.ctrlKey && ['1', '2', '3'].includes(event.key)) {
+        const group = controlGroups.current[Number(event.key)]
+        if (group) setSelectedIds(group)
+      }
+      if (event.key === 'ArrowUp') {
+        setCamera((prev) => ({ ...prev, y: prev.y - 40 }))
+      }
+      if (event.key === 'ArrowDown') {
+        setCamera((prev) => ({ ...prev, y: prev.y + 40 }))
+      }
+      if (event.key === 'ArrowLeft') {
+        setCamera((prev) => ({ ...prev, x: prev.x - 40 }))
+      }
+      if (event.key === 'ArrowRight') {
+        setCamera((prev) => ({ ...prev, x: prev.x + 40 }))
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [selectedIds])
+
+  const issueToSelected = (order: Order) => {
+    if (selectedIds.length === 0) return
+    const updated = issueOrder(simRef.current, selectedIds, order, gridRef.current)
+    simRef.current = updated
+    setSim(updated)
+  }
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    let last = performance.now()
+    let acc = 0
+
+    const loop = (time: number) => {
+      const delta = (time - last) / 1000
+      last = time
+      acc += delta
+
+      if (!paused) {
+        while (acc >= FIXED_DT) {
+          const next = stepSim(simRef.current, FIXED_DT, gridRef.current)
+          simRef.current = next
+          acc -= FIXED_DT
+          if (next.status !== 'running' && !endedRef.current) {
+            endedRef.current = true
+            const result = buildMissionResult(next)
+            onComplete(result, next.stats.casualties)
+          }
+        }
+      }
+
+      const clamped = clampCamera(camera, canvas.width, canvas.height, mission.map.width, mission.map.height)
+      if (clamped.x !== camera.x || clamped.y !== camera.y) {
+        setCamera(clamped)
+      }
+      renderScene(ctx, simRef.current, clamped, selectedIds, gridRef.current)
+
+      if (dragBox) {
+        ctx.strokeStyle = '#38bdf8'
+        ctx.lineWidth = 1
+        const start = dragBox.start
+        const end = dragBox.end
+        ctx.strokeRect(start.x, start.y, end.x - start.x, end.y - start.y)
+      }
+
+      rafRef.current = requestAnimationFrame(loop)
+    }
+
+    rafRef.current = requestAnimationFrame(loop)
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    }
+  }, [paused, dragBox, camera, mission.map.height, mission.map.width, onComplete, selectedIds])
+
+  const handleMouseDown = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    if (event.button !== 0) return
+    if (activeAbility) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    const start = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    setDragBox({ start, end: start })
+  }
+
+  const handleMouseMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!dragBox) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    const end = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    setDragBox({ ...dragBox, end })
+  }
+
+  const handleMouseUp = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    if (event.button !== 0) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    const end = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    if (activeAbility) {
+      const world = screenToWorld({ x: end.x, y: end.y }, camera)
+      const next = useAbility(simRef.current, activeAbility, world)
+      simRef.current = next
+      setSim(next)
+      setActiveAbility(null)
+      return
+    }
+    if (!dragBox) return
+    const { start } = dragBox
+    const dx = Math.abs(end.x - start.x)
+    const dy = Math.abs(end.y - start.y)
+
+    if (dx < 6 && dy < 6) {
+      const world = screenToWorld({ x: end.x, y: end.y }, camera)
+      const target = getEntityAt(simRef.current.entities, world, 'player')
+      setSelectedIds(target ? [target.id] : [])
+    } else {
+      const minX = Math.min(start.x, end.x)
+      const maxX = Math.max(start.x, end.x)
+      const minY = Math.min(start.y, end.y)
+      const maxY = Math.max(start.y, end.y)
+      const selected = simRef.current.entities.filter((entity) => {
+        if (entity.team !== 'player' || entity.kind === 'hq') return false
+        const screen = {
+          x: (entity.pos.x - camera.x) * camera.zoom,
+          y: (entity.pos.y - camera.y) * camera.zoom
+        }
+        return screen.x >= minX && screen.x <= maxX && screen.y >= minY && screen.y <= maxY
+      })
+      setSelectedIds(selected.map((entity) => entity.id))
+    }
+
+    setDragBox(null)
+  }
+
+  const handleContextMenu = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    event.preventDefault()
+    if (selectedIds.length === 0) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    const world = screenToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, camera)
+
+    if (activeAbility) {
+      const next = useAbility(simRef.current, activeAbility, world)
+      simRef.current = next
+      setSim(next)
+      setActiveAbility(null)
+      return
+    }
+
+    const enemy = getEntityAt(simRef.current.entities, world, 'enemy')
+    if (enemy) {
+      issueToSelected({ type: 'attack', targetId: enemy.id, targetPos: { ...enemy.pos } })
+    } else {
+      const orderType = commandMode === 'attackMove' ? 'attackMove' : 'move'
+      issueToSelected({ type: orderType, targetPos: world })
+      setCommandMode('move')
+    }
+  }
+
+  const handleWheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
+    event.preventDefault()
+    setCamera((prev) => {
+      const zoom = Math.min(1.6, Math.max(0.6, prev.zoom - event.deltaY * 0.001))
+      return { ...prev, zoom }
+    })
+  }
+
+  const hero = sim.hero
+  const selectedEntity = sim.entities.find((entity) => entity.id === selectedIds[0])
+  const objectiveText = mission.objective.type === 'survive'
+    ? `Survive ${Math.max(0, Math.ceil(mission.objective.durationSec - sim.time))}s`
+    : 'Destroy the enemy HQ'
+
+  const abilities = hero?.abilities ?? []
+
+  return (
+    <div className="rts">
+      <div className="rts-top">
+        <div>{mission.name}</div>
+        <div className="muted">Objective: {objectiveText}</div>
+        <div className="muted">Time: {Math.floor(sim.time)}s</div>
+      </div>
+      <div className="rts-body">
+        <canvas
+          ref={canvasRef}
+          className="rts-canvas"
+          width={900}
+          height={540}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onContextMenu={handleContextMenu}
+          onWheel={handleWheel}
+        />
+        <div className="rts-panel">
+          <h4>Selected</h4>
+          {selectedEntity ? (
+            <div>
+              <div>Type: {selectedEntity.kind}</div>
+              <div>HP: {Math.round(selectedEntity.hp)}/{Math.round(selectedEntity.maxHp)}</div>
+              <div>Order: {selectedEntity.order.type}</div>
+            </div>
+          ) : (
+            <div className="muted">No unit selected.</div>
+          )}
+          <h4>Hero Abilities</h4>
+          {abilities.length === 0 && <div className="muted">No hero selected.</div>}
+          {abilities.map((ability) => (
+            <button
+              key={ability.id}
+              className={`btn ${ability.cooldownLeft <= 0 ? 'success' : ''}`}
+              disabled={ability.cooldownLeft > 0}
+              onClick={() => setActiveAbility(ability.id)}
+            >
+              {ability.name} {ability.cooldownLeft > 0 ? `(${ability.cooldownLeft.toFixed(1)}s)` : ''}
+            </button>
+          ))}
+          {activeAbility && <div className="muted">Right click a target area.</div>}
+          <div className="rts-help">
+            <div className="muted">Hotkeys: A attack-move, S stop, Ctrl+1/2/3 assign group, 1/2/3 recall.</div>
+          </div>
+          <button className="btn" onClick={() => setPaused(true)}>Pause</button>
+        </div>
+      </div>
+      {paused && (
+        <div className="pause-overlay">
+          <div className="pause-menu">
+            <h3>Paused</h3>
+            <button className="btn success" onClick={() => setPaused(false)}>Resume</button>
+            <button className="btn" onClick={() => {
+              const next = createSimState(mission, meta, leaderHeroId)
+              simRef.current = next
+              setSim(next)
+              setSelectedIds([])
+              setPaused(false)
+              endedRef.current = false
+            }}>Restart</button>
+            <button className="btn" onClick={onExit}>Quit to Menu</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
