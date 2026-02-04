@@ -31,7 +31,7 @@ export const RTSGame: React.FC<{
   const [sim, setSim] = useState<SimState>(() => createSimState(combat, run))
   const simRef = useRef(sim)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [inspectedId, setInspectedId] = useState<string | null>(null)
+  const [hoveredEnemyId, setHoveredEnemyId] = useState<string | null>(null)
   const [dragBox, setDragBox] = useState<{ start: Vec2; end: Vec2 } | null>(null)
   const [paused, setPaused] = useState(false)
   const [commandMode, setCommandMode] = useState<'move' | 'attackMove'>('move')
@@ -39,6 +39,7 @@ export const RTSGame: React.FC<{
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const gridRef = useRef<Grid>(createGridForCombat(combat))
   const rafRef = useRef<number | null>(null)
+  const dragMovedRef = useRef(false)
   const controlGroups = useRef<Record<number, string[]>>({})
   const endedRef = useRef(false)
 
@@ -119,7 +120,7 @@ export const RTSGame: React.FC<{
       if (clamped.x !== camera.x || clamped.y !== camera.y) {
         setCamera(clamped)
       }
-      renderScene(ctx, simRef.current, clamped, selectedIds, gridRef.current, inspectedId)
+      renderScene(ctx, simRef.current, clamped, selectedIds, gridRef.current)
 
       if (dragBox) {
         ctx.strokeStyle = '#38bdf8'
@@ -136,20 +137,34 @@ export const RTSGame: React.FC<{
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
-  }, [paused, dragBox, camera, combat.map.height, combat.map.width, onComplete, selectedIds, inspectedId])
+  }, [paused, dragBox, camera, combat.map.height, combat.map.width, onComplete, selectedIds])
 
   const handleMouseDown = (event: React.MouseEvent<HTMLCanvasElement>) => {
     if (event.button !== 0) return
     const rect = event.currentTarget.getBoundingClientRect()
     const start = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    dragMovedRef.current = false
     setDragBox({ start, end: start })
   }
 
   const handleMouseMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!dragBox) return
     const rect = event.currentTarget.getBoundingClientRect()
     const end = { x: event.clientX - rect.left, y: event.clientY - rect.top }
-    setDragBox({ ...dragBox, end })
+    if (dragBox) {
+      if (!dragMovedRef.current) {
+        const dx = Math.abs(end.x - dragBox.start.x)
+        const dy = Math.abs(end.y - dragBox.start.y)
+        if (dx > 6 || dy > 6) dragMovedRef.current = true
+      }
+      setHoveredEnemyId(null)
+      setDragBox({ ...dragBox, end })
+      return
+    }
+
+    const world = screenToWorld({ x: end.x, y: end.y }, camera)
+    const enemyTarget = getEntityAt(simRef.current.entities, world, 'enemy')
+    const nextHover = enemyTarget ? enemyTarget.id : null
+    if (nextHover !== hoveredEnemyId) setHoveredEnemyId(nextHover)
   }
 
   const handleMouseUp = (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -160,16 +175,18 @@ export const RTSGame: React.FC<{
     const { start } = dragBox
     const dx = Math.abs(end.x - start.x)
     const dy = Math.abs(end.y - start.y)
+    const wasDrag = dragMovedRef.current
 
-    if (dx < 6 && dy < 6) {
+    if (!wasDrag && dx < 6 && dy < 6) {
       const world = screenToWorld({ x: end.x, y: end.y }, camera)
       const playerTarget = getEntityAt(simRef.current.entities, world, 'player')
-      const enemyTarget = getEntityAt(simRef.current.entities, world, 'enemy')
 
       if (playerTarget) {
-        setSelectedIds([playerTarget.id])
-      } else if (enemyTarget) {
-        setInspectedId(enemyTarget.id)
+        if (selectedIds.length === 1 && selectedIds[0] === playerTarget.id) {
+          setSelectedIds([])
+        } else {
+          setSelectedIds([playerTarget.id])
+        }
       } else if (selectedIds.length > 0) {
         const orderType = commandMode === 'attackMove' ? 'attackMove' : 'move'
         issueToSelected({ type: orderType, targetPos: world })
@@ -204,7 +221,6 @@ export const RTSGame: React.FC<{
 
     const enemy = getEntityAt(simRef.current.entities, world, 'enemy')
     if (enemy) {
-      setInspectedId(enemy.id)
       issueToSelected({ type: 'attack', targetId: enemy.id, targetPos: { ...enemy.pos } })
     } else {
       const orderType = commandMode === 'attackMove' ? 'attackMove' : 'move'
@@ -222,12 +238,29 @@ export const RTSGame: React.FC<{
   }
 
   const selectedEntity = sim.entities.find((entity) => entity.id === selectedIds[0])
-  const inspectedEntity = sim.entities.find((entity) => entity.id === inspectedId && entity.team === 'enemy')
+  const hoveredEnemy = sim.entities.find((entity) => entity.id === hoveredEnemyId && entity.team === 'enemy')
   const enemiesRemaining = sim.entities.filter((entity) => entity.team === 'enemy').length
   const hq = sim.entities.find((entity) => entity.kind === 'hq')
   const hqHp = hq ? `${Math.round(hq.hp)}/${Math.round(hq.maxHp)}` : '0'
   const selectedInfo = selectedEntity && selectedEntity.kind !== 'hq' ? UNIT_DEFS[selectedEntity.kind] : null
-  const inspectedInfo = inspectedEntity && inspectedEntity.kind !== 'hq' ? UNIT_DEFS[inspectedEntity.kind] : null
+  const hoveredInfo = hoveredEnemy && hoveredEnemy.kind !== 'hq' ? UNIT_DEFS[hoveredEnemy.kind] : null
+  const tooltipPosition = (() => {
+    if (!hoveredEnemy) return null
+    const canvas = canvasRef.current
+    if (!canvas) return null
+    const tooltipW = 220
+    const tooltipH = 84
+    const screenX = (hoveredEnemy.pos.x - camera.x) * camera.zoom
+    const screenY = (hoveredEnemy.pos.y - camera.y) * camera.zoom
+    const pad = 12
+    let x = screenX + 16
+    let y = screenY - tooltipH - 16
+    if (x + tooltipW > canvas.width - pad) x = screenX - tooltipW - 16
+    if (x < pad) x = pad
+    if (y < pad) y = screenY + 16
+    if (y + tooltipH > canvas.height - pad) y = canvas.height - tooltipH - pad
+    return { x, y }
+  })()
 
   return (
     <div className="rts">
@@ -238,17 +271,30 @@ export const RTSGame: React.FC<{
         <div className="muted">HQ: {hqHp}</div>
       </div>
       <div className="rts-body">
-        <canvas
-          ref={canvasRef}
-          className="rts-canvas"
-          width={900}
-          height={540}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onContextMenu={handleContextMenu}
-          onWheel={handleWheel}
-        />
+        <div className="rts-canvas-wrap">
+          <canvas
+            ref={canvasRef}
+            className="rts-canvas"
+            width={900}
+            height={540}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onContextMenu={handleContextMenu}
+            onWheel={handleWheel}
+            onMouseLeave={() => setHoveredEnemyId(null)}
+          />
+          {hoveredEnemy && hoveredInfo && tooltipPosition && (
+            <div
+              className="rts-tooltip"
+              style={{ left: `${tooltipPosition.x}px`, top: `${tooltipPosition.y}px` }}
+            >
+              <div className="rts-tooltip-title">{hoveredInfo.name}{hoveredEnemy.isBoss ? ' (Boss)' : ''}</div>
+              <div className="muted">{hoveredInfo.description}</div>
+              <div className="muted">HP {Math.round(hoveredEnemy.hp)}/{Math.round(hoveredEnemy.maxHp)}</div>
+            </div>
+          )}
+        </div>
         <div className="rts-panel">
           <h4>Selected</h4>
           {selectedEntity ? (
@@ -261,20 +307,9 @@ export const RTSGame: React.FC<{
           ) : (
             <div className="muted">No unit selected.</div>
           )}
-          <h4>Inspected Enemy</h4>
-          {inspectedEntity ? (
-            <div>
-              <div>Type: {inspectedInfo ? inspectedInfo.name : inspectedEntity.kind}</div>
-              {inspectedEntity.isBoss && <div className="muted">Boss unit</div>}
-              {inspectedInfo && <div className="muted">{inspectedInfo.description}</div>}
-              <div>HP: {Math.round(inspectedEntity.hp)}/{Math.round(inspectedEntity.maxHp)}</div>
-            </div>
-          ) : (
-            <div className="muted">Click an enemy to inspect.</div>
-          )}
           <div className="rts-help">
             <div className="muted">Left-click units to select. Left-click ground to move. Right-click to attack or move.</div>
-            <div className="muted">Click an enemy to inspect. Hotkeys: A attack-move, S stop, Ctrl+1/2/3 assign group, 1/2/3 recall.</div>
+            <div className="muted">Hover an enemy to inspect. Hotkeys: A attack-move, S stop, Ctrl+1/2/3 assign group, 1/2/3 recall.</div>
           </div>
           <button className="btn" onClick={() => setPaused(true)}>Pause</button>
         </div>

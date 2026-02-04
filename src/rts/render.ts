@@ -27,8 +27,7 @@ export const renderScene = (
   sim: SimState,
   cam: Camera,
   selection: string[],
-  grid: Grid,
-  inspectedId?: string | null
+  grid: Grid
 ) => {
   const width = ctx.canvas.width
   const height = ctx.canvas.height
@@ -62,7 +61,6 @@ export const renderScene = (
   sim.entities.forEach((entity) => {
     const screen = worldToScreen(entity.pos, cam)
     const isSelected = selection.includes(entity.id)
-    const isInspected = inspectedId === entity.id
     ctx.fillStyle = entity.team === 'player' ? '#38bdf8' : '#ef4444'
     if (entity.kind === 'hq') ctx.fillStyle = '#2563eb'
     ctx.beginPath()
@@ -74,14 +72,6 @@ export const renderScene = (
       ctx.lineWidth = 2
       ctx.beginPath()
       ctx.arc(screen.x, screen.y, (entity.radius + 4) * cam.zoom, 0, Math.PI * 2)
-      ctx.stroke()
-    }
-
-    if (isInspected) {
-      ctx.strokeStyle = '#facc15'
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.arc(screen.x, screen.y, (entity.radius + 8) * cam.zoom, 0, Math.PI * 2)
       ctx.stroke()
     }
 
