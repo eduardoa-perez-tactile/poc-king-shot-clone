@@ -16,6 +16,7 @@ const getEntityAt = (entities: EntityState[], pos: Vec2, team: 'player' | 'enemy
   let bestDist = Infinity
   entities.forEach((entity) => {
     if (entity.team !== team) return
+    if (entity.kind === 'hq') return
     const dist = Math.hypot(entity.pos.x - pos.x, entity.pos.y - pos.y)
     if (dist < entity.radius + 6 && dist < bestDist) {
       best = entity
@@ -23,6 +24,13 @@ const getEntityAt = (entities: EntityState[], pos: Vec2, team: 'player' | 'enemy
     }
   })
   return best
+}
+
+const getHqAt = (entities: EntityState[], pos: Vec2) => {
+  const hq = entities.find((entity) => entity.kind === 'hq')
+  if (!hq) return null
+  const dist = Math.hypot(hq.pos.x - pos.x, hq.pos.y - pos.y)
+  return dist < hq.radius + 8 ? hq : null
 }
 
 export interface CanvasTelemetry {
@@ -36,6 +44,8 @@ export interface CanvasTelemetry {
   qReadyIn: number
   eReadyIn: number
   camera: { x: number; y: number; zoom: number; viewW: number; viewH: number }
+  playerUnits: Array<{ x: number; y: number; kind: 'hero' | 'unit' }>
+  enemyUnits: Array<{ x: number; y: number }>
 }
 
 export interface CanvasHandle {
@@ -163,7 +173,11 @@ export const CanvasLayer = React.memo(
       const prev = phaseRef.current
       phaseRef.current = phase
       if (prev === 'build' && phase === 'combat') {
-        simRef.current = createSimState(combat, run)
+        const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
+        simRef.current = createSimState(combat, run, {
+          heroPos: hero ? { ...hero.pos } : combat.map.playerSpawn,
+          heroHp: hero?.hp
+        })
         selectedIdsRef.current = []
         dragBoxRef.current = null
         endedRef.current = false
@@ -229,6 +243,16 @@ export const CanvasLayer = React.memo(
       const hero = sim.entities.find((entity) => entity.kind === 'hero')
       const qReadyIn = Math.max(0, sim.heroAbilityCooldowns.q - sim.time)
       const eReadyIn = Math.max(0, sim.heroAbilityCooldowns.e - sim.time)
+      const playerUnits = sim.entities
+        .filter((entity) => entity.team === 'player' && entity.kind !== 'hq')
+        .map((entity) => ({
+          x: entity.pos.x,
+          y: entity.pos.y,
+          kind: entity.kind === 'hero' ? 'hero' : 'unit'
+        }))
+      const enemyUnits = sim.entities
+        .filter((entity) => entity.team === 'enemy')
+        .map((entity) => ({ x: entity.pos.x, y: entity.pos.y }))
       const canvas = canvasRef.current
       const camera = cameraRef.current
       const viewW = canvas ? canvas.width / camera.zoom : 0
@@ -243,7 +267,9 @@ export const CanvasLayer = React.memo(
         heroMaxHp: hero?.maxHp ?? 0,
         qReadyIn,
         eReadyIn,
-        camera: { x: camera.x, y: camera.y, zoom: camera.zoom, viewW, viewH }
+        camera: { x: camera.x, y: camera.y, zoom: camera.zoom, viewW, viewH },
+        playerUnits,
+        enemyUnits
       }
       const last = lastTelemetryRef.current
       if (!last || JSON.stringify(last) !== JSON.stringify(payload)) {
@@ -273,7 +299,7 @@ export const CanvasLayer = React.memo(
         return
       }
       const entity = simRef.current.entities.find((entry) => entry.id === selectedIds[0])
-      if (!entity) {
+      if (!entity || entity.kind === 'hq') {
         onSelectionRef.current({ kind: 'none' })
         return
       }
@@ -462,16 +488,24 @@ export const CanvasLayer = React.memo(
           dragBoxRef.current = null
           return
         }
+        const hqTarget = getHqAt(simRef.current.entities, world)
+        if (hqTarget) {
+          selectedIdsRef.current = []
+          emitSelection()
+          dragBoxRef.current = null
+          return
+        }
+
         const playerTarget = getEntityAt(simRef.current.entities, world, 'player')
 
-        if (playerTarget) {
-          if (selectedIdsRef.current.length === 1 && selectedIdsRef.current[0] === playerTarget.id) {
-            selectedIdsRef.current = []
-          } else {
-            selectedIdsRef.current = [playerTarget.id]
-          }
-          emitSelection()
-        } else if (selectedIdsRef.current.length > 0) {
+      if (playerTarget) {
+        if (selectedIdsRef.current.length === 1 && selectedIdsRef.current[0] === playerTarget.id) {
+          selectedIdsRef.current = []
+        } else {
+          selectedIdsRef.current = [playerTarget.id]
+        }
+        emitSelection()
+      } else if (selectedIdsRef.current.length > 0) {
           const orderType = commandModeRef.current === 'attackMove' ? 'attackMove' : 'move'
           issueToSelected({ type: orderType, targetPos: world })
           commandModeRef.current = 'move'

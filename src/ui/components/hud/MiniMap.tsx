@@ -13,8 +13,10 @@ export const MiniMap: React.FC<{
   obstacles: Array<{ x: number; y: number; w: number; h: number }>
   hq: { x: number; y: number }
   view: MiniMapView | null
+  playerUnits?: Array<{ x: number; y: number; kind: 'hero' | 'unit' }>
+  enemyUnits?: Array<{ x: number; y: number }>
   onNavigate?: (x: number, y: number) => void
-}> = ({ obstacles, hq, view, onNavigate }) => {
+}> = ({ obstacles, hq, view, playerUnits = [], enemyUnits = [], onNavigate }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -41,10 +43,24 @@ export const MiniMap: React.FC<{
     ctx.arc(hq.x * scaleX, hq.y * scaleY, 4, 0, Math.PI * 2)
     ctx.fill()
 
+    playerUnits.forEach((unit) => {
+      ctx.fillStyle = unit.kind === 'hero' ? '#f59e0b' : '#38bdf8'
+      ctx.beginPath()
+      ctx.arc(unit.x * scaleX, unit.y * scaleY, unit.kind === 'hero' ? 3 : 2, 0, Math.PI * 2)
+      ctx.fill()
+    })
+
+    enemyUnits.forEach((unit) => {
+      ctx.fillStyle = '#ef4444'
+      ctx.beginPath()
+      ctx.arc(unit.x * scaleX, unit.y * scaleY, 2, 0, Math.PI * 2)
+      ctx.fill()
+    })
+
     ctx.strokeStyle = '#facc15'
     ctx.lineWidth = 1
     ctx.strokeRect(view.viewX * scaleX, view.viewY * scaleY, view.viewW * scaleX, view.viewH * scaleY)
-  }, [obstacles, hq, view])
+  }, [obstacles, hq, view, playerUnits, enemyUnits])
 
   return (
     <button

@@ -474,6 +474,8 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
                   }
                 : null
             }
+            playerUnits={telemetry?.playerUnits}
+            enemyUnits={telemetry?.enemyUnits}
             onNavigate={(x, y) => canvasRef.current?.panTo(x, y)}
           />
         </div>
