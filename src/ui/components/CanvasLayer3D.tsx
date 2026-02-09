@@ -37,6 +37,7 @@ export const CanvasLayer3D = React.memo(
     const dragBoxRef = useRef<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(null)
     const dragBoxElRef = useRef<HTMLDivElement>(null)
     const dragMovedRef = useRef(false)
+    const activePointerIdRef = useRef<number | null>(null)
     const rendererRef = useRef<Renderer3D | null>(null)
 
     const simRef = useRef<SimState>(createSimState(combat, run))
@@ -568,18 +569,20 @@ export const CanvasLayer3D = React.memo(
       }
     }, [])
 
-    const handleMouseDown = (event: React.MouseEvent<HTMLCanvasElement>) => {
-      if (inputBlocked) return
+    const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+      if (inputBlockedRef.current) return
       if (event.button !== 0) return
       const rect = event.currentTarget.getBoundingClientRect()
       const start = { x: event.clientX - rect.left, y: event.clientY - rect.top }
       dragMovedRef.current = false
       dragBoxRef.current = { start, end: start }
       updateDragBox(dragBoxRef.current)
+      activePointerIdRef.current = event.pointerId
+      event.currentTarget.setPointerCapture(event.pointerId)
     }
 
-    const handleMouseMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
-      if (inputBlocked) return
+    const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+      if (inputBlockedRef.current) return
       const canvas = canvasRef.current
       const renderer = rendererRef.current
       if (!canvas || !renderer) return
@@ -601,9 +604,12 @@ export const CanvasLayer3D = React.memo(
       hoveredPadIdRef.current = padId
     }
 
-    const handleMouseUp = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
       if (event.button !== 0) return
+      if (activePointerIdRef.current !== event.pointerId) return
       processPointerUp(event.clientX, event.clientY)
+      activePointerIdRef.current = null
+      event.currentTarget.releasePointerCapture(event.pointerId)
     }
 
     const handleContextMenu = (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -656,15 +662,6 @@ export const CanvasLayer3D = React.memo(
       return () => canvas.removeEventListener('wheel', onWheel)
     }, [])
 
-    useEffect(() => {
-      const onWindowUp = (event: MouseEvent) => {
-        if (!dragBoxRef.current) return
-        processPointerUp(event.clientX, event.clientY)
-      }
-      window.addEventListener('mouseup', onWindowUp)
-      return () => window.removeEventListener('mouseup', onWindowUp)
-    }, [])
-
     const label = useMemo(() => (phase === 'combat' ? 'Combat' : 'Build'), [phase])
 
     return (
@@ -672,11 +669,16 @@ export const CanvasLayer3D = React.memo(
         <canvas
           ref={canvasRef}
           className="h-full w-full"
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={() => {
+            activePointerIdRef.current = null
+            dragBoxRef.current = null
+            updateDragBox(null)
+          }}
           onContextMenu={handleContextMenu}
-          onMouseLeave={() => {
+          onPointerLeave={() => {
             hoveredPadIdRef.current = null
             dragBoxRef.current = null
             updateDragBox(null)
