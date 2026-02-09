@@ -1,0 +1,124 @@
+Add meta progression centered on the player Stronghold (main base). Stronghold level controls what buildings can be constructed on pads and the max upgrade level of each building. This must integrate with the existing map-centric day loop (Build Phase on map -> Battle Cry -> Waves -> Survived -> Gold -> Build Phase…).
+
+CORE CONCEPT
+- The Stronghold is the HQ enemies attack.
+- Stronghold is upgradeable (minimum 3 levels).
+- Stronghold level gates:
+  1) Which building TYPES are unlocked/available to construct.
+  2) The maximum level cap of each building type.
+  3) (Optional) number of active building pads unlocked.
+- Stronghold is the “overall progress controller” for the run.
+
+RUN STATE CHANGES
+Extend RunState to include:
+- strongholdLevel: number (starts at 1)
+- strongholdUpgradeInProgress?: none (upgrades are instant at day end/build phase for simplicity)
+- unlockedBuildingTypes: derived from strongholdLevel (do not store if derivable)
+- buildingLevelCaps: derived from strongholdLevel
+
+CONFIG (DATA-DRIVEN)
+Add /src/config/stronghold.ts (or similar):
+- strongholdLevels: [
+  {
+    level: 1,
+    upgradeCost: 120,
+    maxBuildingLevelCap: 1,
+    unlockBuildingTypes: ["GoldMine","House","Barracks"],    // example
+    unlockPads: ["padA","padB"]                             // optional
+  },
+  {
+    level: 2,
+    upgradeCost: 260,
+    maxBuildingLevelCap: 2,
+    unlockBuildingTypes: ["Range","Watchtower"],
+    unlockPads: ["padC"]
+  },
+  {
+    level: 3,
+    upgradeCost: 520,
+    maxBuildingLevelCap: 3,
+    unlockBuildingTypes: ["Stable","Blacksmith"],
+    unlockPads: ["padD"]
+  }
+]
+Also allow per-building caps if needed:
+- buildingCapsByLevel: { GoldMine: [1,2,3], Barracks:[1,2,3], Watchtower:[0,1,2] }
+(0 means locked until a later stronghold level)
+
+STRONGHOLD UPGRADE RULES
+- Stronghold can only be upgraded during BUILD_PHASE (post-day).
+- Stronghold upgrades cost gold (from run gold).
+- Upgrading Stronghold is instant (for prototype).
+- Stronghold cannot exceed max level defined by mission/campaign (at least 3).
+- If insufficient gold, upgrade button disabled with tooltip.
+
+MAP INTEGRATION (FIXED LOCATION)
+- Stronghold is a permanent structure on the map at a fixed coordinate.
+- It is selectable like buildings:
+  - Clicking Stronghold opens a Stronghold Panel showing:
+    - Current level
+    - HP (combat stat)
+    - Current unlocks (building types, caps)
+    - Next level benefits (new building types, increased caps, new pad unlocks)
+    - Upgrade cost + Upgrade button
+- In COMBAT_PHASE, Stronghold panel is read-only.
+
+GATING BEHAVIOR (MUST)
+1) BUILD OPTIONS FILTERING
+- When clicking an empty pad, the Build Panel must show ONLY building types unlocked by strongholdLevel AND allowed by that pad.
+- Locked building types appear greyed with a lock icon and tooltip:
+  - “Unlock by upgrading Stronghold to Lv2”.
+
+2) BUILDING UPGRADE CAP
+- When selecting an existing building, the Upgrade button must respect the cap:
+  - If building.level >= capForThisBuildingType(strongholdLevel): disable upgrade and show:
+    “Max level reached. Upgrade Stronghold to increase cap.”
+- If building is not unlocked (should not happen for existing), still safe-guard.
+
+3) PAD UNLOCKS (OPTIONAL BUT RECOMMENDED)
+- Some pads start locked and become buildable only at certain stronghold levels.
+- Locked pads render as “inactive” with a lock icon:
+  - “Unlock at Stronghold Lv2”.
+- This provides clear progression without needing random pad placement.
+
+COMBAT EFFECTS (OPTIONAL, KEEP SIMPLE)
+- Stronghold level can also increase:
+  - Stronghold HP
+  - Stronghold armor
+  - (Optional) small base regen between days
+Keep these in config and reflect in combat.
+
+UI REQUIREMENTS
+TOP BAR
+- Add a Stronghold level indicator next to Day/Phase:
+  - “Stronghold Lv2”
+- Hover tooltip summarizing current unlocks.
+
+LEFT PANEL (WHEN STRONGHOLD SELECTED)
+- Stronghold card with upgrade CTA.
+- Show “Next unlocks” section with icons for newly unlocked buildings and new caps.
+- Keep it fast: one click upgrade.
+
+PROGRESSION / GOALS
+- Missions can require Stronghold level as part of goals:
+  - e.g. “Reach Stronghold Lv3” or “Survive Day 6”.
+- Level completion persists campaign meta:
+  - unlock next mission
+  - (Optional) permanent meta currency, but not required for this feature.
+
+SAVE / LOAD
+- Persist strongholdLevel and unlocked pads/buildings in the run save.
+- If you keep “Continue,” ensure derived unlocks recalculate on load.
+
+ACCEPTANCE TESTS
+- Start mission: Stronghold exists on map at Lv1; only Lv1 buildings available; some pads locked.
+- After earning gold: player can select Stronghold and upgrade to Lv2 (if affordable).
+- After Stronghold Lv2:
+  - New building types appear on eligible pads.
+  - Previously capped buildings can now upgrade to Lv2.
+  - Newly unlocked pads become buildable.
+- Stronghold upgrade meaningfully affects what the player can do.
+
+DO NOT
+- Do not add a separate meta screen; everything is map-centric.
+- Do not allow bypassing gates (e.g., upgrading buildings beyond cap).

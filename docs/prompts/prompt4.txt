@@ -1,0 +1,164 @@
+Update the existing prototype so META PROGRESSION and GAMEPLAY are one connected “Day Cycle” loop per level. The game is still single-player, browser-based.
+
+NEW CORE LOOP (TURN/DAY BASED META + REAL-TIME WAVES)
+- Each “day/turn” consists of:
+  1) Build/Upgrade Phase (meta inside the level)
+  2) Start Combat by pressing “Battle Cry”
+  3) Real-time wave combat happens
+  4) When all waves for that day are defeated: show “Survived”
+  5) Start a new day: pay income from buildings, update progress, unlock next day
+  6) Repeat until level goals are completed (win condition)
+- Losing a combat day ends the run for that level (lose screen), with option to retry from day 1 or last checkpoint (choose one; default: day 1 for simplicity).
+
+IMPORTANT: Meta and gameplay must share ONE state for the current level run.
+- Remove disconnected flows. The “Town/Heroes/Troops” screens become the “Build Phase UI” inside the level run (not a separate mode that doesn’t affect combat).
+
+STATE MODEL (LEVEL RUN)
+Create a “RunState” for the active level:
+- levelId
+- dayNumber (starts at 1)
+- gold (primary currency for the run)
+- buildings[] (owned buildings with level)
+- unitRoster[] (units available for deploying in combat; could be “squads”)
+- heroChoice (optional, 1 hero)
+- goalsProgress (counters)
+- difficultyScaling (optional)
+Persist meta progression separately:
+- unlockedLevels, bestCompletion, etc.
+Persist active run optionally (Continue button), but must at least allow retry.
+
+CURRENCY & INCOME
+- Gold is earned at “Start New Day” after surviving combat.
+- Income = sum(buildingIncome(buildingType, level)) + any bonuses.
+- Display “Income Breakdown” panel at day end.
+
+BUILDINGS (RUN-LOCAL)
+Start each level with basic buildings that generate gold.
+Minimum buildings:
+- Gold Mine (income)
+- House (income small + unlock unit cap)
+- Barracks (enables buying/training Infantry)
+- Range (enables buying/training Archers)
+- Stable (enables buying/training Cavalry)
+Optional:
+- Watchtower (combat bonus), Blacksmith (unit stat bonus)
+Each building:
+- cost to buy
+- upgrade cost
+- level
+- income per day (for income buildings) OR bonuses (for military buildings)
+All values config-driven.
+
+BUILD/UPGRADE PHASE (UI)
+During build phase:
+- Show current day, current gold, expected income next day, goals progress.
+- Shop panel:
+  - Buy new buildings (if not owned and allowed)
+  - Upgrade existing buildings
+  - Buy/upgrade units (see below)
+- “Battle Cry” button ends build phase and begins combat.
+Rules:
+- No building/unit purchases during combat.
+- One clear phase switch.
+
+UNITS & BUYING/TRAINING
+Replace “idle training timers” with run-based purchases:
+- Units are purchased with gold during build phase.
+- Option A (simplest): instant purchase adds to roster.
+- Option B: training slots/building levels gate max purchases per day (still instant).
+Keep unit types: Infantry/Archer/Cavalry.
+Units exist as “Squads” to reduce entity count:
+- e.g., 1 squad = 10 troops; squad HP and damage scale.
+Upgrades:
+- Upgrade unit tier via Barracks/Range/Stable levels OR via “Unit Tech” upgrades bought with gold.
+Deployment:
+- Before combat starts, auto-deploy all squads or allow “Deploy screen” where player chooses which squads to bring (cap).
+
+COMBAT PHASE (REAL-TIME WAVES)
+- Canvas RTS combat but focused on defense vs waves.
+- Player units start near a base/HQ. Enemies spawn at map edges in waves.
+- Win day when all waves defeated.
+- Lose day if HQ destroyed OR all squads dead (choose one; recommended: HQ destroyed).
+- After day win: show “Survived Day X” overlay, then “Start New Day” button triggers income payout and returns to build phase.
+
+WAVES PER DAY
+Each level defines wave tables per day:
+- Day 1: 2 small waves
+- Day 2: 3 medium waves
+- Day 3+: scaling
+Waves are data-driven:
+- spawnTime offsets (or sequential “next wave when previous cleared”)
+- composition: enemyInfantry/enemyArcher/enemyCavalry
+- modifiers: HP/Damage scaling
+Show wave progress HUD:
+- “Wave 2/3”
+- remaining enemies count
+
+LEVEL GOALS (WIN CONDITIONS)
+Each level must have explicit goals, e.g.:
+- Survive until Day N
+- Defeat a Boss wave on Day N
+- Accumulate X total gold earned
+- Keep HQ above 50% HP by end
+Show goals progress during build phase and combat HUD.
+Level completion triggers Win screen + rewards + unlock next level.
+
+UI FLOW (CONNECTED)
+Main Menu
+- Play -> Level Select
+- Continue -> resumes active RunState if present
+Level Select
+- Start Level -> initializes RunState with starting buildings, day=1, gold=startGold
+Level Run Screen (single “scene” with two sub-modes)
+- Build Phase UI + “Battle Cry”
+- Combat Phase canvas + HUD
+Day End Overlay
+- “Survived” -> “Start New Day” -> apply income -> return to Build Phase
+Win/Lose Screens
+- Win: unlock next level, return to Level Select
+- Lose: Retry (restart run) / Level Select
+
+IMPLEMENTATION REQUIREMENTS
+- Centralize RunState in one store (React context or Zustand-like simple store).
+- Combat sim must read:
+  - current squads (counts/stats)
+  - building bonuses (tower damage, unit buffs)
+  - hero bonuses (if enabled)
+- After combat, update run:
+  - dayNumber++
+  - gold += income
+  - goalsProgress updated
+- Ensure no duplication between meta inventory and run inventory: run is the source of truth during level.
+
+BALANCE DEFAULTS (STARTING POINT)
+- StartGold: 50
+- StartingBuildings: Gold Mine Lv1, House Lv1, Barracks Lv1
+- Income:
+  - Gold Mine Lv1: +30/day, +20 per level
+  - House Lv1: +10/day, +10 per level, also +1 squad cap per level
+- Unit costs:
+  - Infantry squad: 20
+  - Archer squad: 25
+  - Cavalry squad: 30
+- Upgrade costs scale ~1.6x per level.
+
+ACCEPTANCE TESTS
+- Starting a level: you see starting buildings, day=1, gold=startGold.
+- You can buy/upgrade buildings and buy squads in build phase.
+- Press Battle Cry: combat starts, waves spawn, you fight in real time.
+- After clearing all waves: “Survived” shown, then start new day.
+- Starting new day pays income, gold increases, day increments, back to build phase.
+- Completing all level goals shows Win screen and unlocks next level.
+- Losing shows Lose screen with retry.
+
+DO NOT
+- Do not keep the old disconnected “Town” loop separate from levels.
+- Do not use asynchronous long timers for income; income only happens at day transition.
+
+DELIVERABLES
+- Refactor code with:
+  /src/run (RunState, level cycle, goals, economy)
+  /src/rts (combat sim/render/input)
+  /src/config (levels, buildings, units, waves)
+  /src/ui (menus, overlays)
+- README update describing the new Day Cycle loop and controls.

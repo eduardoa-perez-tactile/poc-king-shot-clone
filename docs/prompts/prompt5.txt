@@ -1,0 +1,145 @@
+Add a new feature/flow change: ALL build/upgrade actions happen directly on the RTS map (no separate build screen). The player experiences one continuous “Map Scene” per mission with a day cycle.
+
+UPDATED GAME FLOW (MAP-CENTRIC)
+1) Main Menu -> Play -> Mission Select
+2) Enter Mission Map Scene (single scene)
+   - Start Day 1 with:
+     - 1 controllable Hero (strong enough to survive at least 3 days)
+     - 0–few starter buildings (optional; keep minimal)
+     - Some fixed empty building slots on the map
+   - Player can control hero in real-time on the map.
+3) Combat is started by pressing “Battle Cry”
+   - Enemy waves spawn and attack
+   - Player fights mainly using hero (and any units produced)
+4) When all waves are defeated:
+   - Show “Survived Day X”
+   - Award gold (end-of-day income/reward)
+   - The scene switches to “Build Mode” (still on the same map)
+5) In Build Mode:
+   - Player clicks fixed building slots to construct new buildings (if empty) or clicks existing buildings to upgrade.
+   - After spending gold and making changes, player presses “Battle Cry” to start next day combat.
+6) Repeat until mission goals are met.
+
+KEY REQUIREMENT
+- No separate build UI screen. Construction and upgrades are initiated by clicking buildings/slots on the map.
+- Keep it simple: buildings can ONLY exist in predefined fixed locations (“building pads”).
+
+MAP BUILDING PADS (FIXED LOCATIONS)
+- Define N pads in the mission config with positions and allowed building types.
+Example pads:
+- Pad A: (x,y) allowed: Barracks/Range/Stable
+- Pad B: (x,y) allowed: Gold Mine/House/Watchtower
+- Pad C: (x,y) allowed: Gold Mine/Blacksmith
+Rendering:
+- Empty pad: outlined rectangle + “+ Build” label when hovered.
+- Occupied pad: building rectangle with level badge.
+
+CLICK INTERACTION (BUILD/UPGRADE ON MAP)
+- Clicking an empty pad opens a Build Modal/Panel (overlay UI) with:
+  - allowed building options
+  - cost
+  - effect summary (income, unlocks, buffs)
+  - Build button disabled if insufficient gold
+- Clicking an existing building opens a Building Details Modal/Panel with:
+  - current level, current effects
+  - next upgrade cost + next level effects
+  - Upgrade button disabled if insufficient gold
+- Add a “Close” button and ESC to close.
+
+PHASES WITHIN THE SAME MAP SCENE
+State machine per mission:
+- BUILD_PHASE (post-day): no enemy spawns; hero can move (optional) but no Battle Cry active until ready.
+- COMBAT_PHASE: waves active; building actions disabled; pad clicks show “Cannot build during combat”.
+Transitions:
+- BUILD_PHASE -> COMBAT_PHASE when pressing Battle Cry
+- COMBAT_PHASE -> BUILD_PHASE when all waves cleared and “Collect Gold / Next Day” acknowledged
+
+HERO GAMEPLAY (PRIMARY CONTROL)
+- Hero is a single controllable unit with:
+  - Movement via right-click (or WASD optional)
+  - Attack target via right-click on enemy (or auto-attack within radius)
+  - 2 abilities on hotkeys (Q/E) with cooldowns (simple):
+    - Q: AoE strike around hero
+    - E: Short dash or temporary shield/heal
+- Hero must be tuned to survive at least 3 days with reasonable play (config-driven).
+- Hero can gain small power each day (optional): +HP or +damage per day, or via building buffs.
+
+UNITS (OPTIONAL, KEEP MINIMAL)
+- Buildings can unlock/purchase squads during BUILD_PHASE:
+  - Barracks enables buying Infantry squad
+  - Range enables buying Archer squad
+  - Stable enables buying Cavalry squad
+- To keep scope tight:
+  - Units spawn near HQ/building when purchased.
+  - Units can be selected and commanded like RTS, but hero remains the core.
+If unit control already exists, keep it; otherwise implement minimal follow-follow behavior.
+
+ECONOMY & GOLD
+- End-of-day gold gain comes from:
+  - “Survival Reward” for the day (mission-defined)
+  - + Income from income buildings (Gold Mine/House) at day transition
+- Show a Day End overlay:
+  - “Survived Day X”
+  - Gold breakdown: reward + building income
+  - “Next Day” button -> enters BUILD_PHASE
+Top HUD always shows:
+- Day number
+- Current gold
+- Phase indicator (Build / Combat)
+- Battle Cry button enabled only in BUILD_PHASE
+
+COMBAT: WAVES & PROGRESSION
+- Waves spawn during COMBAT_PHASE.
+- Win day when all waves defeated.
+- Difficulty scales by day.
+- Mission goals: survive N days OR defeat boss on day N.
+- Display wave counter and remaining enemies.
+
+MISSION CONFIG CHANGES
+Update mission definitions to include:
+- heroLoadout (base stats, abilities)
+- buildingPads[]: { id, x, y, allowedTypes[] }
+- startingBuildings[] placed on specific pads (optional)
+- dayWaves: per day wave definitions (or generator)
+- dayRewardGold: base reward per day (or scaling)
+- goals: { type: “surviveDays”, value: N } etc.
+
+RENDERING REQUIREMENTS (CANVAS)
+- Draw building pads and buildings.
+- Hover highlighting for pads/buildings.
+- Click hit-testing for pads/buildings separate from unit selection:
+  - In BUILD_PHASE: pad/building clicks open UI panels
+  - In COMBAT_PHASE: pad/building clicks do nothing (or show toast)
+- Ensure unit selection still works reliably.
+
+UI COMPONENTS TO ADD
+- BuildPanel (for empty pad): choose building, confirm.
+- BuildingPanel (for existing building): details + upgrade.
+- DayEndOverlay: survived + gold breakdown + Next Day.
+- Toast/notification system for “Not enough gold”, “Can’t build during combat”, etc.
+
+SAVE / PERSISTENCE
+- Persist run state:
+  - day, gold, buildings-on-pads (type, level), hero progression (if any), mission progress.
+- Continue button resumes in BUILD_PHASE at start of day unless mid-combat persistence is already robust (if not, save only between days).
+
+ACCEPTANCE TESTS
+- Play -> select mission -> map loads with hero + visible building pads.
+- Player can control hero and kill enemies when Battle Cry starts.
+- After clearing waves: day end overlay appears, gold awarded.
+- In build phase: clicking an empty pad allows constructing a building if enough gold.
+- Clicking an existing building shows upgrade options.
+- Spending gold updates HUD instantly.
+- Player can start next battle from the same map and repeat until goals complete.
+
+IMPLEMENTATION NOTES (KEEP SIMPLE)
+- Keep building pads in world coordinates; store as entities with bounding boxes for hit test.
+- Use a simple “interaction mode” priority:
+  1) If click intersects UI -> UI handles
+  2) Else if BUILD_PHASE and click hits pad/building -> open panel
+  3) Else -> unit selection/move/attack
+- Use config tables for costs/effects; avoid hardcoding.
+
+DELIVERABLES
+- Updated code with map-centric loop and building pad interactions.
+- README: updated controls and flow.

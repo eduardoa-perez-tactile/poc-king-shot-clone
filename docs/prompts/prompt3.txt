@@ -1,0 +1,131 @@
+We already have a working single-player browser prototype from the previous prompt (React + TS + Vite, localStorage meta, tabs: Town/Heroes/Troops/Combat/Quests). Now convert THAT existing prototype into a REAL-TIME STRATEGY game with a complete cycle:
+
+GAME CYCLE (REQUIRED)
+1) Main Menu screen (default on load)
+   - Title, “Play”, “Continue” (if save exists), “Settings”, “Reset Save”
+2) Mission Select (single player)
+   - At least 3 missions, locked/unlocked by progression
+   - Show rewards and difficulty
+3) Gameplay Scene (real-time)
+   - Player controls a squad/army in real time on a 2D top-down map
+4) End Screen (Win/Lose)
+   - Show stats + rewards if win
+   - Buttons: “Return to Main Menu”, “Replay”, “Next Mission” (if win)
+5) Return to Main Menu (and persist progression)
+
+SCOPE / CONSTRAINTS
+- Keep the existing meta systems (resources/buildings/heroes/troops/quests) but refactor “Combat” into a real-time gameplay scene.
+- Single player only, no backend, localStorage persistence.
+- Minimal visuals (shapes + text). Responsiveness and full loop matter more than polish.
+
+WHAT TO KEEP FROM CURRENT BUILD
+- Town building, resource ticking, hero roster, troop training, quests, events, and save/load.
+- Existing config-driven balance tables.
+- Existing “Combat” tab can remain for “Skirmish practice” OR be replaced by “Missions” entry, but core battles must be real-time.
+
+NEW REAL-TIME GAMEPLAY (CORE)
+ENGINE
+- Canvas-based real-time simulation with requestAnimationFrame.
+- Fixed timestep sim (e.g., 30 or 60 sim ticks/sec) + render interpolation optional.
+- Clean separation: simulation state vs rendering.
+
+MAP / CAMERA
+- Top-down 2D map; camera pan + zoom.
+- Obstacles (rectangles) and collision so units do not pass through them.
+- Pathing: implement basic A* on a coarse grid OR steering with waypointing + obstacle avoidance (A* preferred).
+
+PLAYER CONTROLS (MUST)
+- Left click selects unit(s).
+- Drag-box selection for multiple units.
+- Right click issues move command; right click on enemy issues attack command.
+- Hotkeys: A (attack-move), S (stop), 1/2/3 control groups (Ctrl+num assign).
+- Selected units show health bars and current order.
+
+UNITS
+- Use the existing Troop types: Infantry, Archer, Cavalry.
+- Represent trained troop counts as squads or as multiple entities:
+  - Prototype-friendly option: each “unit” entity represents 5–20 troops (squad entity with HP = sum) to keep entity count low.
+- Type advantage system retained.
+
+COMBAT
+- Real-time damage with attack cooldowns; ranged has projectile or instant hit.
+- Targeting rules:
+  - explicit target on right-click attack
+  - otherwise auto-acquire closest enemy in range
+- Win/Lose:
+  - Mission objective determines victory (destroy enemy HQ OR survive timer).
+  - Lose if player HQ destroyed OR all player units dead (mission-dependent).
+
+HEROES IN RTS
+- Player selects 1 leader hero before mission (from existing hero roster).
+- In battle, hero is a special entity with:
+  - 2 active abilities (cooldowns) + 1 passive aura
+- Abilities appear as HUD buttons; click ability then click target position/unit.
+- Use existing hero stats as modifiers (damage/HP/attack speed/etc.).
+
+MISSIONS
+- Add a mission system (data-driven):
+  - Mission 1: Tutorial skirmish (small enemy waves) — Win by surviving 3 minutes.
+  - Mission 2: Destroy Enemy HQ — moderate defenses.
+  - Mission 3: Survival — survive 6 minutes with escalating waves.
+- Each mission defines: map layout, starting units, enemy spawns/waves, reward table, unlock conditions.
+
+ENEMY AI (SIMPLE BUT OBVIOUS)
+- Enemy spawner that creates waves on timers.
+- Enemy units path toward player HQ or nearest player units.
+- For “Destroy HQ” mission: enemy has HQ + periodic defenders.
+
+UI REQUIREMENTS (FULL LOOP)
+MAIN MENU
+- Play -> Mission Select
+- Continue -> Mission Select (load save)
+- Settings -> minimal
+- Reset Save -> confirm
+
+MISSION SELECT
+- Show mission cards with lock states, description, rewards.
+- “Launch” starts Gameplay Scene.
+
+IN-GAME HUD
+- Top bar: mission objective + timer.
+- Resource display optional (not required in battle unless used).
+- Selected unit panel: unit count, HP, type.
+- Hero ability buttons with cooldown.
+- Pause menu (Esc): Resume, Restart, Quit to Main Menu.
+
+END SCREEN
+- Win/Lose banner
+- Rewards summary (if win)
+- Buttons: Replay / Next / Main Menu
+
+INTEGRATION WITH EXISTING META
+- Winning a mission grants resources/XP/keys and advances progression (unlock next mission).
+- Losing grants nothing or a small consolation reward (configurable).
+- Keep localStorage save schema versioned; add migration if needed.
+
+REFACTOR PLAN (DO THIS)
+1) Add a top-level Scene Router/state machine:
+   - MainMenu -> MissionSelect -> Gameplay -> EndScreen -> MainMenu
+2) Move “Combat” logic into /src/rts:
+   - sim (entities, orders, pathfinding, combat)
+   - render (canvas draw, camera)
+   - input (selection, commands, hotkeys)
+   - missions (data/config)
+3) Keep existing /src/meta for town/heroes/troops; add “Missions” entry point.
+4) Ensure saving/loading persists:
+   - meta progression
+   - unlocked missions
+   - hero XP/gear
+   - troop inventories (used to form starting army)
+
+DELIVERABLES / ACCEPTANCE
+- From a fresh load: Main Menu -> Play -> Mission Select -> Launch -> RTS gameplay -> Win/Lose -> End Screen -> back to Main Menu works every time.
+- Controls feel RTS-like (selection + right-click commands).
+- At least 3 missions fully playable.
+- No crashes on reload; save persists.
+
+IMPLEMENTATION NOTES (KEEP SIMPLE)
+- Keep entity count small (squad entities).
+- Use coarse grid A* for pathing (e.g., 40x40 or 60x60 grid).
+- Use config tables for unit stats, mission definitions, rewards.
+- Minimal rendering: circles for units, rectangles for buildings/obstacles, lines for selections.
