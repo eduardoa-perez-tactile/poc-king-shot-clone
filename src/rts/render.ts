@@ -16,6 +16,25 @@ const worldToScreen = (pos: Vec2, cam: Camera) => ({
   y: (pos.y - cam.y) * cam.zoom
 })
 
+const drawTextWithOutline = (
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  size: number,
+  fill: string,
+  stroke: string
+) => {
+  ctx.font = `${size}px 'Space Mono', monospace`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.lineWidth = Math.max(2, size * 0.18)
+  ctx.strokeStyle = stroke
+  ctx.strokeText(text, x, y)
+  ctx.fillStyle = fill
+  ctx.fillText(text, x, y)
+}
+
 const drawHealthBar = (ctx: CanvasRenderingContext2D, entity: EntityState, cam: Camera) => {
   const screen = worldToScreen(entity.pos, cam)
   const width = 28 * cam.zoom
@@ -144,6 +163,15 @@ const drawRange = (ctx: CanvasRenderingContext2D, entity: EntityState, cam: Came
   ctx.stroke()
 }
 
+const HIT_FLASH_DURATION = 0.14
+
+const TIER_STYLES: Record<'normal' | 'miniBoss' | 'boss' | 'hero', { fill: string; stroke?: string }> = {
+  normal: { fill: '#ef4444' },
+  miniBoss: { fill: '#f97316', stroke: '#fde68a' },
+  boss: { fill: '#991b1b', stroke: '#fecaca' },
+  hero: { fill: '#f59e0b' }
+}
+
 export const renderScene = (
   ctx: CanvasRenderingContext2D,
   sim: SimState,
@@ -157,6 +185,9 @@ export const renderScene = (
     selectedPadId?: string | null
     padUnlockLevels?: Record<string, number>
     strongholdLevel?: number
+  },
+  options?: {
+    showLabels?: boolean
   }
 ) => {
   const width = ctx.canvas.width
@@ -193,6 +224,17 @@ export const renderScene = (
     const life = effect.expiresAt - effect.bornAt
     const remaining = Math.max(0, effect.expiresAt - sim.time)
     const alpha = life > 0 ? Math.min(1, remaining / life) : 0.2
+    if (effect.kind === 'slash' && effect.from && effect.to) {
+      const from = worldToScreen(effect.from, cam)
+      const to = worldToScreen(effect.to, cam)
+      ctx.strokeStyle = `rgba(248, 250, 252, ${alpha})`
+      ctx.lineWidth = 2 * cam.zoom
+      ctx.beginPath()
+      ctx.moveTo(from.x, from.y)
+      ctx.lineTo(to.x, to.y)
+      ctx.stroke()
+      return
+    }
     const radius = effect.radius * (1 + (1 - alpha) * 0.2) * cam.zoom
     ctx.beginPath()
     ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2)
@@ -221,6 +263,36 @@ export const renderScene = (
     )
   }
 
+  const labelMap = new Map<string, string>()
+  if (options?.showLabels) {
+    const grouped: Record<'infantry' | 'archer' | 'cavalry' | 'hero', EntityState[]> = {
+      infantry: [],
+      archer: [],
+      cavalry: [],
+      hero: []
+    }
+    sim.entities.forEach((entity) => {
+      if (entity.kind === 'hq') return
+      if (entity.team === 'player') {
+        if (entity.kind === 'hero') grouped.hero.push(entity)
+        if (entity.kind === 'infantry') grouped.infantry.push(entity)
+        if (entity.kind === 'archer') grouped.archer.push(entity)
+        if (entity.kind === 'cavalry') grouped.cavalry.push(entity)
+      } else if (entity.tier === 'boss' || entity.tier === 'miniBoss') {
+        if (entity.idLabel) labelMap.set(entity.id, entity.idLabel)
+      }
+    })
+
+    ;(Object.keys(grouped) as Array<keyof typeof grouped>).forEach((key) => {
+      const list = grouped[key].sort((a, b) => a.id.localeCompare(b.id))
+      list.forEach((entity, index) => {
+        if (!entity.idLabel) return
+        const label = list.length > 1 ? `${entity.idLabel}${index + 1}` : entity.idLabel
+        labelMap.set(entity.id, label)
+      })
+    })
+  }
+
   selection.forEach((id) => {
     const entity = sim.entities.find((entry) => entry.id === id)
     if (!entity || entity.kind === 'hq') return
@@ -233,14 +305,28 @@ export const renderScene = (
     if (entity.kind === 'hq') {
       drawHQ(ctx, entity, cam)
     } else {
-      if (entity.team === 'player') {
-        ctx.fillStyle = entity.kind === 'hero' ? '#f59e0b' : '#38bdf8'
-      } else {
-        ctx.fillStyle = '#ef4444'
-      }
+      const isPlayer = entity.team === 'player'
+      const isElite = entity.tier === 'boss' || entity.tier === 'miniBoss'
+      const fill = isPlayer
+        ? entity.kind === 'hero'
+          ? TIER_STYLES.hero.fill
+          : '#38bdf8'
+        : isElite
+          ? TIER_STYLES[entity.tier].fill
+          : TIER_STYLES.normal.fill
+      const stroke = !isPlayer && isElite ? TIER_STYLES[entity.tier].stroke : undefined
+      ctx.fillStyle = fill
       ctx.beginPath()
       ctx.arc(screen.x, screen.y, entity.radius * cam.zoom, 0, Math.PI * 2)
       ctx.fill()
+
+      if (stroke) {
+        ctx.strokeStyle = stroke
+        ctx.lineWidth = 2.5 * cam.zoom
+        ctx.beginPath()
+        ctx.arc(screen.x, screen.y, (entity.radius + 2) * cam.zoom, 0, Math.PI * 2)
+        ctx.stroke()
+      }
     }
 
     if (isSelected) {
@@ -251,15 +337,52 @@ export const renderScene = (
       ctx.stroke()
     }
 
+    if (typeof entity.lastHitTime === 'number' && sim.time - entity.lastHitTime < HIT_FLASH_DURATION) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'
+      ctx.lineWidth = 2.5 * cam.zoom
+      ctx.beginPath()
+      ctx.arc(screen.x, screen.y, (entity.radius + 3) * cam.zoom, 0, Math.PI * 2)
+      ctx.stroke()
+    }
+
     drawHealthBar(ctx, entity, cam)
+
+    const label = labelMap.get(entity.id)
+    if (label) {
+      const size = Math.max(10, 12 * cam.zoom)
+      drawTextWithOutline(ctx, label, screen.x, screen.y - (entity.radius + 14) * cam.zoom, size, '#f8fafc', '#0f172a')
+    }
   })
 
   sim.projectiles.forEach((proj) => {
     const screen = worldToScreen(proj.pos, cam)
+    const target = sim.entities.find((entity) => entity.id === proj.targetId)
+    if (target) {
+      const targetScreen = worldToScreen(target.pos, cam)
+      const dx = targetScreen.x - screen.x
+      const dy = targetScreen.y - screen.y
+      const dist = Math.hypot(dx, dy) || 1
+      const ux = dx / dist
+      const uy = dy / dist
+      ctx.strokeStyle = 'rgba(248, 250, 252, 0.75)'
+      ctx.lineWidth = 2 * cam.zoom
+      ctx.beginPath()
+      ctx.moveTo(screen.x, screen.y)
+      ctx.lineTo(screen.x - ux * 10 * cam.zoom, screen.y - uy * 10 * cam.zoom)
+      ctx.stroke()
+    }
     ctx.fillStyle = '#f97316'
     ctx.beginPath()
     ctx.arc(screen.x, screen.y, 3 * cam.zoom, 0, Math.PI * 2)
     ctx.fill()
+  })
+
+  sim.damageNumbers.forEach((entry) => {
+    const screen = worldToScreen({ x: entry.x, y: entry.y }, cam)
+    const alpha = Math.max(0, Math.min(1, entry.ttl / entry.life))
+    ctx.globalAlpha = alpha
+    drawTextWithOutline(ctx, entry.text, screen.x, screen.y, Math.max(10, entry.size * cam.zoom), entry.color, '#0f172a')
+    ctx.globalAlpha = 1
   })
 }
 

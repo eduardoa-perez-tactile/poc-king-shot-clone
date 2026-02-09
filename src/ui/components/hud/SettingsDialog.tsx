@@ -32,6 +32,15 @@ export const SettingsDialog: React.FC = () => {
           {settings.sound ? 'On' : 'Off'}
         </Button>
       </div>
+      <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-surface/70 px-3 py-2">
+        <div>
+          <div className="text-sm font-semibold text-text">Unit Labels</div>
+          <div className="text-xs text-muted">Show identifiers above squads and heroes.</div>
+        </div>
+        <Button variant={settings.showUnitLabels ? 'primary' : 'secondary'} size="sm" onClick={() => uiActions.toggleSetting('showUnitLabels')}>
+          {settings.showUnitLabels ? 'On' : 'Off'}
+        </Button>
+      </div>
     </Dialog>
   )
 }

@@ -1,4 +1,5 @@
 import { BuildingId } from './buildings'
+import { EliteId } from './elites'
 import { UnitType } from './units'
 
 export interface WaveUnitGroup {
@@ -11,7 +12,8 @@ export interface DayWave {
   id: string
   units: WaveUnitGroup[]
   spawnTimeSec?: number
-  isBoss?: boolean
+  elite?: EliteId
+  eliteCount?: number
 }
 
 export interface DayPlan {
@@ -22,6 +24,8 @@ export interface DayPlan {
     hpMultiplier: number
     attackMultiplier: number
   }
+  miniBossAfterWave?: number
+  miniBossId?: EliteId
   waves: DayWave[]
 }
 
@@ -97,6 +101,7 @@ export interface LevelDefinition {
   dayRewardGold: number
   dayRewardScale?: number
   heroLoadout: HeroLoadout
+  bossId?: EliteId
   buildingPads: BuildingPad[]
   startingBuildings: { id: BuildingId; level: number; padId: string }[]
   goals: LevelGoal[]
@@ -140,7 +145,7 @@ const DEFAULT_PADS: BuildingPad[] = [
     id: 'pad_e',
     x: 620,
     y: 340,
-    allowedTypes: ['house', 'watchtower', 'blacksmith']
+    allowedTypes: ['house', 'watchtower', 'blacksmith', 'hero_recruiter']
   },
   {
     id: 'pad_f',
@@ -190,6 +195,7 @@ export const LEVELS: LevelDefinition[] = [
     dayRewardGold: 30,
     dayRewardScale: 5,
     heroLoadout: DEFAULT_HERO,
+    bossId: 'boss',
     buildingPads: DEFAULT_PADS,
     startingBuildings: [
       { id: 'gold_mine', level: 1, padId: 'pad_c' },
@@ -206,6 +212,7 @@ export const LEVELS: LevelDefinition[] = [
         waveMode: 'sequential',
         waveDelaySec: 6,
         enemyModifiers: { hpMultiplier: 1, attackMultiplier: 1 },
+        miniBossAfterWave: 2,
         waves: [
           {
             id: 'd1_w1',
@@ -228,6 +235,7 @@ export const LEVELS: LevelDefinition[] = [
         waveMode: 'sequential',
         waveDelaySec: 6,
         enemyModifiers: { hpMultiplier: 1.1, attackMultiplier: 1.05 },
+        miniBossAfterWave: 2,
         waves: [
           {
             id: 'd2_w1',
@@ -257,6 +265,7 @@ export const LEVELS: LevelDefinition[] = [
         waveMode: 'sequential',
         waveDelaySec: 6,
         enemyModifiers: { hpMultiplier: 1.2, attackMultiplier: 1.1 },
+        miniBossAfterWave: 2,
         waves: [
           {
             id: 'd3_w1',
@@ -274,6 +283,7 @@ export const LEVELS: LevelDefinition[] = [
           },
           {
             id: 'd3_w3',
+            elite: 'boss',
             units: [
               { type: 'infantry', squads: 4 },
               { type: 'cavalry', squads: 2 }
@@ -303,6 +313,7 @@ export const LEVELS: LevelDefinition[] = [
     dayRewardGold: 40,
     dayRewardScale: 6,
     heroLoadout: DEFAULT_HERO,
+    bossId: 'boss',
     buildingPads: DEFAULT_PADS,
     startingBuildings: [
       { id: 'gold_mine', level: 1, padId: 'pad_c' },
@@ -320,6 +331,7 @@ export const LEVELS: LevelDefinition[] = [
         waveMode: 'sequential',
         waveDelaySec: 6,
         enemyModifiers: { hpMultiplier: 1.05, attackMultiplier: 1.05 },
+        miniBossAfterWave: 2,
         waves: [
           { id: 'l2_d1_w1', units: [{ type: 'infantry', squads: 3 }, { type: 'archer', squads: 2 }] },
           { id: 'l2_d1_w2', units: [{ type: 'infantry', squads: 2 }, { type: 'cavalry', squads: 1 }] }
@@ -330,6 +342,7 @@ export const LEVELS: LevelDefinition[] = [
         waveMode: 'sequential',
         waveDelaySec: 6,
         enemyModifiers: { hpMultiplier: 1.15, attackMultiplier: 1.1 },
+        miniBossAfterWave: 2,
         waves: [
           { id: 'l2_d2_w1', units: [{ type: 'infantry', squads: 3 }, { type: 'archer', squads: 2 }] },
           { id: 'l2_d2_w2', units: [{ type: 'archer', squads: 3 }, { type: 'cavalry', squads: 2 }] },
@@ -341,6 +354,7 @@ export const LEVELS: LevelDefinition[] = [
         waveMode: 'sequential',
         waveDelaySec: 6,
         enemyModifiers: { hpMultiplier: 1.25, attackMultiplier: 1.15 },
+        miniBossAfterWave: 2,
         waves: [
           { id: 'l2_d3_w1', units: [{ type: 'infantry', squads: 4 }, { type: 'archer', squads: 2 }] },
           { id: 'l2_d3_w2', units: [{ type: 'cavalry', squads: 2 }, { type: 'archer', squads: 2 }] },
@@ -352,12 +366,13 @@ export const LEVELS: LevelDefinition[] = [
         waveMode: 'sequential',
         waveDelaySec: 8,
         enemyModifiers: { hpMultiplier: 1.35, attackMultiplier: 1.2 },
+        miniBossAfterWave: 2,
         waves: [
           { id: 'l2_d4_w1', units: [{ type: 'infantry', squads: 4 }, { type: 'archer', squads: 3 }] },
           { id: 'l2_d4_w2', units: [{ type: 'cavalry', squads: 3 }, { type: 'archer', squads: 3 }] },
           {
             id: 'l2_d4_boss',
-            isBoss: true,
+            elite: 'boss',
             units: [
               { type: 'infantry', squads: 1, squadSize: 18 },
               { type: 'cavalry', squads: 1, squadSize: 12 }
@@ -387,6 +402,7 @@ export const LEVELS: LevelDefinition[] = [
     dayRewardGold: 50,
     dayRewardScale: 8,
     heroLoadout: DEFAULT_HERO,
+    bossId: 'boss',
     buildingPads: DEFAULT_PADS,
     startingBuildings: [
       { id: 'gold_mine', level: 1, padId: 'pad_c' },
@@ -405,6 +421,7 @@ export const LEVELS: LevelDefinition[] = [
         waveMode: 'sequential',
         waveDelaySec: 6,
         enemyModifiers: { hpMultiplier: 1.1, attackMultiplier: 1.05 },
+        miniBossAfterWave: 2,
         waves: [
           { id: 'l3_d1_w1', units: [{ type: 'infantry', squads: 3 }, { type: 'archer', squads: 2 }] },
           { id: 'l3_d1_w2', units: [{ type: 'infantry', squads: 3 }, { type: 'cavalry', squads: 1 }] }
@@ -415,6 +432,7 @@ export const LEVELS: LevelDefinition[] = [
         waveMode: 'sequential',
         waveDelaySec: 6,
         enemyModifiers: { hpMultiplier: 1.2, attackMultiplier: 1.1 },
+        miniBossAfterWave: 2,
         waves: [
           { id: 'l3_d2_w1', units: [{ type: 'infantry', squads: 4 }, { type: 'archer', squads: 3 }] },
           { id: 'l3_d2_w2', units: [{ type: 'archer', squads: 3 }, { type: 'cavalry', squads: 2 }] },
@@ -426,6 +444,7 @@ export const LEVELS: LevelDefinition[] = [
         waveMode: 'sequential',
         waveDelaySec: 6,
         enemyModifiers: { hpMultiplier: 1.3, attackMultiplier: 1.15 },
+        miniBossAfterWave: 2,
         waves: [
           { id: 'l3_d3_w1', units: [{ type: 'infantry', squads: 5 }, { type: 'archer', squads: 3 }] },
           { id: 'l3_d3_w2', units: [{ type: 'archer', squads: 3 }, { type: 'cavalry', squads: 2 }] },
@@ -437,6 +456,7 @@ export const LEVELS: LevelDefinition[] = [
         waveMode: 'sequential',
         waveDelaySec: 7,
         enemyModifiers: { hpMultiplier: 1.4, attackMultiplier: 1.2 },
+        miniBossAfterWave: 2,
         waves: [
           { id: 'l3_d4_w1', units: [{ type: 'infantry', squads: 5 }, { type: 'archer', squads: 4 }] },
           { id: 'l3_d4_w2', units: [{ type: 'cavalry', squads: 3 }, { type: 'archer', squads: 3 }] },
@@ -448,10 +468,11 @@ export const LEVELS: LevelDefinition[] = [
         waveMode: 'sequential',
         waveDelaySec: 8,
         enemyModifiers: { hpMultiplier: 1.5, attackMultiplier: 1.25 },
+        miniBossAfterWave: 2,
         waves: [
           { id: 'l3_d5_w1', units: [{ type: 'infantry', squads: 6 }, { type: 'archer', squads: 4 }] },
           { id: 'l3_d5_w2', units: [{ type: 'cavalry', squads: 3 }, { type: 'archer', squads: 4 }] },
-          { id: 'l3_d5_w3', units: [{ type: 'infantry', squads: 6 }, { type: 'cavalry', squads: 3 }] }
+          { id: 'l3_d5_w3', elite: 'boss', units: [{ type: 'infantry', squads: 6 }, { type: 'cavalry', squads: 3 }] }
         ]
       }
     ],
@@ -484,6 +505,8 @@ export const getDayPlan = (level: LevelDefinition, dayNumber: number): DayPlan =
       hpMultiplier: last.enemyModifiers ? last.enemyModifiers.hpMultiplier * scale : scale,
       attackMultiplier: last.enemyModifiers ? last.enemyModifiers.attackMultiplier * (1 + extra * 0.15) : 1 + extra * 0.15
     },
+    miniBossAfterWave: last.miniBossAfterWave ?? 2,
+    miniBossId: last.miniBossId ?? 'miniBoss',
     waves: last.waves.map((wave) => ({
       ...wave,
       units: wave.units.map((unit) => ({

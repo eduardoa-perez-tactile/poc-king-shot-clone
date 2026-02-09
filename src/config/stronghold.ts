@@ -32,7 +32,7 @@ export const STRONGHOLD_LEVELS: StrongholdLevelDef[] = [
     level: 3,
     upgradeCost: 0,
     maxBuildingLevelCap: 3,
-    unlockBuildingTypes: ['stable', 'blacksmith'],
+    unlockBuildingTypes: ['stable', 'blacksmith', 'hero_recruiter'],
     unlockPads: ['pad_f'],
     hqBaseHp: 2000
   }
@@ -42,11 +42,14 @@ export const BUILDING_CAPS_BY_LEVEL: Partial<Record<BuildingId, number[]>> = {
   gold_mine: [1, 2, 3],
   house: [1, 2, 3],
   barracks: [1, 2, 3],
-  range: [0, 1, 2],
-  watchtower: [0, 1, 2],
+  range: [0, 1, 3],
+  watchtower: [0, 1, 3],
   stable: [0, 0, 3],
-  blacksmith: [0, 0, 2]
+  blacksmith: [0, 0, 3],
+  hero_recruiter: [0, 0, 3]
 }
+
+const GLOBAL_BUILDING_MAX_LEVEL = 3
 
 const padUnlockLevels: Record<string, number> = {}
 
@@ -96,7 +99,7 @@ export const getBuildingLevelCapForStronghold = (level: number, id: BuildingId) 
   const globalCap = getStrongholdMaxBuildingLevelCap(level)
   const perBuildingCap = getPerBuildingCap(level, id)
   const rawCap = typeof perBuildingCap === 'number' ? Math.min(perBuildingCap, globalCap) : globalCap
-  return Math.max(0, Math.min(rawCap, BUILDING_DEFS[id].maxLevel))
+  return Math.max(0, Math.min(rawCap, BUILDING_DEFS[id].maxLevel, GLOBAL_BUILDING_MAX_LEVEL))
 }
 
 export const isBuildingUnlockedAtStronghold = (level: number, id: BuildingId) => {

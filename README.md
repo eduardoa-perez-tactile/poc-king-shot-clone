@@ -27,6 +27,9 @@ npm run dev
 - **Build Phase**: Click map pads to build/upgrade, recruit squads, and prepare.
 - **Combat Phase**: Real-time wave defense on the same map scene.
 - **Goals**: Survive a target day, defeat bosses, and/or earn gold.
+- **Elite Waves**: Mini bosses spawn after Wave 2 by default; each level’s final wave includes a boss.
+- **Hero Recruiter**: Unlock at Stronghold Lv3 to summon one hero (Mage, Rock Golem, or Dragon) per building.
+- **Unit Purchase Caps**: Each unit-producing building can sell up to `4 * Stronghold Level` squads per day.
 
 ## Controls (RTS)
 
@@ -42,6 +45,7 @@ npm run dev
 - All construction and upgrades happen directly on the mission map.
 - Buildings can only be placed on predefined **building pads**.
 - Click empty pads to build, click existing buildings to upgrade or recruit.
+- Toggle unit identifiers in **Settings** to show labels above squads and heroes.
 
 ## Levels
 

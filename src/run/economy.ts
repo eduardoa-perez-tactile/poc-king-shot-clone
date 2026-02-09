@@ -29,6 +29,14 @@ export const getSquadCap = (run: RunState) => {
   return baseCap + houseLevel * bonus
 }
 
+export const getUnitPurchaseCap = (run: RunState) => Math.max(0, 4 * Math.max(1, run.strongholdLevel))
+
+export const getBuildingPurchaseCount = (run: RunState, padId?: string | null) => {
+  if (!padId) return 0
+  const building = run.buildings.find((entry) => entry.padId === padId)
+  return building?.purchasedUnitsCount ?? 0
+}
+
 export const getAvailableUnitTypes = (run: RunState): UnitType[] => {
   const types: UnitType[] = []
   if (hasBuilding(run, 'barracks')) types.push('infantry')

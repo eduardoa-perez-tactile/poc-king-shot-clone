@@ -1,4 +1,6 @@
 import { HeroRuntime } from '../config/levels'
+import { EliteId } from '../config/elites'
+import { HeroRecruitId } from '../config/heroes'
 import { UnitType } from '../config/units'
 
 export type Team = 'player' | 'enemy'
@@ -15,7 +17,9 @@ export interface Rect {
   h: number
 }
 
-export type EntityKind = UnitType | 'hq' | 'hero'
+export type EntityKind = UnitType | 'hq' | 'hero' | 'elite'
+
+export type EntityTier = 'normal' | 'miniBoss' | 'boss' | 'hero'
 
 export interface Order {
   type: 'move' | 'attack' | 'attackMove' | 'stop'
@@ -35,6 +39,8 @@ export interface EntityState {
   kind: EntityKind
   pos: Vec2
   radius: number
+  tier: EntityTier
+  idLabel?: string
   hp: number
   maxHp: number
   attack: number
@@ -48,7 +54,18 @@ export interface EntityState {
   troopCount?: number
   buffs: EntityBuff[]
   squadId?: string
-  isBoss?: boolean
+  heroId?: HeroRecruitId | string
+  heroName?: string
+  heroDescription?: string
+  heroInstanceId?: string
+  heroSpecial?: {
+    type: 'splash' | 'slam' | 'breath'
+    radius: number
+    damageMultiplier?: number
+  }
+  canFly?: boolean
+  lastHitTime?: number
+  lastDamageNumberAt?: number
 }
 
 export interface Projectile {
@@ -58,6 +75,8 @@ export interface Projectile {
   speed: number
   damage: number
   team: Team
+  sourceId?: string
+  special?: EntityState['heroSpecial']
 }
 
 export interface WaveUnitGroup {
@@ -70,7 +89,8 @@ export interface CombatWave {
   id: string
   units: WaveUnitGroup[]
   spawnTimeSec?: number
-  isBoss?: boolean
+  elite?: EliteId
+  eliteCount?: number
 }
 
 export interface CombatDefinition {
@@ -99,21 +119,36 @@ export interface CombatStats {
   kills: number
   losses: number
   lostSquads: string[]
+  lostHeroes: string[]
 }
 
 export interface CombatEffect {
-  kind: 'hit' | 'aoe' | 'heal'
+  kind: 'hit' | 'aoe' | 'heal' | 'slash'
   pos: Vec2
   radius: number
   color: string
   bornAt: number
   expiresAt: number
+  from?: Vec2
+  to?: Vec2
+}
+
+export interface DamageNumber {
+  x: number
+  y: number
+  text: string
+  ttl: number
+  life: number
+  vy: number
+  size: number
+  color: string
 }
 
 export interface CombatResult {
   victory: boolean
   stats: CombatStats
   lostSquadIds: string[]
+  lostHeroIds: string[]
   bossDefeated: boolean
   hqHpPercent: number
 }
@@ -124,6 +159,7 @@ export interface SimState {
   entities: EntityState[]
   projectiles: Projectile[]
   effects: CombatEffect[]
+  damageNumbers: DamageNumber[]
   combat: CombatDefinition
   stats: CombatStats
   waveIndex: number

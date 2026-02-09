@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BuildingId, BUILDING_DEFS } from '../../config/buildings'
+import { HERO_RECRUIT_DEFS, HeroRecruitId } from '../../config/heroes'
 import { LEVELS } from '../../config/levels'
-import { UNIT_DEFS } from '../../config/units'
-import { getBuildingUpgradeCost, getHQBonusHp, getIncomeBreakdown, getSquadCap, getUnitCost } from '../../run/economy'
-import { canUpgradeBuilding, canBuySquad } from '../../run/runState'
+import { UnitType, UNIT_DEFS } from '../../config/units'
+import { getBuildingUpgradeCost, getHQBonusHp, getIncomeBreakdown, getSquadCap, getUnitCost, getUnitPurchaseCap } from '../../run/economy'
+import { canBuySquadFromBuilding } from '../../run/runState'
 import { useRunStore } from '../../run/store'
 import { buildCombatDefinition } from '../../rts/combat'
 import { hitTestPad } from '../../rts/pads'
@@ -25,7 +26,7 @@ import { useMediaQuery } from '../hooks/useMediaQuery'
 import { uiActions, useUiStore } from '../store/uiStore'
 import type { SelectionInfo } from '../store/uiStore'
 import { useMotionSettings } from '../hooks/useMotionSettings'
-import { motion } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 import { Activity, AlertTriangle, ArrowUp, Building2, Crosshair, Grid3x3, Swords } from 'lucide-react'
 import {
   getBuildingLevelCapForStronghold,
@@ -58,6 +59,7 @@ const describeEffects = (id: BuildingId) => {
   if (def.bonuses?.squadCapPerLevel) parts.push(`Squad cap +${def.bonuses.squadCapPerLevel} per level`)
   if (def.bonuses?.hqHpPerLevel) parts.push(`HQ +${def.bonuses.hqHpPerLevel} HP per level`)
   if (def.bonuses?.unitAttackPctPerLevel) parts.push('Squad stats scale with upgrades')
+  if (def.heroRecruiter) parts.push(`Summon ${def.heroRecruiter.summonLimit} hero`)
   return parts.join(' · ')
 }
 
@@ -81,6 +83,7 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
     buyBuilding,
     upgradeBuilding,
     buySquad,
+    summonHero,
     upgradeStronghold,
     startCombat,
     resolveCombat,
@@ -92,9 +95,11 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
   const panelOpen = useUiStore((state) => state.panelOpen)
   const pauseOpen = useUiStore((state) => state.pauseOpen)
   const settingsOpen = useUiStore((state) => state.settingsOpen)
+  const showUnitLabels = useUiStore((state) => state.settings.showUnitLabels)
   const reduceMotion = useMotionSettings()
 
   const [telemetry, setTelemetry] = useState<CanvasTelemetry | null>(null)
+  const [eliteWarnings, setEliteWarnings] = useState<Array<{ id: string; message: string }>>([])
   const canvasRef = useRef<CanvasHandle | null>(null)
   const isMobile = useMediaQuery('(max-width: 639px)')
 
@@ -174,8 +179,13 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
     if (!building) return
     const def = BUILDING_DEFS[building.id]
     const cap = getBuildingLevelCapForStronghold(strongholdLevel, building.id)
+    const hardCap = 3
+    if (building.level >= hardCap) {
+      addToast('Max building level (3) reached.', 'default')
+      return
+    }
     if (building.level >= cap) {
-      addToast('Max level reached. Upgrade Stronghold to increase cap.', 'default')
+      addToast('Upgrade Stronghold to increase cap.', 'default')
       return
     }
     const cost = getBuildingUpgradeCost(building.id, building.level + 1)
@@ -186,25 +196,9 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
     upgradeBuilding(padId)
   }
 
-  const handleRecruit = (padId: string) => {
-    const building = buildingByPad.get(padId)
-    if (!building) return
-    const def = BUILDING_DEFS[building.id]
-    if (!def.unlocksUnit) return
-    if (!canBuySquad(activeRun, def.unlocksUnit)) {
-      addToast('Squad cap reached or insufficient gold.', 'danger')
-      return
-    }
-    const unitCost = getUnitCost(def.unlocksUnit)
-    if (activeRun.gold < unitCost) {
-      addToast('Not enough gold.', 'danger')
-      return
-    }
+  const findSpawnPosition = useCallback((padId: string) => {
     const pad = level.buildingPads.find((entry) => entry.id === padId)
-    if (!pad) {
-      buySquad(def.unlocksUnit)
-      return
-    }
+    if (!pad) return null
     const hq = level.map.playerHQ
     const hqRect = {
       x: hq.x - 36,
@@ -212,9 +206,10 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
       w: 72,
       h: 48
     }
-    const used = activeRun.unitRoster
-      .filter((squad) => squad.spawnPadId === padId && squad.spawnPos)
-      .map((squad) => squad.spawnPos as { x: number; y: number })
+    const used = [
+      ...activeRun.unitRoster.filter((squad) => squad.spawnPadId === padId && squad.spawnPos).map((squad) => squad.spawnPos!),
+      ...activeRun.heroRoster.filter((hero) => hero.spawnPadId === padId && hero.spawnPos).map((hero) => hero.spawnPos!)
+    ]
     const next = SQUAD_SPAWN_OFFSETS.find((offset) => {
       const candidate = { x: pad.x + offset.x, y: pad.y + offset.y }
       if (level.buildingPads.some((entry) => hitTestPad(entry, candidate))) return false
@@ -228,11 +223,60 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
       }
       return !used.some((pos) => Math.hypot(pos.x - candidate.x, pos.y - candidate.y) < 10)
     })
-    if (!next) {
+    if (!next) return null
+    return { x: pad.x + next.x, y: pad.y + next.y }
+  }, [activeRun.heroRoster, activeRun.unitRoster, level.buildingPads, level.map.playerHQ])
+
+  const handleRecruit = (padId: string) => {
+    const building = buildingByPad.get(padId)
+    if (!building) return
+    const def = BUILDING_DEFS[building.id]
+    if (!def.unlocksUnit) return
+    const purchaseCap = getUnitPurchaseCap(activeRun)
+    const purchased = building.purchasedUnitsCount ?? 0
+    const unitCost = getUnitCost(def.unlocksUnit)
+    if (purchased >= purchaseCap) {
+      addToast('Unit limit reached. Upgrade Stronghold to increase cap.', 'danger')
+      return
+    }
+    if (!canBuySquadFromBuilding(activeRun, def.unlocksUnit, padId)) {
+      addToast('Squad cap reached or insufficient gold.', 'danger')
+      return
+    }
+    if (activeRun.gold < unitCost) {
+      addToast('Not enough gold.', 'danger')
+      return
+    }
+    const spawnPos = findSpawnPosition(padId)
+    if (!spawnPos) {
       addToast('No space near this building.', 'danger')
       return
     }
-    buySquad(def.unlocksUnit, { x: pad.x + next.x, y: pad.y + next.y }, padId)
+    buySquad(def.unlocksUnit, spawnPos, padId)
+  }
+
+  const handleSummonHero = (padId: string, heroId: HeroRecruitId) => {
+    const building = buildingByPad.get(padId)
+    if (!building) return
+    const def = BUILDING_DEFS[building.id]
+    if (!def.heroRecruiter) return
+    const heroDef = HERO_RECRUIT_DEFS[heroId]
+    if (!heroDef) return
+    const used = building.heroSummonUsed ?? 0
+    if (used >= def.heroRecruiter.summonLimit) {
+      addToast('Summon already used for this recruiter.', 'danger')
+      return
+    }
+    if (activeRun.gold < heroDef.cost) {
+      addToast('Not enough gold.', 'danger')
+      return
+    }
+    const spawnPos = findSpawnPosition(padId)
+    if (!spawnPos) {
+      addToast('No space near this building.', 'danger')
+      return
+    }
+    summonHero(heroId, spawnPos, padId)
   }
 
   const objective = level.goals[0]?.label ?? level.description
@@ -253,46 +297,168 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
     if (activePad) {
       if (activeBuilding) {
         const def = BUILDING_DEFS[activeBuilding.id]
-        const cap = getBuildingLevelCapForStronghold(strongholdLevel, activeBuilding.id)
-        const isMax = activeBuilding.level >= cap
-        const nextLevel = Math.min(activeBuilding.level + 1, cap)
+        const hardCap = 3
+        const strongholdCap = getBuildingLevelCapForStronghold(strongholdLevel, activeBuilding.id)
+        const atHardCap = activeBuilding.level >= hardCap
+        const atStrongholdCap = activeBuilding.level >= strongholdCap && strongholdCap < hardCap
+        const isMax = atHardCap || atStrongholdCap
+        const nextLevel = Math.min(activeBuilding.level + 1, strongholdCap)
         const nextEffects = isMax
-          ? 'Max level reached. Upgrade Stronghold to increase cap.'
+          ? atHardCap
+            ? 'Max building level (3) reached.'
+            : 'Upgrade Stronghold to increase cap.'
           : describeLevelEffects(activeBuilding.id, nextLevel) || 'No bonuses.'
-        const upgradeCost = isMax ? 'Max' : `${getBuildingUpgradeCost(activeBuilding.id, activeBuilding.level + 1)} gold`
+        const upgradeCostValue = isMax ? 0 : getBuildingUpgradeCost(activeBuilding.id, activeBuilding.level + 1)
+        const upgradeCostLabel = isMax ? 'Max' : `${upgradeCostValue} gold`
+        const upgradeDisabled = runPhase !== 'build' || isMax || activeRun.gold < upgradeCostValue
+        const upgradeTooltip = atHardCap
+          ? 'Max building level (3) reached.'
+          : atStrongholdCap
+            ? 'Upgrade Stronghold to increase cap.'
+            : runPhase !== 'build'
+              ? 'Upgrade available during Build Phase.'
+              : activeRun.gold < upgradeCostValue
+                ? `Need ${upgradeCostValue - activeRun.gold} more gold.`
+                : 'Upgrade building.'
+
+        const unitType = def.unlocksUnit
+        const unitDef = unitType ? UNIT_DEFS[unitType] : null
+        const unitCost = unitDef ? getUnitCost(unitType as UnitType) : 0
+        const purchaseCap = getUnitPurchaseCap(activeRun)
+        const purchased = activeBuilding.purchasedUnitsCount ?? 0
+        const purchaseLimitReached = purchased >= purchaseCap
+        const squadCapReached = activeRun.unitRoster.length >= squadCap
+        const recruitDisabled =
+          runPhase !== 'build' ||
+          purchaseLimitReached ||
+          squadCapReached ||
+          activeRun.gold < unitCost ||
+          !unitType
+        const recruitTooltip = purchaseLimitReached
+          ? 'Increase cap by upgrading Stronghold.'
+          : runPhase !== 'build'
+            ? 'Recruit available during Build Phase.'
+            : squadCapReached
+              ? 'Squad cap reached.'
+              : activeRun.gold < unitCost
+                ? `Need ${unitCost - activeRun.gold} more gold.`
+                : 'Recruit squad.'
+
         return (
-          <EntityCard
-            title={`${def.name} · Lv ${activeBuilding.level}`}
-            description={describeLevelEffects(activeBuilding.id, activeBuilding.level) || 'No bonuses.'}
-            meta={
-              <div className="space-y-2 text-xs text-muted">
-                <div>Next Level: {nextEffects}</div>
-                <div>Upgrade Cost: {upgradeCost}</div>
-              </div>
-            }
-            actions={
-              <>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  disabled={!canUpgradeBuilding(activeRun, activeBuilding.padId) || runPhase !== 'build'}
-                  onClick={() => handleUpgrade(activeBuilding.padId)}
-                >
-                  Upgrade
-                </Button>
-                {def.unlocksUnit && (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={!canBuySquad(activeRun, def.unlocksUnit) || runPhase !== 'build'}
-                    onClick={() => handleRecruit(activeBuilding.padId)}
-                  >
-                    Recruit
-                  </Button>
+          <div className="space-y-3">
+            <EntityCard
+              title={`${def.name} · Lv ${activeBuilding.level}`}
+              description={describeLevelEffects(activeBuilding.id, activeBuilding.level) || 'No bonuses.'}
+              meta={
+                <div className="space-y-2 text-xs text-muted">
+                  <div>Next Level: {nextEffects}</div>
+                  <div>Upgrade Cost: {upgradeCostLabel}</div>
+                </div>
+              }
+              actions={
+                <Tooltip content={upgradeTooltip}>
+                  <span>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={upgradeDisabled}
+                      onClick={() => handleUpgrade(activeBuilding.padId)}
+                    >
+                      Upgrade
+                    </Button>
+                  </span>
+                </Tooltip>
+              }
+            />
+
+            {unitDef && (
+              <div className="rounded-2xl border border-white/10 bg-surface/70 p-3">
+                <div className="text-xs font-semibold text-text">Unit Shop</div>
+                <div className="mt-2 flex items-center justify-between text-sm text-text">
+                  <span>{unitDef.name} Squad</span>
+                  <span>{unitCost} gold</span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted">
+                  <div>HP {Math.round(unitDef.stats.hp * unitDef.squadSize)}</div>
+                  <div>DMG {Math.round(unitDef.stats.attack * unitDef.squadSize)}</div>
+                  <div>Range {Math.round(unitDef.stats.range)}</div>
+                  <div>Cooldown {unitDef.stats.cooldown}s</div>
+                </div>
+                <div className="mt-2 flex items-center justify-between text-xs text-muted">
+                  <span>Units bought: {purchased} / {purchaseCap}</span>
+                  <Tooltip content={recruitTooltip}>
+                    <span>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={recruitDisabled}
+                        onClick={() => handleRecruit(activeBuilding.padId)}
+                      >
+                        Recruit
+                      </Button>
+                    </span>
+                  </Tooltip>
+                </div>
+                {purchaseLimitReached && (
+                  <div className="mt-1 text-[11px] text-muted">Increase cap by upgrading Stronghold.</div>
                 )}
-              </>
-            }
-          />
+              </div>
+            )}
+
+            {def.heroRecruiter && (
+              <div className="rounded-2xl border border-white/10 bg-surface/70 p-3">
+                <div className="flex items-center justify-between text-xs font-semibold text-text">
+                  <span>Hero Summons</span>
+                  <span className="text-muted">Summon used: {activeBuilding.heroSummonUsed ?? 0}/{def.heroRecruiter.summonLimit}</span>
+                </div>
+                <div className="mt-3 grid gap-2">
+                  {Object.values(HERO_RECRUIT_DEFS).map((hero) => {
+                    const summonDisabled =
+                      runPhase !== 'build' ||
+                      (activeBuilding.heroSummonUsed ?? 0) >= def.heroRecruiter!.summonLimit ||
+                      activeRun.gold < hero.cost
+                    const summonTooltip =
+                      (activeBuilding.heroSummonUsed ?? 0) >= def.heroRecruiter!.summonLimit
+                        ? 'Summon already used.'
+                        : runPhase !== 'build'
+                          ? 'Summon available during Build Phase.'
+                          : activeRun.gold < hero.cost
+                            ? `Need ${hero.cost - activeRun.gold} more gold.`
+                            : 'Summon hero.'
+                    return (
+                      <div key={hero.id} className="rounded-xl border border-white/10 bg-slate-950/40 p-3">
+                        <div className="flex items-center justify-between text-sm text-text">
+                          <span>{hero.name}</span>
+                          <span>{hero.cost} gold</span>
+                        </div>
+                        <div className="mt-1 text-xs text-muted">{hero.description}</div>
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-muted">
+                          <div>HP {Math.round(hero.stats.hp)}</div>
+                          <div>DMG {Math.round(hero.stats.attack)}</div>
+                          <div>Range {Math.round(hero.stats.range)}</div>
+                          <div>Cooldown {hero.stats.cooldown}s</div>
+                        </div>
+                        <div className="mt-2">
+                          <Tooltip content={summonTooltip}>
+                            <span>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                disabled={summonDisabled}
+                                onClick={() => handleSummonHero(activeBuilding.padId, hero.id)}
+                              >
+                                Summon
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         )
       }
       return (
@@ -387,6 +553,10 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
     }
 
     if (selection.kind === 'hero') {
+      const attack = selection.attack ?? combatDefinition.hero.stats.attack
+      const range = selection.range ?? combatDefinition.hero.stats.range
+      const speed = selection.speed ?? combatDefinition.hero.stats.speed
+      const cooldown = selection.cooldown ?? combatDefinition.hero.stats.cooldown
       return (
         <EntityCard
           title={selection.name}
@@ -395,10 +565,10 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
           hp={{ value: selection.hp, max: selection.maxHp }}
           meta={
             <div className="grid grid-cols-2 gap-2 text-xs text-muted">
-              <div className="flex items-center gap-2"><Swords className="h-3 w-3 text-accent" /> Attack {Math.round(combatDefinition.hero.stats.attack)}</div>
-              <div className="flex items-center gap-2"><Crosshair className="h-3 w-3 text-accent" /> Range {Math.round(combatDefinition.hero.stats.range)}</div>
-              <div className="flex items-center gap-2"><Activity className="h-3 w-3 text-accent" /> Speed {Math.round(combatDefinition.hero.stats.speed)}</div>
-              <div className="flex items-center gap-2"><AlertTriangle className="h-3 w-3 text-accent" /> Cooldown {combatDefinition.hero.stats.cooldown}s</div>
+              <div className="flex items-center gap-2"><Swords className="h-3 w-3 text-accent" /> Attack {Math.round(attack)}</div>
+              <div className="flex items-center gap-2"><Crosshair className="h-3 w-3 text-accent" /> Range {Math.round(range)}</div>
+              <div className="flex items-center gap-2"><Activity className="h-3 w-3 text-accent" /> Speed {Math.round(speed)}</div>
+              <div className="flex items-center gap-2"><AlertTriangle className="h-3 w-3 text-accent" /> Cooldown {cooldown}s</div>
             </div>
           }
         />
@@ -458,6 +628,14 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
     setTelemetry(data)
   }, [])
 
+  const handleEliteWarning = useCallback((message: string) => {
+    const id = `warn_${Date.now()}_${Math.random()}`
+    setEliteWarnings((prev) => [...prev, { id, message }])
+    window.setTimeout(() => {
+      setEliteWarnings((prev) => prev.filter((entry) => entry.id !== id))
+    }, 1800)
+  }, [])
+
   const handlePadBlocked = useCallback(() => {
     addToast('Build disabled during combat.', 'danger')
   }, [addToast])
@@ -480,10 +658,11 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
     upgradeStronghold()
   }
 
-  const handleComplete = useCallback((result: { victory: boolean; lostSquadIds: string[]; bossDefeated: boolean; hqHpPercent: number }) => {
+  const handleComplete = useCallback((result: { victory: boolean; lostSquadIds: string[]; lostHeroIds: string[]; bossDefeated: boolean; hqHpPercent: number }) => {
     resolveCombat({
       victory: result.victory,
       lostSquadIds: result.lostSquadIds,
+      lostHeroIds: result.lostHeroIds,
       bossDefeated: result.bossDefeated,
       hqHpPercent: result.hqHpPercent
     })
@@ -528,6 +707,8 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
           onPauseToggle={() => uiActions.togglePause()}
           paused={pauseOpen}
           padUnlockLevels={padUnlockLevels}
+          showUnitLabels={showUnitLabels}
+          onEliteWarning={handleEliteWarning}
         />
 
       <div className="pointer-events-none absolute inset-0 z-10 flex flex-col">
@@ -545,6 +726,23 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
             onSettings={uiActions.openSettings}
             onExit={onExit}
           />
+        </div>
+
+        <div className="pointer-events-none absolute left-1/2 top-24 z-30 flex -translate-x-1/2 flex-col items-center gap-2">
+          <AnimatePresence initial={false}>
+            {eliteWarnings.map((warning) => (
+              <motion.div
+                key={warning.id}
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: reduceMotion ? 0 : 0.2 }}
+                className="rounded-2xl border border-amber-200/60 bg-amber-400/90 px-4 py-2 text-sm font-semibold text-slate-950 shadow-glow"
+              >
+                {warning.message}
+              </motion.div>
+            ))}
+          </AnimatePresence>
         </div>
 
         <div className="relative flex-1">

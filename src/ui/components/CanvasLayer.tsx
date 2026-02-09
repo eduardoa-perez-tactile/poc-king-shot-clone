@@ -73,6 +73,8 @@ export const CanvasLayer = React.memo(
     paused?: boolean
     selectedPadId?: string | null
     padUnlockLevels?: Record<string, number>
+    showUnitLabels?: boolean
+    onEliteWarning?: (message: string) => void
   }>(({
     combat,
     run,
@@ -90,7 +92,9 @@ export const CanvasLayer = React.memo(
     onPauseToggle,
     paused,
     selectedPadId,
-    padUnlockLevels
+    padUnlockLevels,
+    showUnitLabels,
+    onEliteWarning
   }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const containerRef = useRef<HTMLDivElement>(null)
@@ -119,11 +123,14 @@ export const CanvasLayer = React.memo(
     const onSelectionRef = useRef(onSelectionChange)
     const onTelemetryRef = useRef(onTelemetry)
     const onPauseToggleRef = useRef(onPauseToggle)
+    const onEliteWarningRef = useRef(onEliteWarning)
     const lastTelemetryRef = useRef<CanvasTelemetry | null>(null)
     const lastTelemetryAt = useRef(0)
+    const lastWaveIndexRef = useRef(0)
     const dayRef = useRef(combat.dayNumber)
     const combatRef = useRef(combat)
     const runRef = useRef(run)
+    const showLabelsRef = useRef(Boolean(showUnitLabels))
 
     useEffect(() => {
       padsRef.current = buildingPads
@@ -141,6 +148,14 @@ export const CanvasLayer = React.memo(
       onTelemetryRef.current = onTelemetry
       onPauseToggleRef.current = onPauseToggle
     }, [onPadClick, onPadBlocked, onPadLocked, onComplete, onSelectionChange, onTelemetry, onPauseToggle])
+
+    useEffect(() => {
+      onEliteWarningRef.current = onEliteWarning
+    }, [onEliteWarning])
+
+    useEffect(() => {
+      showLabelsRef.current = Boolean(showUnitLabels)
+    }, [showUnitLabels])
 
     useEffect(() => {
       pausedRef.current = Boolean(paused)
@@ -161,6 +176,7 @@ export const CanvasLayer = React.memo(
           heroPos: hero ? { ...hero.pos } : combatRef.current.map.playerSpawn,
           heroHp: hero?.hp
         })
+        lastWaveIndexRef.current = simRef.current.waveIndex
         endedRef.current = false
         strongholdSelectedRef.current = false
         onSelectionRef.current?.({ kind: 'none' })
@@ -173,6 +189,7 @@ export const CanvasLayer = React.memo(
         selectedIdsRef.current = []
         dragBoxRef.current = null
         dayRef.current = combat.dayNumber
+        lastWaveIndexRef.current = simRef.current.waveIndex
         endedRef.current = false
         strongholdSelectedRef.current = false
         onSelectionRef.current?.({ kind: 'none' })
@@ -189,6 +206,7 @@ export const CanvasLayer = React.memo(
           heroPos: hero ? { ...hero.pos } : combat.map.playerSpawn,
           heroHp: hero?.hp
         })
+        lastWaveIndexRef.current = simRef.current.waveIndex
         selectedIdsRef.current = []
         dragBoxRef.current = null
         endedRef.current = false
@@ -201,6 +219,7 @@ export const CanvasLayer = React.memo(
           heroPos: hero ? { ...hero.pos } : combat.map.playerSpawn,
           heroHp: resetOnBuild ? undefined : hero?.hp
         })
+        lastWaveIndexRef.current = simRef.current.waveIndex
         selectedIdsRef.current = []
         dragBoxRef.current = null
         endedRef.current = false
@@ -224,6 +243,7 @@ export const CanvasLayer = React.memo(
       },
       resetDay: () => {
         simRef.current = createSimState(combatRef.current, runRef.current)
+        lastWaveIndexRef.current = simRef.current.waveIndex
         selectedIdsRef.current = []
         dragBoxRef.current = null
         endedRef.current = false
@@ -309,7 +329,10 @@ export const CanvasLayer = React.memo(
           .map((id) => {
             const entity = simRef.current.entities.find((entry) => entry.id === id)
             if (!entity) return null
-            const def = entity.kind === 'hero' ? { name: combatRef.current.hero.name } : UNIT_DEFS[entity.kind]
+            const def =
+              entity.kind === 'hero'
+                ? { name: entity.heroName ?? combatRef.current.hero.name }
+                : UNIT_DEFS[entity.kind]
             return { id, name: def.name, hp: entity.hp, maxHp: entity.maxHp }
           })
           .filter(Boolean) as Array<{ id: string; name: string; hp: number; maxHp: number }>
@@ -325,10 +348,14 @@ export const CanvasLayer = React.memo(
         onSelectionRef.current({
           kind: 'hero',
           id: entity.id,
-          name: combatRef.current.hero.name,
-          description: combatRef.current.hero.description,
+          name: entity.heroName ?? combatRef.current.hero.name,
+          description: entity.heroDescription ?? combatRef.current.hero.description,
           hp: entity.hp,
-          maxHp: entity.maxHp
+          maxHp: entity.maxHp,
+          attack: entity.attack,
+          range: entity.range,
+          speed: entity.speed,
+          cooldown: entity.cooldown
         })
       } else {
         const def = UNIT_DEFS[entity.kind]
@@ -417,6 +444,16 @@ export const CanvasLayer = React.memo(
           while (acc >= FIXED_DT) {
             const next = stepSim(simRef.current, FIXED_DT, gridRef.current, phaseRef.current === 'combat' ? 'combat' : 'build')
             simRef.current = next
+            if (next.waveIndex !== lastWaveIndexRef.current) {
+              for (let i = lastWaveIndexRef.current; i < next.waveIndex; i += 1) {
+                const wave = combatRef.current.waves[i]
+                if (wave?.elite) {
+                  const message = wave.elite === 'boss' ? 'BOSS WAVE!' : 'Mini Boss Approaching!'
+                  onEliteWarningRef.current?.(message)
+                }
+              }
+              lastWaveIndexRef.current = next.waveIndex
+            }
             acc -= FIXED_DT
             if (next.status !== 'running' && !endedRef.current) {
               endedRef.current = true
@@ -435,6 +472,8 @@ export const CanvasLayer = React.memo(
           selectedPadId: selectedPadRef.current,
           padUnlockLevels: padUnlockLevelsRef.current,
           strongholdLevel: runRef.current.strongholdLevel
+        }, {
+          showLabels: showLabelsRef.current
         })
 
         const dragBox = dragBoxRef.current
