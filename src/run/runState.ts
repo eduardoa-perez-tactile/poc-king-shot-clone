@@ -1,4 +1,12 @@
-import { BuildingId, BUILDING_DEFS } from '../config/buildings'
+import { BuildingId } from '../config/buildings'
+import {
+  getBuildingLevelCapForStronghold,
+  getBuildingUnlockLevel,
+  getPadUnlockLevel,
+  getStrongholdMaxLevel,
+  getStrongholdUpgradeCost,
+  isBuildingUnlockedAtStronghold
+} from '../config/stronghold'
 import { getDayPlan, getLevelById, LevelDefinition, LevelGoal, HeroRuntime } from '../config/levels'
 import { UnitType, UNIT_DEFS } from '../config/units'
 import { IncomeBreakdown, MetaState, RunBuilding, RunPhase, RunSquad, RunState } from './types'
@@ -25,12 +33,20 @@ export const createInitialMeta = (): MetaState => ({
 export const createRunState = (levelId: string): RunState => {
   const level = getLevelById(levelId)
   if (!level) throw new Error(`Unknown level: ${levelId}`)
+  const minStrongholdForStart = level.startingBuildings.reduce((acc, building) => {
+    const buildingLevel = getBuildingUnlockLevel(building.id)
+    const padLevel = getPadUnlockLevel(building.padId)
+    return Math.max(acc, buildingLevel, padLevel)
+  }, 1)
+  const initialStronghold = Math.min(getStrongholdMaxLevel(), minStrongholdForStart)
   return {
     levelId: level.id,
     dayNumber: 1,
     daysSurvived: 0,
     gold: level.startGold,
     totalGoldEarned: 0,
+    strongholdLevel: initialStronghold,
+    strongholdUpgradeInProgress: null,
     buildings: level.startingBuildings.map((building) => {
       const maxHp = getBuildingMaxHp(building.id, building.level)
       return { ...building, hp: maxHp, maxHp }
@@ -127,6 +143,8 @@ export const getGoalProgress = (run: RunState, goal: LevelGoal): number | boolea
       const hp = run.hqHpByDay[day] ?? 0
       return hp >= goal.target
     }
+    case 'stronghold_level':
+      return Math.min(run.strongholdLevel, goal.target)
     default:
       return 0
   }
@@ -144,10 +162,34 @@ export const canAffordBuilding = (run: RunState, id: BuildingId) => run.gold >= 
 export const canUpgradeBuilding = (run: RunState, padId: string) => {
   const current = run.buildings.find((building) => building.padId === padId)
   if (!current) return false
-  const def = BUILDING_DEFS[current.id]
-  if (current.level >= def.maxLevel) return false
+  if (!isBuildingUnlockedAtStronghold(run.strongholdLevel, current.id)) return false
+  const cap = getBuildingLevelCapForStronghold(run.strongholdLevel, current.id)
+  if (current.level >= cap) return false
   const cost = getBuildingUpgradeCost(current.id, current.level + 1)
   return run.gold >= cost
+}
+
+export const canBuildBuilding = (run: RunState, id: BuildingId) =>
+  isBuildingUnlockedAtStronghold(run.strongholdLevel, id)
+
+export const canUpgradeStronghold = (run: RunState) => {
+  const maxLevel = getStrongholdMaxLevel()
+  if (run.strongholdLevel >= maxLevel) return false
+  const cost = getStrongholdUpgradeCost(run.strongholdLevel)
+  return run.gold >= cost
+}
+
+export const upgradeStronghold = (run: RunState) => {
+  const maxLevel = getStrongholdMaxLevel()
+  if (run.strongholdLevel >= maxLevel) return run
+  const cost = getStrongholdUpgradeCost(run.strongholdLevel)
+  if (run.gold < cost) return run
+  return {
+    ...run,
+    gold: run.gold - cost,
+    strongholdLevel: Math.min(maxLevel, run.strongholdLevel + 1),
+    strongholdUpgradeInProgress: null
+  }
 }
 
 export const canBuySquad = (run: RunState, type: UnitType) => {

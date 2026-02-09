@@ -14,9 +14,11 @@ export const TopBar: React.FC<{
   waveLabel?: string
   gold: number
   income: number
+  strongholdLevel: number
+  strongholdSummary?: React.ReactNode
   onSettings: () => void
   onExit?: () => void
-}> = ({ mission, day, phase, objective, waveLabel, gold, income, onSettings, onExit }) => {
+}> = ({ mission, day, phase, objective, waveLabel, gold, income, strongholdLevel, strongholdSummary, onSettings, onExit }) => {
   return (
     <div className="pointer-events-auto flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-white/10 bg-surface/80 px-4 py-3 shadow-soft backdrop-blur">
       <div className="flex min-w-[220px] flex-1 items-center gap-3">
@@ -25,6 +27,11 @@ export const TopBar: React.FC<{
           <div className="flex items-center gap-2 text-xs text-muted">
             <span>Day {day}</span>
             <PhaseBadge phase={phase} />
+            <Tooltip content={strongholdSummary ?? `Stronghold Lv${strongholdLevel}`}>
+              <span className="rounded-full border border-white/10 bg-surface/70 px-2 py-0.5 text-[11px] text-text">
+                Stronghold Lv{strongholdLevel}
+              </span>
+            </Tooltip>
           </div>
         </div>
       </div>
