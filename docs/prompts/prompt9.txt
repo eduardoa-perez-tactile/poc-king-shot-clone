@@ -1,0 +1,154 @@
+Goal: migrate the current 2D-rendered RTS roguelike to 3D rendering using Babylon.js, WITHOUT rewriting gameplay logic. Keep the entire simulation/RunState/data/config intact and only replace the renderer + input layer to use 3D.
+
+HARD RULES (DO NOT BREAK)
+- Keep gameplay logic 2D, render in 3D:
+  - Treat sim position (x,y) as (x,z) on a ground plane, set Babylon y=0.
+  - Keep movement/path/combat/RunState unchanged.
+- Replace renderer only:
+  - Current canvas 2D draw loop must be replaced by a Babylon renderer module.
+- UI stays React overlay:
+  - /src/ui remains as-is, rendered on top of the 3D canvas.
+- Raycast for all clicks/selection:
+  - All input (select unit/building/pad, move/attack, build actions) becomes raycast screen→world.
+- Prefer shared meshes + instancing:
+  - Use simple primitives (box/cylinder/sphere) and shared materials.
+  - Use InstancedMesh (thin instances preferred) for squads to keep performance.
+- Camera is orthographic RTS:
+  - Top-down-ish view with fixed tilt allowed (small tilt), but camera must be orthographic.
+  - Pan + zoom controls.
+- Keep everything data-driven:
+  - Units/buildings/levels read from /src/config.
+- No per-frame React rerenders:
+  - Rendering updates happen inside Babylon/game loop; React only updates HUD when state changes.
+
+DELIVERABLE
+A working 3D version of the current game: same game loop and mechanics, but rendered in 3D with Babylon.js, with selection/move/build interactions via raycasting. Must be playable end-to-end.
+
+IMPLEMENTATION TASKS (CONCRETE)
+
+1) Add Babylon.js
+- Add dependencies:
+  - @babylonjs/core
+  - @babylonjs/inspector (dev only, optional)
+- Ensure bundler works with tree-shaking.
+
+2) Create a new renderer module
+Create: /src/rts/render/render3d.ts (or similar)
+Responsibilities:
+- createEngine(canvas), createScene(engine)
+- create orthographic RTS camera controller
+- create lighting (hemispheric + directional), ground plane
+- create mesh factories for:
+  - building pads
+  - buildings
+  - units/squads
+  - hero
+  - enemies (normal/miniBoss/boss)
+- create selection highlight meshes:
+  - ring decal/torus under selected entity
+  - optional outline using postprocess only if easy; otherwise ring mesh
+
+Public API (example):
+- initRenderer3D(canvas: HTMLCanvasElement, getSimSnapshot: ()=>SimSnapshot, onPick: (PickResult)=>void): Renderer3D
+- renderer.update(simSnapshot): void   // called each sim tick or render tick
+- renderer.dispose(): void
+
+SimSnapshot should be a read-only view of:
+- entities with id, kind, position(x,z), radius/size, hp/maxHp, team, tier (normal/miniBoss/boss), label text
+- building pads with id, position, occupancy
+- building instances with id, type, level
+- selection state ids (or renderer can read from game controller)
+
+3) Replace 2D canvas loop in RTSGame.tsx
+- RTSGame.tsx currently owns a <canvas> and a 2D renderer.
+- Replace it with Babylon engine binding:
+  - create a canvas element used by Babylon Engine
+  - initialize renderer3d on mount
+  - keep simulation tick loop as-is
+  - in the render loop (requestAnimationFrame or engine.runRenderLoop):
+    - step sim using existing fixed timestep loop
+    - call renderer3d.update(snapshot)
+    - scene.render()
+- IMPORTANT: React component must NOT re-render per frame.
+
+4) 3D coordinate mapping
+- Convert sim coords → Babylon:
+  - sim.x -> world.x
+  - sim.y -> world.z
+  - world.y = 0
+- Define a consistent scale factor if needed (1 sim unit = 1 meter).
+- Place ground plane sized to mission map bounds.
+
+5) Instancing strategy (performance)
+- For squads:
+  - Use one base mesh per unit type (Infantry/Archer/Cavalry/Enemy variants).
+  - Use thin instances for large counts:
+    - mesh.thinInstanceSetBuffer("matrix", ...)
+  - For a small number of “special” units (hero, miniBoss, boss), use unique meshes for easy effects.
+- Buildings/pads:
+  - low count, normal meshes ok.
+- Materials:
+  - one shared StandardMaterial per category; color-coded by type/tier.
+
+6) Raycast-based input
+Create: /src/rts/input/input3d.ts
+- Replace all 2D hit testing with Babylon picking:
+  - On pointer down:
+    - scene.pick(x,y, predicate)
+    - If hit a unit mesh -> select unit
+    - If hit building pad/building -> open building panel (existing UI flow)
+    - If hit ground -> move command (or attack-move if mode)
+- For contextual commands:
+  - right click: ground=move, enemy=attack
+- Ensure UI overlay prevents clicks passing through:
+  - if pointer is over UI, ignore Babylon input for that event.
+
+7) Visual feedback equivalents in 3D
+- HP bars:
+  - Use simple billboard planes above units OR skip if HUD already covers, but at least show selection ring + hit flash.
+- Unit labels (letters):
+  - Use billboarded DynamicTexture on a plane OR Babylon GUI 3D texture.
+  - Keep it lightweight; only for selected units or within camera zoom threshold if needed.
+- Attack feedback:
+  - Melee: brief particle/sprite slash or scale pulse
+  - Ranged: simple tracer line (MeshBuilder.CreateLines) with short TTL
+  - Damage numbers: optional using billboard planes; or keep 2D overlay anchored by projecting 3D → screen coords.
+
+8) Camera: orthographic RTS controller
+- Orthographic camera (FreeCamera or ArcRotateCamera configured for ortho):
+  - set camera.mode = Camera.ORTHOGRAPHIC_CAMERA
+  - implement pan with middle mouse drag or WASD (adjust camera.position.x/z)
+  - zoom by adjusting orthoLeft/Right/Top/Bottom (or camera.orthoScale style)
+- Keep fixed tilt:
+  - camera looks at center point on ground.
+- Clamp camera to map bounds.
+
+9) File-level changes (expected)
+- Add:
+  - src/rts/render/render3d.ts
+  - src/rts/input/input3d.ts
+  - src/rts/render/meshFactory.ts (optional helper)
+  - src/rts/render/materials.ts
+- Modify:
+  - src/rts/RTSGame.tsx (or equivalent) to use renderer3d + input3d
+  - remove/stop using 2D render.ts (keep it as legacy if desired)
+
+10) Acceptance criteria
+- Game starts, mission loads, 3D map renders.
+- Hero, squads, enemies, pads, buildings visible as 3D primitives.
+- Click selection works via raycast.
+- Right-click move/attack works via raycast.
+- Building pads/buildings clickable and open existing React panels.
+- Day cycle (Battle Cry -> waves -> survived -> gold -> build) works unchanged.
+- Runs at stable FPS with instancing for squads.
+
+DO NOT
+- Do not rewrite RunState, combat logic, or economy.
+- Do not introduce per-frame React state updates.
+- Do not change config schema unless strictly necessary; if you must, add backwards-compatible defaults.
+
+Start by implementing the scaffolding (Babylon engine + scene + camera + ground) behind a feature flag:
+- config flag: renderMode = "2d" | "3d" (default "3d" for this task)
+so we can fallback to 2D if needed during migration.
+
+After scaffolding, implement entities/picking, then polish (labels, attack feedback).
