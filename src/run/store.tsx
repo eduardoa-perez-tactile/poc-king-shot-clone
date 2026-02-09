@@ -20,7 +20,6 @@ import {
   markHqHp,
   recomputeGoalsProgress,
   resetBuildingHp,
-  removeSquads,
   upgradeStronghold,
   upgradeBuilding
 } from './runState'
@@ -148,7 +147,7 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const resolveCombat = (outcome: CombatOutcome) => {
     if (!activeRun) return
     const level = getRunLevel(activeRun)
-    const updated = removeSquads(activeRun, outcome.lostSquadIds)
+    const updated = activeRun
     const withBoss = outcome.bossDefeated ? markBossDefeated(updated, updated.dayNumber) : updated
     const withHp = markHqHp(withBoss, withBoss.dayNumber, outcome.hqHpPercent)
     const daysSurvived = outcome.victory ? Math.max(withHp.daysSurvived, withHp.dayNumber) : withHp.daysSurvived

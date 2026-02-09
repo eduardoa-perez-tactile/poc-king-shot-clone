@@ -24,6 +24,8 @@ const SQUAD_ID = (() => {
   return () => `sq_${id++}`
 })()
 
+const DAY_END_BONUS_GOLD = 20
+
 export const createInitialMeta = (): MetaState => ({
   unlockedLevels: ['level_1'],
   bestCompletion: {},
@@ -102,7 +104,7 @@ export const removeSquads = (run: RunState, squadIds: string[]): RunState => {
 export const getDayRewardGold = (level: LevelDefinition, dayNumber: number) => {
   const base = level.dayRewardGold
   const scale = level.dayRewardScale ?? 0
-  return Math.max(0, Math.floor(base + Math.max(0, dayNumber - 1) * scale))
+  return Math.max(0, Math.floor(base + Math.max(0, dayNumber - 1) * scale + DAY_END_BONUS_GOLD))
 }
 
 export const applyDayEndRewards = (run: RunState, level: LevelDefinition): { run: RunState; breakdown: IncomeBreakdown } => {
