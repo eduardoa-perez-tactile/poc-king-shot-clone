@@ -1,0 +1,92 @@
+Build a single-player web-browser prototype inspired by “Kingshot”-style gameplay: town/base building + resource economy + hero recruiting/progression + troop training + simple combat + quests + timed events. Keep it simple but playable.
+
+TECH/STACK
+- Use TypeScript + React (Vite) for UI.
+- Use HTML5 Canvas for the map/combat scenes (no external game engines unless necessary).
+- Persist game state to localStorage (save/load automatically).
+- No backend. Single player only.
+- Minimal art: simple shapes/icons, placeholder sprites, and text labels.
+
+CORE GAME LOOP
+Player is a “Governor” rebuilding a settlement:
+1) Collect resources over time (Food, Wood, Stone, Gold).
+2) Spend resources + time to construct/upgrade buildings.
+3) Recruit heroes (gacha-like with keys), level them up, equip simple gear.
+4) Train troops (Infantry/Archer/Cavalry) over time.
+5) Fight PvE encounters (waves/raids) to earn rewards.
+6) Complete quests (daily + chapter) to guide progression.
+
+GAME SCREENS (ROUTES/TABS)
+1) Town
+   - Grid-based town layout (e.g., 6x6). Buildings occupy 1 tile.
+   - Buildings: Town Hall, Farm, Lumber Mill, Quarry, Gold Mint, Barracks, Hero Hall, Research Lab, Watchtower.
+   - Each building has Level, Upgrade cost, Upgrade time, and effect (production rate, troop cap, hero unlocks, etc.).
+   - Production: resources tick every second; show rates per minute; allow “Collect All” button.
+   - Upgrade queue: allow one active upgrade at a time (simple). Show countdown timer.
+
+2) Heroes
+   - Hero Hall: “Summon” using Gold Keys and Platinum Keys.
+   - Provide at least 8 heroes with roles (Offense/Defense/Support), rarity (Common/Rare/Epic/Legendary), and 2–3 skills each.
+   - Hero progression: level up with XP items; star/rarity shards optional (simple).
+   - Gear: 3 slots (Weapon/Armor/Charm) with basic stat modifiers.
+
+3) Troops
+   - Train Infantry/Archer/Cavalry with training time + cost.
+   - Maintain troop counts, troop cap, and a simple rock-paper-scissors advantage:
+     Infantry > Cavalry, Cavalry > Archers, Archers > Infantry (or similar).
+   - Squad builder: pick 1 hero leader + 2 support heroes + troop composition sliders.
+
+4) Combat (PvE)
+   - Two modes:
+     A) “Raid” (single encounter) and
+     B) “Waves” (tower defense-ish survival)
+   - Combat resolution can be deterministic/turn-based simulation (no need for complex real-time):
+     - Each “round” both sides deal damage based on troop counts + hero stats + type advantages.
+     - Heroes contribute via skills with cooldowns.
+   - Provide enemy types and scaling difficulty.
+   - Reward screen: resources, XP items, keys, gear drops.
+
+5) Quests & Events
+   - Quest system:
+     - Daily quests (reset by local time) like “Upgrade a building”, “Train 50 troops”, “Win 1 raid”.
+     - Chapter quests (linear progression) like “Reach Town Hall Lv 3”.
+   - Simple timed event:
+     - “Governor Sprint” lasts 30 minutes (real time) with points from upgrades/training/combat.
+     - Show leaderboard as “personal best” (single player) and milestone rewards.
+
+IMPORTANT SYSTEMS
+- Time-based actions: upgrades/training continue while tab is open; also handle returning after closing via timestamps.
+- Balancing: keep numbers small and readable; aim for first meaningful upgrade/combat in under 2 minutes.
+- Tutorial: a short guided checklist overlay for the first 5 steps.
+- Settings: toggle sound placeholder; reset save button (with confirm).
+
+DATA MODEL
+- Define strongly typed interfaces for:
+  - Resources, Buildings, Heroes, Gear, Troops, Quests, Events, CombatEncounter, Timers.
+- All tunables in a single config file (costs, times, production, drop tables).
+
+UI/UX
+- Clean layout with left nav tabs.
+- Town view shows grid + building cards.
+- Display resource bar at top.
+- Use modals for build/upgrade/summon results.
+- Provide clear feedback for timers and insufficient resources.
+
+DELIVERABLES
+- Working Vite project with instructions to run.
+- Code organization:
+  - /src/game (simulation, economy, combat)
+  - /src/ui (components)
+  - /src/config (balance tables)
+  - /src/storage (save/load)
+- Include a brief README with gameplay instructions + where to tweak balance.
+
+STARTING CONTENT (DEFAULTS)
+- Start resources: Food 200, Wood 200, Stone 100, Gold 50.
+- Starting buildings: Town Hall Lv1, Farm Lv1, Lumber Mill Lv1, Barracks Lv1, Hero Hall Lv1.
+- Give player 3 Gold Keys initially.
+- Add 3 starter heroes guaranteed from first summon.
+
+QUALITY BAR
+- Must be playable end-to-end: build/upgrade -> summon heroes -> train troops -> fight -> claim rewards -> complete quests.
+- Avoid overengineering; prioritize a coherent prototype with simple but solid systems.

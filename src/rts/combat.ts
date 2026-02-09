@@ -1,4 +1,5 @@
 import { getHeroRuntime, getRunDayPlan, getRunLevel } from '../run/runState'
+import { getStrongholdHqBaseHp } from '../config/stronghold'
 import { RunState } from '../run/types'
 import { CombatDefinition } from './types'
 
@@ -18,6 +19,6 @@ export const buildCombatDefinition = (run: RunState): CombatDefinition => {
     waveMode: dayPlan.waveMode ?? 'sequential',
     waveDelaySec: dayPlan.waveDelaySec ?? 5,
     enemyModifiers: dayPlan.enemyModifiers ?? { hpMultiplier: 1, attackMultiplier: 1 },
-    hqBaseHp: 1500
+    hqBaseHp: getStrongholdHqBaseHp(run.strongholdLevel)
   }
 }

@@ -5,6 +5,7 @@ export type SelectionInfo =
   | { kind: 'hero'; id: string; name: string; description: string; hp: number; maxHp: number }
   | { kind: 'unit'; id: string; name: string; description: string; hp: number; maxHp: number }
   | { kind: 'multi'; units: Array<{ id: string; name: string; hp: number; maxHp: number }> }
+  | { kind: 'stronghold' }
 
 export interface ToastItem {
   id: string

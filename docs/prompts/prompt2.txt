@@ -1,0 +1,113 @@
+Build a single-player, real-time strategy (RTS) web-browser prototype (inspired by Kingshot-style settlement + army gameplay), with real-time unit movement and combat on a 2D map. Keep it simple but clearly RTS (select units, right-click move/attack, real-time battles). No multiplayer.
+
+TECH/STACK
+- TypeScript + React (Vite) for UI shell and menus.
+- Use HTML5 Canvas for the RTS world (render + input).
+- Game loop with requestAnimationFrame; fixed timestep simulation (e.g., 60 Hz sim or 30 Hz) with interpolation optional.
+- No backend. Persist campaign/meta progress to localStorage.
+- Minimal art: circles/rectangles + icons + text.
+
+TOP-LEVEL STRUCTURE
+Two layers:
+1) “Meta/Settlement” layer (lightweight): buildings, production, hero roster, troop training.
+2) “RTS Battle” layer (core): real-time map where you control squads/units and fight AI.
+
+PLAYER EXPERIENCE / CORE LOOP
+- In settlement: build/upgrade, train troops, recruit heroes.
+- Launch a mission: enter RTS battle map with your selected hero + troops.
+- In RTS: gather resources on-map, build a few structures, produce units (or deploy trained troops), defeat enemy base/waves.
+- Earn rewards -> return to settlement.
+
+RTS BATTLE REQUIREMENTS (MUST FEEL LIKE RTS)
+MAP
+- 2D top-down map (~2000x2000 world units) with camera pan (WASD or edge pan) and zoom.
+- Fog of war (simple): unexplored area darkened; revealed by unit vision radius.
+- Obstacles: a few rectangles you can’t walk through; implement basic pathfinding (grid A*). If too heavy, do flow-field-lite or waypoint steering, but units must not walk through obstacles.
+
+INPUT / CONTROLS
+- Left click selects a unit/squad.
+- Drag box selection to select multiple.
+- Right click issues contextual command:
+  - Ground: move.
+  - Enemy: attack-move/attack target.
+- Keyboard hotkeys:
+  - A = attack-move mode (next right click is attack-move).
+  - S = stop.
+  - 1/2/3 = control groups (assign with Ctrl+number).
+- UI shows selected units: HP bars, type, current order.
+
+UNITS & COMBAT
+- Unit types: Infantry (melee), Archer (ranged), Cavalry (fast melee).
+- Stats per unit: HP, damage, attack range, attack cooldown, move speed, armor.
+- Targeting: nearest enemy within range; focus fire when explicit target order.
+- Combat is real time: attacks happen over time; projectiles optional for ranged (simple line/point with travel time).
+- Type advantage: Infantry > Cavalry, Cavalry > Archers, Archers > Infantry (damage multiplier).
+- Formations optional: simple “move as a group” cohesion steering is enough.
+
+ECONOMY IN RTS MAP (MINIMAL BUT PRESENT)
+- Resource nodes on map: Food/Wood/Stone/Gold (can simplify to 2 resources if needed, but keep at least 2).
+- Add a Worker unit that can be ordered to gather and return to Town Center.
+- Buildings in RTS map:
+  - Town Center (drop-off point, main building).
+  - Barracks (produce Infantry).
+  - Range (produce Archers).
+  - Stable (produce Cavalry).
+  - Tower (defense).
+- Building placement: simple ghost preview + collision checks + cost.
+- Production queues with timers.
+
+AI OPPONENT
+- Enemy has a base (HQ + 1 production building).
+- AI behavior (simple but obvious):
+  - Periodically trains units.
+  - Sends attack waves to player base on a timer.
+  - If its HQ is destroyed -> player wins. If player HQ destroyed -> lose.
+- Difficulty scaling across missions: increase wave size/interval and enemy unit stats slightly.
+
+HERO SYSTEM IN RTS (LIGHT)
+- Before mission, pick 1 hero leader (from meta roster).
+- In battle, hero is a special unit with:
+  - 2 active abilities (cooldowns) + 1 passive aura.
+  - Example abilities:
+    - Rally: temporary attack speed buff in radius.
+    - Heal: small AOE heal.
+    - Volley/Charge: damage burst.
+- Show hero ability buttons on HUD with cooldown timers; click to cast then click target position/unit.
+
+MISSIONS / CONTENT
+- Provide at least 3 missions:
+  1) Tutorial skirmish vs small waves.
+  2) Destroy enemy HQ with medium resistance.
+  3) Survive timed waves (10 minutes or shorter for prototype).
+- Rewards: resources + keys + XP items for heroes.
+
+SETTLEMENT (OUTSIDE BATTLE) — KEEP SIMPLE
+- Town Hall level gates unit tiers and building levels.
+- Resource production is mostly background; used to start missions and train troops/heroes.
+- Training in settlement can unlock “starting army size” for missions, but in-mission production still exists.
+- LocalStorage persistence.
+
+ARCHITECTURE / CODE REQUIREMENTS
+- Separate simulation from rendering:
+  - /src/game/sim (ecs-ish or entity manager, orders, pathfinding, combat)
+  - /src/game/render (canvas draw, camera)
+  - /src/game/input (selection, commands, hotkeys)
+  - /src/meta (settlement systems)
+  - /src/storage
+- Deterministic sim step for replayability (seeded RNG for drops and AI timing).
+- All balance numbers in /src/config.
+
+UI/UX
+- React for menus; canvas for battle.
+- HUD in battle:
+  - resource counts, minimap (optional but preferred), selected unit panel, hero abilities, mission objectives.
+- Clear win/lose screens and return to settlement.
+
+DELIVERABLES
+- Working Vite project; README with controls and how to tweak config.
+- Playable end-to-end:
+  - Start -> settlement -> launch mission -> RTS controls -> win/lose -> rewards -> persistence.
+
+QUALITY BAR
+- Must include real-time movement + real-time combat + selection + command issuing + basic pathing.
+- Keep scope tight; prioritize responsiveness and clear RTS feel over visual polish.

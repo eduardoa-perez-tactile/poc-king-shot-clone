@@ -65,12 +65,14 @@ export const CanvasLayer = React.memo(
     inputBlocked?: boolean
     onPadClick: (padId: string) => void
     onPadBlocked: () => void
+    onPadLocked?: (padId: string) => void
     onComplete: (result: CombatResult) => void
     onSelectionChange?: (selection: SelectionInfo) => void
     onTelemetry?: (telemetry: CanvasTelemetry) => void
     onPauseToggle?: () => void
     paused?: boolean
     selectedPadId?: string | null
+    padUnlockLevels?: Record<string, number>
   }>(({
     combat,
     run,
@@ -81,12 +83,14 @@ export const CanvasLayer = React.memo(
     inputBlocked,
     onPadClick,
     onPadBlocked,
+    onPadLocked,
     onComplete,
     onSelectionChange,
     onTelemetry,
     onPauseToggle,
     paused,
-    selectedPadId
+    selectedPadId,
+    padUnlockLevels
   }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const containerRef = useRef<HTMLDivElement>(null)
@@ -96,6 +100,7 @@ export const CanvasLayer = React.memo(
     const dragBoxRef = useRef<{ start: Vec2; end: Vec2 } | null>(null)
     const dragMovedRef = useRef(false)
     const selectedIdsRef = useRef<string[]>([])
+    const strongholdSelectedRef = useRef(false)
     const hoveredPadIdRef = useRef<string | null>(null)
     const cameraRef = useRef<Camera>({ x: 0, y: 0, zoom: 1 })
     const commandModeRef = useRef<'move' | 'attackMove'>('move')
@@ -106,8 +111,10 @@ export const CanvasLayer = React.memo(
     const padsRef = useRef(buildingPads)
     const buildingsRef = useRef(buildings)
     const selectedPadRef = useRef<string | null>(selectedPadId ?? null)
+    const padUnlockLevelsRef = useRef<Record<string, number> | undefined>(padUnlockLevels)
     const onPadClickRef = useRef(onPadClick)
     const onPadBlockedRef = useRef(onPadBlocked)
+    const onPadLockedRef = useRef(onPadLocked)
     const onCompleteRef = useRef(onComplete)
     const onSelectionRef = useRef(onSelectionChange)
     const onTelemetryRef = useRef(onTelemetry)
@@ -122,16 +129,18 @@ export const CanvasLayer = React.memo(
       padsRef.current = buildingPads
       buildingsRef.current = buildings
       selectedPadRef.current = selectedPadId ?? null
-    }, [buildingPads, buildings, selectedPadId])
+      padUnlockLevelsRef.current = padUnlockLevels
+    }, [buildingPads, buildings, selectedPadId, padUnlockLevels])
 
     useEffect(() => {
       onPadClickRef.current = onPadClick
       onPadBlockedRef.current = onPadBlocked
+      onPadLockedRef.current = onPadLocked
       onCompleteRef.current = onComplete
       onSelectionRef.current = onSelectionChange
       onTelemetryRef.current = onTelemetry
       onPauseToggleRef.current = onPauseToggle
-    }, [onPadClick, onPadBlocked, onComplete, onSelectionChange, onTelemetry, onPauseToggle])
+    }, [onPadClick, onPadBlocked, onPadLocked, onComplete, onSelectionChange, onTelemetry, onPauseToggle])
 
     useEffect(() => {
       pausedRef.current = Boolean(paused)
@@ -153,6 +162,7 @@ export const CanvasLayer = React.memo(
           heroHp: hero?.hp
         })
         endedRef.current = false
+        strongholdSelectedRef.current = false
         onSelectionRef.current?.({ kind: 'none' })
       }
     }, [run])
@@ -164,6 +174,7 @@ export const CanvasLayer = React.memo(
         dragBoxRef.current = null
         dayRef.current = combat.dayNumber
         endedRef.current = false
+        strongholdSelectedRef.current = false
         onSelectionRef.current?.({ kind: 'none' })
       }
     }, [combat, run])
@@ -181,6 +192,7 @@ export const CanvasLayer = React.memo(
         selectedIdsRef.current = []
         dragBoxRef.current = null
         endedRef.current = false
+        strongholdSelectedRef.current = false
         onSelectionRef.current?.({ kind: 'none' })
       }
       if (prev === 'combat' && phase === 'build') {
@@ -192,6 +204,7 @@ export const CanvasLayer = React.memo(
         selectedIdsRef.current = []
         dragBoxRef.current = null
         endedRef.current = false
+        strongholdSelectedRef.current = false
         onSelectionRef.current?.({ kind: 'none' })
       }
     }, [phase, combat, resetOnBuild, run])
@@ -214,6 +227,7 @@ export const CanvasLayer = React.memo(
         selectedIdsRef.current = []
         dragBoxRef.current = null
         endedRef.current = false
+        strongholdSelectedRef.current = false
         onSelectionRef.current?.({ kind: 'none' })
       }
     }))
@@ -281,6 +295,10 @@ export const CanvasLayer = React.memo(
 
     const emitSelection = () => {
       if (!onSelectionRef.current) return
+      if (strongholdSelectedRef.current) {
+        onSelectionRef.current({ kind: 'stronghold' })
+        return
+      }
       const selectedIds = selectedIdsRef.current
       if (selectedIds.length === 0) {
         onSelectionRef.current({ kind: 'none' })
@@ -414,7 +432,9 @@ export const CanvasLayer = React.memo(
           pads: padsRef.current,
           buildings: buildingsRef.current,
           hoveredPadId: hoveredPadIdRef.current,
-          selectedPadId: selectedPadRef.current
+          selectedPadId: selectedPadRef.current,
+          padUnlockLevels: padUnlockLevelsRef.current,
+          strongholdLevel: runRef.current.strongholdLevel
         })
 
         const dragBox = dragBoxRef.current
@@ -481,7 +501,13 @@ export const CanvasLayer = React.memo(
         const pad = padsRef.current.find((entry) => hitTestPad(entry, world))
         if (pad) {
           if (phaseRef.current === 'build') {
-            onPadClickRef.current(pad.id)
+            const unlockLevel = padUnlockLevelsRef.current?.[pad.id] ?? 1
+            if (runRef.current.strongholdLevel < unlockLevel) {
+              onPadLockedRef.current?.(pad.id)
+            } else {
+              strongholdSelectedRef.current = false
+              onPadClickRef.current(pad.id)
+            }
           } else {
             onPadBlockedRef.current()
           }
@@ -491,6 +517,7 @@ export const CanvasLayer = React.memo(
         const hqTarget = getHqAt(simRef.current.entities, world)
         if (hqTarget) {
           selectedIdsRef.current = []
+          strongholdSelectedRef.current = true
           emitSelection()
           dragBoxRef.current = null
           return
@@ -499,6 +526,7 @@ export const CanvasLayer = React.memo(
         const playerTarget = getEntityAt(simRef.current.entities, world, 'player')
 
       if (playerTarget) {
+        strongholdSelectedRef.current = false
         if (selectedIdsRef.current.length === 1 && selectedIdsRef.current[0] === playerTarget.id) {
           selectedIdsRef.current = []
         } else {
@@ -506,10 +534,12 @@ export const CanvasLayer = React.memo(
         }
         emitSelection()
       } else if (selectedIdsRef.current.length > 0) {
+        strongholdSelectedRef.current = false
           const orderType = commandModeRef.current === 'attackMove' ? 'attackMove' : 'move'
           issueToSelected({ type: orderType, targetPos: world })
           commandModeRef.current = 'move'
         } else {
+          strongholdSelectedRef.current = false
           selectedIdsRef.current = []
           emitSelection()
         }
@@ -527,6 +557,7 @@ export const CanvasLayer = React.memo(
           return screen.x >= minX && screen.x <= maxX && screen.y >= minY && screen.y <= maxY
         })
         selectedIdsRef.current = selected.map((entity) => entity.id)
+        strongholdSelectedRef.current = false
         emitSelection()
       }
 

@@ -1,0 +1,139 @@
+Upgrade the current map-centric RTS prototype to have a highly responsive, modern, “premium” UI. Prioritize: clarity, speed, minimal clicks, consistent visual language. Keep Canvas gameplay, but wrap it with a strong HUD + panels. No backend.
+
+TECH/UI STACK
+- Use TailwindCSS for styling.
+- Use Framer Motion for micro-animations and transitions.
+- Use lucide-react icons.
+- Use a small component set (shadcn/ui or equivalent) for: Button, Card, Dialog/Modal, Tabs, Tooltip, Progress, Badge.
+- Ensure all UI is responsive: desktop-first but works well at 1366x768 and down to mobile widths.
+
+DESIGN GOALS
+- “Tactical commander” UI: crisp typography, strong hierarchy, subtle gradients, soft shadows, 2xl rounded corners.
+- High contrast but not harsh; readable at a glance.
+- Fast interactions: hover states, click feedback, short animations (120–220ms).
+- Avoid clutter: show essentials always; details on demand (panels/modals).
+
+LAYOUT (MAP SCENE)
+- Fullscreen canvas as background.
+- Overlay UI layers:
+
+1) TOP BAR (always visible)
+   - Left: Mission name + Day indicator + Phase badge (BUILD / COMBAT)
+   - Center: Objective text + wave progress (e.g., Wave 2/3)
+   - Right: Gold display (big), Income preview (smaller), Settings button
+   - Use compact, responsive stacking:
+     - On small screens: objective collapses into a single line; wave progress becomes an icon + tooltip.
+
+2) PRIMARY ACTION (Battle Cry)
+   - Prominent button bottom-center (or bottom-right) when in BUILD phase.
+   - Big, satisfying visual: pulsing glow, hover expand, press “thump” animation.
+   - Disabled state during combat with clear tooltip.
+
+3) LEFT PANEL (Context / Selection)
+   - Collapsible panel (desktop open by default, mobile collapses into a bottom sheet).
+   - Shows:
+     - Hero card when selected (HP, abilities, cooldowns).
+     - Unit selection list when multiple selected (count + HP bars).
+     - If building selected: building card (level, effects, upgrade cost, upgrade button).
+     - If empty pad selected: build options grid (cards with cost/effects, build button).
+   - Include sticky header with the selected entity name and quick actions.
+
+4) ABILITY BAR (Hero)
+   - Bottom-left or bottom-center-left.
+   - Two large ability buttons (Q/E) with cooldown radial overlay and tooltip.
+   - Add keyboard hint badges (Q/E).
+
+5) DAY END OVERLAY
+   - Fullscreen dim + centered card with:
+     - “Survived Day X”
+     - Gold breakdown (Reward + Income)
+     - Progress toward mission goal
+     - Primary CTA: “Start Next Day”
+   - Animate in with Framer Motion (fade + slight scale).
+
+6) NOTIFICATIONS / TOASTS
+   - Top-right stack for events:
+     - Not enough gold
+     - Can’t build during combat
+     - Upgrade complete
+   - Auto-dismiss with subtle progress timer.
+
+7) MINIMAP (optional but recommended)
+   - Bottom-right card with a simple minimap preview (can be very basic).
+   - Tappable/clickable to move camera if feasible.
+
+RESPONSIVENESS REQUIREMENTS
+- Breakpoints:
+  - >=1024px: left panel docked, minimap visible
+  - 640–1023px: left panel collapsible, minimap smaller
+  - <640px: panels become bottom sheets; top bar condenses; Battle Cry becomes full-width bottom button
+- Never block core gameplay controls; modals should pause input behind them.
+- Ensure safe-area padding (mobile notch).
+
+VISUAL SYSTEM
+- Define a single theme file:
+  - spacing scale, radii, shadows, typography sizes
+  - color tokens: background, surface, surface-2, text, muted, accent, danger, success
+- Use consistent components:
+  - Buttons: primary (accent), secondary (surface), danger
+  - Cards: surface with subtle border + shadow
+  - Badges: phase, wave, status
+- Add small but high-quality UI polish:
+  - hover lift on cards
+  - button press scale 0.98
+  - shimmer/shine on “Battle Cry” when ready
+  - smooth number transitions for gold (animated count-up)
+
+PERFORMANCE (CRITICAL)
+- Canvas rendering must stay smooth:
+  - UI state updates must not trigger full canvas rerenders.
+  - Separate canvas loop from React renders.
+- Use requestAnimationFrame only for canvas; React updates should be event-driven.
+- Debounce expensive layout changes.
+- Avoid re-rendering the entire HUD every frame: only update HUD when values change (gold/day/wave/etc.).
+- Use memoization for heavy components (React.memo) and stable callbacks.
+
+INPUT UX
+- Make click targets generous:
+  - building pads highlight on hover with clear outline + label
+  - selected building shows a ring + subtle pulse
+- Ensure interaction priority is consistent:
+  - UI clicks don’t leak to canvas
+  - Build-phase pad clicks open panels instantly
+  - Combat-phase pad clicks show toast “Build disabled during combat”
+
+ACCESSIBILITY
+- Keyboard shortcuts displayed in tooltips.
+- Focus trapping in dialogs.
+- Prefer reduced motion option in Settings (disable most animations).
+- Color contrast sufficient for text.
+
+IMPLEMENTATION TASKS
+1) Add Tailwind + base global styles (fonts, background, smoothing).
+2) Build a reusable component library folder:
+   - AppShell, TopBar, PhaseBadge, ResourcePill, Panel, EntityCard, BuildOptionCard,
+     AbilityButton, DayEndModal, Toasts, SettingsDialog.
+3) Refactor map scene to render:
+   - <CanvasLayer /> isolated from React re-renders
+   - <HudLayer /> with responsive layout
+4) Add Framer Motion transitions for:
+   - panel open/close
+   - day end overlay
+   - toasts
+   - battle cry readiness pulse
+5) Add UI state store (small) for:
+   - selected entity
+   - panel open state
+   - last toast messages
+   - settings (reduced motion, sound toggle)
+6) Ensure all new UI reads/writes to existing RunState cleanly.
+
+DONE WHEN
+- UI feels “snappy” (no visible lag on clicks; transitions fast).
+- Looks cohesive and modern across resolutions.
+- Build/upgrade and day cycle are easy to understand without explanation.
+- Canvas stays smooth while UI updates.
+
+DO NOT
+- Do not add heavy libraries beyond the ones listed.
+- Do not create a separate build screen; keep map-centric interactions.

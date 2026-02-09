@@ -79,6 +79,7 @@ export type GoalType =
   | 'defeat_boss_day'
   | 'total_gold_earned'
   | 'hq_hp_threshold'
+  | 'stronghold_level'
 
 export interface LevelGoal {
   id: string

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BuildingId, BUILDING_DEFS } from '../../config/buildings'
 import { LEVELS } from '../../config/levels'
 import { UNIT_DEFS } from '../../config/units'
-import { getBuildingUpgradeCost, getIncomeBreakdown, getSquadCap, getUnitCost } from '../../run/economy'
+import { getBuildingUpgradeCost, getHQBonusHp, getIncomeBreakdown, getSquadCap, getUnitCost } from '../../run/economy'
 import { canUpgradeBuilding, canBuySquad } from '../../run/runState'
 import { useRunStore } from '../../run/store'
 import { buildCombatDefinition } from '../../rts/combat'
@@ -26,7 +26,18 @@ import { uiActions, useUiStore } from '../store/uiStore'
 import type { SelectionInfo } from '../store/uiStore'
 import { useMotionSettings } from '../hooks/useMotionSettings'
 import { motion } from 'framer-motion'
-import { Activity, AlertTriangle, Crosshair, Swords } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowUp, Building2, Crosshair, Grid3x3, Swords } from 'lucide-react'
+import {
+  getBuildingLevelCapForStronghold,
+  getBuildingUnlockLevel,
+  getStrongholdHqBaseHp,
+  getStrongholdMaxLevel,
+  getStrongholdUpgradeCost,
+  getStrongholdUnlockDelta,
+  getUnlockedBuildingTypes,
+  getPadUnlockLevel,
+  isBuildingUnlockedAtStronghold
+} from '../../config/stronghold'
 
 const SQUAD_SPAWN_OFFSETS = [
   { x: -90, y: -70 },
@@ -70,6 +81,7 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
     buyBuilding,
     upgradeBuilding,
     buySquad,
+    upgradeStronghold,
     startCombat,
     resolveCombat,
     startNewDay
@@ -93,6 +105,14 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
   const combatDefinition = buildCombatDefinition(activeRun)
   const squadCap = getSquadCap(activeRun)
   const dayIncome = activeRun.lastIncome ?? getIncomeBreakdown(activeRun, 0)
+  const strongholdLevel = activeRun.strongholdLevel
+  const strongholdMaxLevel = getStrongholdMaxLevel()
+  const strongholdUpgradeCost = getStrongholdUpgradeCost(strongholdLevel)
+  const unlockedBuildingTypes = getUnlockedBuildingTypes(strongholdLevel)
+  const strongholdSummary =
+    unlockedBuildingTypes.length > 0
+      ? `Unlocked: ${unlockedBuildingTypes.map((id) => BUILDING_DEFS[id].name).join(', ')} · Max Lv${getBuildingLevelCapForStronghold(strongholdLevel, 'gold_mine')}`
+      : `Stronghold Lv${strongholdLevel}`
 
   const buildingByPad = useMemo(() => {
     return new Map(activeRun.buildings.map((building) => [building.padId, building]))
@@ -100,6 +120,13 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
 
   const activePad = selectedPadId ? level.buildingPads.find((pad) => pad.id === selectedPadId) ?? null : null
   const activeBuilding = activePad ? buildingByPad.get(activePad.id) ?? null : null
+  const padUnlockLevels = useMemo(() => {
+    const mapping: Record<string, number> = {}
+    level.buildingPads.forEach((pad) => {
+      mapping[pad.id] = getPadUnlockLevel(pad.id)
+    })
+    return mapping
+  }, [level.buildingPads])
 
   useEffect(() => {
     if (isMobile) {
@@ -129,6 +156,10 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
   }, [addToast, runPhase])
 
   const handleBuild = (padId: string, buildingId: BuildingId) => {
+    if (!isBuildingUnlockedAtStronghold(strongholdLevel, buildingId)) {
+      addToast(`Unlock ${BUILDING_DEFS[buildingId].name} at Stronghold Lv${getBuildingUnlockLevel(buildingId)}.`, 'danger')
+      return
+    }
     const cost = BUILDING_DEFS[buildingId].baseCost
     if (activeRun.gold < cost) {
       addToast('Not enough gold.', 'danger')
@@ -142,8 +173,9 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
     const building = buildingByPad.get(padId)
     if (!building) return
     const def = BUILDING_DEFS[building.id]
-    if (building.level >= def.maxLevel) {
-      addToast('Building already at max level.', 'default')
+    const cap = getBuildingLevelCapForStronghold(strongholdLevel, building.id)
+    if (building.level >= cap) {
+      addToast('Max level reached. Upgrade Stronghold to increase cap.', 'default')
       return
     }
     const cost = getBuildingUpgradeCost(building.id, building.level + 1)
@@ -221,9 +253,12 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
     if (activePad) {
       if (activeBuilding) {
         const def = BUILDING_DEFS[activeBuilding.id]
-        const isMax = activeBuilding.level >= def.maxLevel
-        const nextLevel = Math.min(activeBuilding.level + 1, def.maxLevel)
-        const nextEffects = isMax ? 'Max level reached.' : describeLevelEffects(activeBuilding.id, nextLevel) || 'No bonuses.'
+        const cap = getBuildingLevelCapForStronghold(strongholdLevel, activeBuilding.id)
+        const isMax = activeBuilding.level >= cap
+        const nextLevel = Math.min(activeBuilding.level + 1, cap)
+        const nextEffects = isMax
+          ? 'Max level reached. Upgrade Stronghold to increase cap.'
+          : describeLevelEffects(activeBuilding.id, nextLevel) || 'No bonuses.'
         const upgradeCost = isMax ? 'Max' : `${getBuildingUpgradeCost(activeBuilding.id, activeBuilding.level + 1)} gold`
         return (
           <EntityCard
@@ -265,18 +300,89 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
           {activePad.allowedTypes.map((id) => {
             const cost = BUILDING_DEFS[id].baseCost
             const canAfford = activeRun.gold >= cost
+            const isUnlocked = isBuildingUnlockedAtStronghold(strongholdLevel, id)
+            const unlockLevel = getBuildingUnlockLevel(id)
             return (
               <BuildOptionCard
                 key={id}
                 title={BUILDING_DEFS[id].name}
                 description={describeEffects(id)}
                 cost={cost}
-                canAfford={canAfford && runPhase === 'build'}
+                canAfford={canAfford && runPhase === 'build' && isUnlocked}
+                locked={!isUnlocked}
+                lockedReason={`Unlock by upgrading Stronghold to Lv${unlockLevel}`}
                 onBuild={() => handleBuild(activePad.id, id)}
               />
             )
           })}
         </div>
+      )
+    }
+
+    if (selection.kind === 'stronghold') {
+      const maxHp = getStrongholdHqBaseHp(strongholdLevel) + getHQBonusHp(activeRun)
+      const currentHp = runPhase === 'combat' && telemetry ? telemetry.hqHp : maxHp
+      const currentMaxHp = runPhase === 'combat' && telemetry ? telemetry.hqMaxHp : maxHp
+      const cap = getBuildingLevelCapForStronghold(strongholdLevel, 'gold_mine')
+      const unlocks = unlockedBuildingTypes.map((id) => BUILDING_DEFS[id].name)
+      const nextUnlock = getStrongholdUnlockDelta(strongholdLevel)
+      const nextLevel = Math.min(strongholdLevel + 1, strongholdMaxLevel)
+      const nextBuildings = nextUnlock.buildingTypes.map((id) => BUILDING_DEFS[id].name)
+      const nextPads = nextUnlock.padIds
+      const atMax = strongholdLevel >= strongholdMaxLevel
+      const upgradeDisabled = atMax || activeRun.gold < strongholdUpgradeCost || runPhase !== 'build'
+      const upgradeLabel = atMax ? 'Max Level' : `Upgrade (${strongholdUpgradeCost} gold)`
+      const upgradeTooltip = atMax
+        ? 'Stronghold already at max level.'
+        : runPhase !== 'build'
+          ? 'Upgrade available during Build Phase.'
+          : activeRun.gold < strongholdUpgradeCost
+            ? `Need ${strongholdUpgradeCost - activeRun.gold} more gold.`
+            : 'Upgrade Stronghold.'
+      return (
+        <EntityCard
+          title={`Stronghold · Lv ${strongholdLevel}`}
+          description="The Stronghold anchors your defenses and gates new construction."
+          hp={{ value: currentHp, max: currentMaxHp }}
+          meta={
+            <div className="space-y-2 text-xs text-muted">
+              <div>Unlocked Buildings: {unlocks.length > 0 ? unlocks.join(', ') : 'None'}</div>
+              <div>Building Cap: Lv {cap}</div>
+              {!atMax && (
+                <div className="space-y-1">
+                  <div>Next Level: Lv {nextLevel}</div>
+                  <div className="space-y-1">
+                    {nextBuildings.length > 0 && (
+                      <div className="flex items-center gap-2">
+                        <Building2 className="h-3.5 w-3.5 text-accent" />
+                        <span>New Buildings: {nextBuildings.join(', ')}</span>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <ArrowUp className="h-3.5 w-3.5 text-accent" />
+                      <span>Max Building Cap: Lv {nextUnlock.maxBuildingCap}</span>
+                    </div>
+                    {nextPads.length > 0 && (
+                      <div className="flex items-center gap-2">
+                        <Grid3x3 className="h-3.5 w-3.5 text-accent" />
+                        <span>New Pads: {nextPads.map((pad) => pad.toUpperCase()).join(', ')}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          }
+          actions={
+            <Tooltip content={upgradeTooltip}>
+              <span>
+                <Button variant="primary" size="sm" disabled={upgradeDisabled} onClick={handleStrongholdUpgrade}>
+                  {upgradeLabel}
+                </Button>
+              </span>
+            </Tooltip>
+          }
+        />
       )
     }
 
@@ -356,6 +462,24 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
     addToast('Build disabled during combat.', 'danger')
   }, [addToast])
 
+  const handlePadLocked = useCallback((padId: string) => {
+    const unlockLevel = getPadUnlockLevel(padId)
+    addToast(`Unlock this pad at Stronghold Lv${unlockLevel}.`, 'danger')
+  }, [addToast])
+
+  const handleStrongholdUpgrade = () => {
+    if (runPhase !== 'build') return
+    if (strongholdLevel >= strongholdMaxLevel) {
+      addToast('Stronghold already at max level.', 'default')
+      return
+    }
+    if (activeRun.gold < strongholdUpgradeCost) {
+      addToast('Not enough gold.', 'danger')
+      return
+    }
+    upgradeStronghold()
+  }
+
   const handleComplete = useCallback((result: { victory: boolean; lostSquadIds: string[]; bossDefeated: boolean; hqHpPercent: number }) => {
     resolveCombat({
       victory: result.victory,
@@ -365,26 +489,46 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
     })
   }, [resolveCombat])
 
+  const panelTitle = activePad
+    ? activeBuilding
+      ? BUILDING_DEFS[activeBuilding.id].name
+      : 'Build Options'
+    : selection.kind === 'stronghold'
+      ? 'Stronghold'
+      : selection.kind === 'none'
+        ? 'Command Overview'
+        : 'Selection'
+
+  const panelSubtitle = activePad
+    ? `Pad ${activePad.id.toUpperCase()}`
+    : selection.kind === 'stronghold'
+      ? 'Main Base'
+      : selection.kind === 'none'
+        ? 'Select a pad or unit'
+        : 'Unit details'
+
   return (
     <AppShell>
-      <CanvasLayer
-        ref={canvasRef}
-        combat={combatDefinition}
-        run={activeRun}
-        phase={runPhase === 'combat' ? 'combat' : 'build'}
-        resetOnBuild={runPhase === 'day_end'}
-        buildingPads={level.buildingPads}
-        buildings={activeRun.buildings}
-        inputBlocked={inputBlocked}
-        selectedPadId={selectedPadId}
-        onPadClick={handlePadClick}
-        onPadBlocked={handlePadBlocked}
-        onComplete={handleComplete}
-        onSelectionChange={handleSelectionChange}
-        onTelemetry={handleTelemetry}
-        onPauseToggle={() => uiActions.togglePause()}
-        paused={pauseOpen}
-      />
+        <CanvasLayer
+          ref={canvasRef}
+          combat={combatDefinition}
+          run={activeRun}
+          phase={runPhase === 'combat' ? 'combat' : 'build'}
+          resetOnBuild={runPhase === 'day_end'}
+          buildingPads={level.buildingPads}
+          buildings={activeRun.buildings}
+          inputBlocked={inputBlocked}
+          selectedPadId={selectedPadId}
+          onPadClick={handlePadClick}
+          onPadBlocked={handlePadBlocked}
+          onPadLocked={handlePadLocked}
+          onComplete={handleComplete}
+          onSelectionChange={handleSelectionChange}
+          onTelemetry={handleTelemetry}
+          onPauseToggle={() => uiActions.togglePause()}
+          paused={pauseOpen}
+          padUnlockLevels={padUnlockLevels}
+        />
 
       <div className="pointer-events-none absolute inset-0 z-10 flex flex-col">
         <div className="pointer-events-auto px-4 pt-[max(1rem,env(safe-area-inset-top))]">
@@ -396,6 +540,8 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
             waveLabel={waveLabel}
             gold={activeRun.gold}
             income={dayIncome.buildingTotal + dayIncome.reward}
+            strongholdLevel={strongholdLevel}
+            strongholdSummary={strongholdSummary}
             onSettings={uiActions.openSettings}
             onExit={onExit}
           />
@@ -404,8 +550,8 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
         <div className="relative flex-1">
           <div className="absolute left-4 top-24 hidden lg:block">
             <Panel
-              title={activePad ? (activeBuilding ? BUILDING_DEFS[activeBuilding.id].name : 'Build Options') : selection.kind === 'none' ? 'Command Overview' : 'Selection'}
-              subtitle={activePad ? `Pad ${activePad.id.toUpperCase()}` : selection.kind === 'none' ? 'Select a pad or unit' : 'Unit details'}
+              title={panelTitle}
+              subtitle={panelSubtitle}
               open={panelOpen}
               onToggle={() => uiActions.setPanelOpen(!panelOpen)}
               isMobile={false}
@@ -416,8 +562,8 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
 
           <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between gap-4 lg:hidden">
             <Panel
-              title={activePad ? (activeBuilding ? BUILDING_DEFS[activeBuilding.id].name : 'Build Options') : selection.kind === 'none' ? 'Command Overview' : 'Selection'}
-              subtitle={activePad ? `Pad ${activePad.id.toUpperCase()}` : selection.kind === 'none' ? 'Select a pad or unit' : 'Unit details'}
+              title={panelTitle}
+              subtitle={panelSubtitle}
               open={panelOpen}
               onToggle={() => uiActions.setPanelOpen(!panelOpen)}
               isMobile

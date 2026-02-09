@@ -33,7 +33,9 @@ const drawPads = (
   hoveredPadId: string | null,
   selectedPadId: string | null,
   pulse: number,
-  cam: Camera
+  cam: Camera,
+  padUnlockLevels?: Record<string, number>,
+  strongholdLevel?: number
 ) => {
   const buildingByPad = new Map(buildings.map((building) => [building.padId, building]))
   pads.forEach((pad) => {
@@ -44,6 +46,8 @@ const drawPads = (
     const building = buildingByPad.get(pad.id)
     const hovered = hoveredPadId === pad.id
     const selected = selectedPadId === pad.id
+    const unlockLevel = padUnlockLevels?.[pad.id] ?? 1
+    const locked = typeof strongholdLevel === 'number' ? strongholdLevel < unlockLevel : false
 
     if (building) {
       ctx.fillStyle = '#1f2937'
@@ -82,7 +86,11 @@ const drawPads = (
         ctx.fillText('Upgrade', topLeft.x + w / 2, topLeft.y + h - 12 * cam.zoom)
       }
     } else {
-      ctx.strokeStyle = hovered ? '#38bdf8' : 'rgba(148, 163, 184, 0.6)'
+      if (locked) {
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.5)'
+        ctx.fillRect(topLeft.x, topLeft.y, w, h)
+      }
+      ctx.strokeStyle = locked ? 'rgba(148, 163, 184, 0.35)' : hovered ? '#38bdf8' : 'rgba(148, 163, 184, 0.6)'
       ctx.lineWidth = hovered ? 2 : 1
       ctx.strokeRect(topLeft.x, topLeft.y, w, h)
       if (selected) {
@@ -90,7 +98,13 @@ const drawPads = (
         ctx.lineWidth = 2.5 * pulse
         ctx.strokeRect(topLeft.x - 4 * cam.zoom, topLeft.y - 4 * cam.zoom, w + 8 * cam.zoom, h + 8 * cam.zoom)
       }
-      if (hovered) {
+      if (locked) {
+        ctx.fillStyle = '#94a3b8'
+        ctx.font = `${11 * cam.zoom}px 'Space Mono', monospace`
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(`Locked · Lv ${unlockLevel}`, topLeft.x + w / 2, topLeft.y + h / 2)
+      } else if (hovered) {
         ctx.fillStyle = '#e2e8f0'
         ctx.font = `${12 * cam.zoom}px 'Space Mono', monospace`
         ctx.textAlign = 'center'
@@ -141,6 +155,8 @@ export const renderScene = (
     buildings: RunBuilding[]
     hoveredPadId: string | null
     selectedPadId?: string | null
+    padUnlockLevels?: Record<string, number>
+    strongholdLevel?: number
   }
 ) => {
   const width = ctx.canvas.width
@@ -192,7 +208,17 @@ export const renderScene = (
 
   if (overlays) {
     const pulse = 1 + Math.sin(sim.time * 3) * 0.15
-    drawPads(ctx, overlays.pads, overlays.buildings, overlays.hoveredPadId, overlays.selectedPadId ?? null, pulse, cam)
+    drawPads(
+      ctx,
+      overlays.pads,
+      overlays.buildings,
+      overlays.hoveredPadId,
+      overlays.selectedPadId ?? null,
+      pulse,
+      cam,
+      overlays.padUnlockLevels,
+      overlays.strongholdLevel
+    )
   }
 
   selection.forEach((id) => {

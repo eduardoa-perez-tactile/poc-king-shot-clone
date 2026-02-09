@@ -40,6 +40,8 @@ export interface RunState {
   daysSurvived: number
   gold: number
   totalGoldEarned: number
+  strongholdLevel: number
+  strongholdUpgradeInProgress?: null
   buildings: RunBuilding[]
   unitRoster: RunSquad[]
   heroChoice?: string

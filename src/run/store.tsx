@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { LEVELS, getLevelById } from '../config/levels'
+import { getBuildingUnlockLevel, getPadUnlockLevel, getStrongholdMaxLevel } from '../config/stronghold'
 import { UnitType } from '../config/units'
 import { loadSave, saveGame, clearSave } from '../storage/runSave'
 import { getBuildingPurchaseCost, getBuildingUpgradeCost, getUnitCost } from './economy'
@@ -8,8 +9,10 @@ import {
   applyDayEndRewards,
   areGoalsComplete,
   buySquad,
+  canBuildBuilding,
   canBuySquad,
   canUpgradeBuilding,
+  canUpgradeStronghold,
   createInitialMeta,
   createRunState,
   getRunLevel,
@@ -17,7 +20,7 @@ import {
   markHqHp,
   recomputeGoalsProgress,
   resetBuildingHp,
-  removeSquads,
+  upgradeStronghold,
   upgradeBuilding
 } from './runState'
 import { getBuildingMaxHp } from './economy'
@@ -42,6 +45,7 @@ interface RunStore {
   buyBuilding: (id: BuildingId, padId: string) => void
   upgradeBuilding: (padId: string) => void
   buySquad: (type: UnitType, spawnPos?: { x: number; y: number }, spawnPadId?: string) => void
+  upgradeStronghold: () => void
   startCombat: () => void
   resolveCombat: (outcome: CombatOutcome) => void
   startNewDay: () => void
@@ -92,6 +96,7 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const buyBuildingAction = (id: BuildingId, padId: string) => {
     if (!activeRun || runPhase !== 'build') return
+    if (!canBuildBuilding(activeRun, id)) return
     const cost = getBuildingPurchaseCost(id)
     if (activeRun.gold < cost) return
     if (activeRun.buildings.some((building) => building.padId === padId)) return
@@ -116,6 +121,13 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveRun(next)
   }
 
+  const upgradeStrongholdAction = () => {
+    if (!activeRun || runPhase !== 'build') return
+    if (!canUpgradeStronghold(activeRun)) return
+    const next = recomputeGoalsProgress(upgradeStronghold(activeRun), getRunLevel(activeRun))
+    setActiveRun(next)
+  }
+
   const buySquadAction = (type: UnitType, spawnPos?: { x: number; y: number }, spawnPadId?: string) => {
     if (!activeRun || runPhase !== 'build') return
     if (!canBuySquad(activeRun, type)) return
@@ -135,7 +147,7 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const resolveCombat = (outcome: CombatOutcome) => {
     if (!activeRun) return
     const level = getRunLevel(activeRun)
-    const updated = removeSquads(activeRun, outcome.lostSquadIds)
+    const updated = activeRun
     const withBoss = outcome.bossDefeated ? markBossDefeated(updated, updated.dayNumber) : updated
     const withHp = markHqHp(withBoss, withBoss.dayNumber, outcome.hqHpPercent)
     const daysSurvived = outcome.victory ? Math.max(withHp.daysSurvived, withHp.dayNumber) : withHp.daysSurvived
@@ -213,6 +225,7 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     buyBuilding: buyBuildingAction,
     upgradeBuilding: upgradeBuildingAction,
     buySquad: buySquadAction,
+    upgradeStronghold: upgradeStrongholdAction,
     startCombat,
     resolveCombat,
     startNewDay,
@@ -251,5 +264,12 @@ const normalizeRun = (run: RunState | null): RunState | null => {
     return { ...building, padId, hp: nextMax, maxHp: nextMax }
   })
   const heroProgress = run.heroProgress ?? { hp: 0, attack: 0 }
-  return { ...run, buildings, heroProgress }
+  const minStronghold = run.buildings.reduce((acc, building) => {
+    const buildingLevel = getBuildingUnlockLevel(building.id)
+    const padLevel = getPadUnlockLevel(building.padId)
+    return Math.max(acc, buildingLevel, padLevel)
+  }, 1)
+  const strongholdLevel = Math.min(getStrongholdMaxLevel(), Math.max(run.strongholdLevel ?? 1, minStronghold))
+  const strongholdUpgradeInProgress = run.strongholdUpgradeInProgress ?? null
+  return { ...run, buildings, heroProgress, strongholdLevel, strongholdUpgradeInProgress }
 }
