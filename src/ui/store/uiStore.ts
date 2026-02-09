@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react'
 
 export type SelectionInfo =
   | { kind: 'none' }
-  | { kind: 'hero'; id: string; name: string; description: string; hp: number; maxHp: number }
+  | { kind: 'hero'; id: string; name: string; description: string; hp: number; maxHp: number; attack?: number; range?: number; speed?: number; cooldown?: number }
   | { kind: 'unit'; id: string; name: string; description: string; hp: number; maxHp: number }
   | { kind: 'multi'; units: Array<{ id: string; name: string; hp: number; maxHp: number }> }
   | { kind: 'stronghold' }
@@ -25,6 +25,7 @@ export interface UiState {
   settings: {
     reducedMotion: boolean
     sound: boolean
+    showUnitLabels: boolean
   }
 }
 
@@ -41,7 +42,8 @@ let state: UiState = {
   toasts: [],
   settings: {
     reducedMotion: false,
-    sound: true
+    sound: true,
+    showUnitLabels: true
   }
 }
 
@@ -62,7 +64,7 @@ export const uiActions = {
   closeSettings: () => setState((prev) => ({ ...prev, settingsOpen: false })),
   togglePause: (open?: boolean) =>
     setState((prev) => ({ ...prev, pauseOpen: typeof open === 'boolean' ? open : !prev.pauseOpen })),
-  toggleSetting: (key: 'reducedMotion' | 'sound') =>
+  toggleSetting: (key: 'reducedMotion' | 'sound' | 'showUnitLabels') =>
     setState((prev) => ({ ...prev, settings: { ...prev.settings, [key]: !prev.settings[key] } })),
   pushToast: (toast: Omit<ToastItem, 'id' | 'createdAt'>) => {
     const id = `toast_${Date.now()}_${Math.random()}`

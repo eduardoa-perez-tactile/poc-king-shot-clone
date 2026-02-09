@@ -1,4 +1,5 @@
 import { BuildingId } from '../config/buildings'
+import { HeroRecruitId } from '../config/heroes'
 import { UnitType } from '../config/units'
 
 export type RunPhase = 'build' | 'combat' | 'day_end' | 'win' | 'lose'
@@ -9,12 +10,21 @@ export interface RunBuilding {
   padId: string
   hp: number
   maxHp: number
+  purchasedUnitsCount?: number
+  heroSummonUsed?: number
 }
 
 export interface RunSquad {
   id: string
   type: UnitType
   size: number
+  spawnPos?: { x: number; y: number }
+  spawnPadId?: string
+}
+
+export interface RunHero {
+  id: string
+  heroId: HeroRecruitId
   spawnPos?: { x: number; y: number }
   spawnPadId?: string
 }
@@ -44,6 +54,7 @@ export interface RunState {
   strongholdUpgradeInProgress?: null
   buildings: RunBuilding[]
   unitRoster: RunSquad[]
+  heroRoster: RunHero[]
   heroChoice?: string
   heroProgress?: { hp: number; attack: number }
   goalsProgress: Record<string, number | boolean>

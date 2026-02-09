@@ -199,6 +199,8 @@ export const RTSGame: React.FC<{
         buildings,
         hoveredPadId,
         selectedPadId: null
+      }, {
+        showLabels: true
       })
 
       if (dragBox) {
@@ -339,10 +341,17 @@ export const RTSGame: React.FC<{
   const selectedInfo =
     selectedEntity && selectedEntity.kind !== 'hq'
       ? selectedEntity.kind === 'hero'
-        ? { name: heroRuntime.name, description: heroRuntime.description }
-        : UNIT_DEFS[selectedEntity.kind]
+        ? { name: selectedEntity.heroName ?? heroRuntime.name, description: selectedEntity.heroDescription ?? heroRuntime.description }
+        : selectedEntity.kind === 'elite'
+          ? { name: selectedEntity.tier === 'boss' ? 'Boss' : 'Mini Boss', description: 'Elite enemy unit.' }
+          : UNIT_DEFS[selectedEntity.kind]
       : null
-  const hoveredInfo = hoveredEnemy && hoveredEnemy.kind !== 'hq' ? UNIT_DEFS[hoveredEnemy.kind] : null
+  const hoveredInfo =
+    hoveredEnemy && hoveredEnemy.kind !== 'hq'
+      ? hoveredEnemy.kind === 'elite'
+        ? { name: hoveredEnemy.tier === 'boss' ? 'Boss' : 'Mini Boss', description: 'Elite enemy unit.' }
+        : UNIT_DEFS[hoveredEnemy.kind]
+      : null
   const heroCooldowns = sim.heroAbilityCooldowns
   const qReadyIn = Math.max(0, heroCooldowns.q - sim.time)
   const eReadyIn = Math.max(0, heroCooldowns.e - sim.time)
@@ -398,7 +407,10 @@ export const RTSGame: React.FC<{
               className="rts-tooltip"
               style={{ left: `${tooltipPosition.x}px`, top: `${tooltipPosition.y}px` }}
             >
-              <div className="rts-tooltip-title">{hoveredInfo.name}{hoveredEnemy.isBoss ? ' (Boss)' : ''}</div>
+              <div className="rts-tooltip-title">
+                {hoveredInfo.name}
+                {hoveredEnemy.tier === 'boss' ? ' (Boss)' : hoveredEnemy.tier === 'miniBoss' ? ' (Mini Boss)' : ''}
+              </div>
               <div className="muted">{hoveredInfo.description}</div>
               <div className="muted">HP {Math.round(hoveredEnemy.hp)}/{Math.round(hoveredEnemy.maxHp)}</div>
             </div>

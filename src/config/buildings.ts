@@ -8,6 +8,7 @@ export type BuildingId =
   | 'stable'
   | 'watchtower'
   | 'blacksmith'
+  | 'hero_recruiter'
 
 export interface BuildingDef {
   id: BuildingId
@@ -30,6 +31,9 @@ export interface BuildingDef {
     unitTypeAttackPctPerLevel?: Partial<Record<UnitType, number>>
     unitTypeHpPctPerLevel?: Partial<Record<UnitType, number>>
   }
+  heroRecruiter?: {
+    summonLimit: number
+  }
 }
 
 export const BUILDING_DEFS: Record<BuildingId, BuildingDef> = {
@@ -40,7 +44,7 @@ export const BUILDING_DEFS: Record<BuildingId, BuildingDef> = {
     baseCost: 60,
     upgradeBase: 60,
     upgradeScale: 1.6,
-    maxLevel: 5,
+    maxLevel: 3,
     income: { base: 30, perLevel: 20 }
   },
   house: {
@@ -50,7 +54,7 @@ export const BUILDING_DEFS: Record<BuildingId, BuildingDef> = {
     baseCost: 40,
     upgradeBase: 50,
     upgradeScale: 1.6,
-    maxLevel: 5,
+    maxLevel: 3,
     income: { base: 10, perLevel: 10 },
     bonuses: {
       squadCapPerLevel: 1
@@ -63,7 +67,7 @@ export const BUILDING_DEFS: Record<BuildingId, BuildingDef> = {
     baseCost: 80,
     upgradeBase: 70,
     upgradeScale: 1.6,
-    maxLevel: 5,
+    maxLevel: 3,
     unlocksUnit: 'infantry',
     bonuses: {
       unitTypeAttackPctPerLevel: { infantry: 0.08 },
@@ -77,7 +81,7 @@ export const BUILDING_DEFS: Record<BuildingId, BuildingDef> = {
     baseCost: 90,
     upgradeBase: 80,
     upgradeScale: 1.6,
-    maxLevel: 5,
+    maxLevel: 3,
     unlocksUnit: 'archer',
     bonuses: {
       unitTypeAttackPctPerLevel: { archer: 0.08 },
@@ -91,7 +95,7 @@ export const BUILDING_DEFS: Record<BuildingId, BuildingDef> = {
     baseCost: 100,
     upgradeBase: 90,
     upgradeScale: 1.6,
-    maxLevel: 5,
+    maxLevel: 3,
     unlocksUnit: 'cavalry',
     bonuses: {
       unitTypeAttackPctPerLevel: { cavalry: 0.08 },
@@ -117,10 +121,22 @@ export const BUILDING_DEFS: Record<BuildingId, BuildingDef> = {
     baseCost: 130,
     upgradeBase: 110,
     upgradeScale: 1.6,
-    maxLevel: 4,
+    maxLevel: 3,
     bonuses: {
       unitAttackPctPerLevel: 0.06,
       unitHpPctPerLevel: 0.06
+    }
+  },
+  hero_recruiter: {
+    id: 'hero_recruiter',
+    name: 'Hero Recruiter',
+    description: 'Summon a legendary ally to lead your squads.',
+    baseCost: 180,
+    upgradeBase: 140,
+    upgradeScale: 1.5,
+    maxLevel: 3,
+    heroRecruiter: {
+      summonLimit: 1
     }
   }
 }

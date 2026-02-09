@@ -1,0 +1,146 @@
+Update the current map-centric RTS prototype with the following gameplay improvements and new systems. This is an incremental change to the existing codebase (do NOT rebuild from scratch). Keep single-player, browser-based, canvas gameplay + responsive HUD.
+
+FEATURES TO IMPLEMENT
+
+1) UNIT IDENTIFIERS (LABELS/LETTERS)
+- Every controllable unit/squad (including hero) must display an easy-to-read identifier above it:
+  - Option A: single letter by type: Infantry=I, Archer=A, Cavalry=C, Hero=H, Boss=B, MiniBoss=M
+  - Option B: letter + index (I1, I2...) for multiple squads
+- Labels must be readable at common zoom levels:
+  - Render as text with outline/stroke for contrast.
+  - Keep anchored to entity screen position.
+- Add setting to toggle labels on/off (default ON).
+
+2) MINI BOSSES + BOSSES (WAVES)
+- Add two enemy “elite” categories:
+  - MiniBoss: appears after Wave 2 (usually) in each day/mission wave sequence
+  - Boss: appears in the FINAL wave of each LEVEL (mission completion boss)
+- Data-driven:
+  - In mission config, specify for each day:
+    - normal waves
+    - whether/when a MiniBoss spawns (default: after wave 2)
+  - For the level/mission overall, specify boss wave and boss definition (final wave of final day OR final wave of the mission—use your current mission structure; ensure “boss in final wave of each level” is true).
+- MiniBoss and Boss should have:
+  - Larger size
+  - Much higher HP
+  - Distinct color/outline (but do not hardcode colors if your rendering system centralizes them; just add a “tier” style)
+  - Slightly different behavior (simple is fine): prioritize hero if in range, else HQ.
+- Add on-screen warning banner when elite spawns:
+  - “Mini Boss Approaching!” / “BOSS WAVE!”
+
+3) MORE FEEDBACK ON ATTACKS (COMBAT FEEL)
+Add lightweight combat feedback (must be performant):
+- Hit flashes:
+  - When an entity takes damage: brief white flash or outline pulse (100–150ms).
+- Damage numbers (floating text):
+  - Show small numbers rising up for damage dealt.
+  - For critical/elite hits use bigger font (optional).
+  - Throttle to avoid spam (e.g., max N numbers per second per entity).
+- Attack effects:
+  - For melee: short “slash” line/arc near target.
+  - For ranged: simple projectile line/particle from attacker to target with travel time.
+- Sound is optional; if present, add very subtle hit sounds and allow toggle.
+
+4) UNIT PURCHASE LIMIT PER STRONGHOLD LEVEL
+Restrict number of squads purchasable per unit-producing building PER DAY/LEVEL RUN:
+- Rule: at Stronghold Level 1, each unit-producing building can sell at most 4 squads total (per day cycle run).
+- Each Stronghold level adds +4 to this cap:
+  - cap = 4 * strongholdLevel
+- Applies to Barracks/Range/Stable and any other building that produces units.
+- Track purchases per building instance in RunState:
+  - building.purchasedUnitsCount (or per unit type count if needed)
+- UI:
+  - In building panel show “Units bought: X / cap”
+  - Disable purchase buttons when cap reached with tooltip “Increase cap by upgrading Stronghold”.
+
+5) BUILDING UPGRADE CAP = 3 (GLOBAL)
+- Every upgradable building has a hard maximum level of 3.
+- This is separate from stronghold gating:
+  - effectiveMax = min(3, strongholdCapForBuildingType)
+- Ensure upgrade buttons and tooltips reflect BOTH reasons:
+  - “Max building level (3) reached”
+  - or “Upgrade Stronghold to increase cap” if stronghold cap is lower than 3.
+
+6) SHOW UNIT COSTS IN PRODUCER BUILDING PANEL
+- When selecting Barracks/Range/Stable:
+  - Display a clear unit shop section:
+    - Unit type, cost, stats summary (HP, DMG, range, cooldown), buy button
+  - Costs come from config tables (no hardcoding).
+  - Include tooltip/help text if unit purchase is limited (see #4).
+
+7) NEW BUILDING: HERO RECRUITMENT (STRONGHOLD LV3)
+Add a new building type “Hero Recruiter” (or “Hero Hall”) with these rules:
+- Unlock condition: Stronghold Level >= 3
+- Placed on specific building pads (update pad allowed types accordingly).
+- Each Hero Recruiter building can summon EXACTLY 1 hero total (per run).
+  - “Summon used: 0/1” then becomes 1/1 and disabled.
+- Summon UI:
+  - On building panel: show 3 hero choices (or randomized if you prefer, but MUST allow summoning 1 hero per building).
+  - Heroes available:
+    1) Mage
+    2) Rock Golem
+    3) Dragon
+- When summoned:
+  - The hero becomes a controllable unit in combat (like other units, but stronger).
+  - Each has distinct stats and at least 1 ability (optional if your system supports hero abilities):
+    - Mage: ranged + splash/bolt
+    - Rock Golem: tank + slam
+    - Dragon: flying (can ignore obstacles) + breath cone
+  - If flying is too complex, approximate: dragon has higher speed and can path through obstacles via “no-collision” flag.
+
+DATA / CONFIG UPDATES
+- Update config tables:
+  - units: add stats/costs
+  - elites: miniBoss definitions and boss definitions (HP, damage, speed, size, special flags)
+  - buildings: add HeroRecruiter with cost, allowed pads, level caps, and summon limit = 1
+  - stronghold unlocks: stronghold level 3 unlocks HeroRecruiter
+  - missions: add boss spawn to final wave; add miniBoss spawn after wave 2 by default
+
+STATE MODEL UPDATES (RUNSTATE)
+- buildings:
+  - level
+  - purchasedUnitsCount (for producer buildings)
+  - heroSummonUsed (for HeroRecruiter, boolean or 0/1)
+- units/entities:
+  - idLabel (computed or stored)
+  - tier: normal | miniBoss | boss | hero
+  - lastHitTime / flashTimer (for feedback)
+- combat UI state:
+  - warnings queue for elite spawns
+
+UI REQUIREMENTS
+- Producer building panel must show:
+  - Unit costs
+  - Buy limit X/cap
+  - Disabled states + tooltips
+- Hero Recruiter panel must show:
+  - 3 hero cards + summon button
+  - “Summon 0/1” state
+- Elite spawn warning banner:
+  - Animated in/out (fast, 150–250ms)
+  - Does not block gameplay input
+
+PERFORMANCE REQUIREMENTS
+- All new effects must be lightweight and not degrade FPS.
+- Damage numbers must be pooled (object pool) or otherwise optimized to avoid GC spikes.
+- Avoid React rerenders per frame; combat feedback rendering should live in canvas render pipeline.
+
+ACCEPTANCE TESTS
+- Units show labels (letters or letter+index) and remain readable when zooming.
+- After Wave 2, a MiniBoss spawns (unless mission config overrides) and is clearly distinct + announced.
+- Final wave of each level includes a Boss and is announced.
+- Attacks produce noticeable feedback (flash + damage numbers + projectile/slash).
+- Unit producer buildings enforce purchase cap = 4 * strongholdLevel.
+- All building upgrades stop at level 3; UI correctly explains why.
+- Producer building panel shows unit costs.
+- Stronghold level 3 unlocks Hero Recruiter; each recruiter can summon exactly 1 hero from Mage/Golem/Dragon.
+
+IMPLEMENTATION NOTES (KEEP IT SIMPLE)
+- Labels: drawTextWithOutline(ctx, text, x, y)
+- Damage numbers: store as {x,y,text,ttl,vy} and update/draw each frame
+- Elite spawn: add “enemyTier” on entity; scale size/HP; trigger HUD banner on spawn
+- Purchase cap: store counts on building instance; cap derived from strongholdLevel
+- Hero Recruiter: treat summoned heroes as special units with distinct stats; reuse existing hero/unit command system
+
+DELIVERABLES
+- Updated code + configs + README updates (briefly describing new bosses and hero recruiter).
