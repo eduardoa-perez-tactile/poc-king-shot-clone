@@ -46,6 +46,7 @@ export const CanvasLayer3D = React.memo(
     const selectedIdsRef = useRef<string[]>([])
     const strongholdSelectedRef = useRef(false)
     const hoveredPadIdRef = useRef<string | null>(null)
+    const hoveredHqRef = useRef(false)
     const cameraRef = useRef<Camera>({ x: 0, y: 0, zoom: 1 })
     const commandModeRef = useRef<'move' | 'attackMove'>('move')
     const controlGroupsRef = useRef<Record<number, string[]>>({})
@@ -381,7 +382,12 @@ export const CanvasLayer3D = React.memo(
 
     const issueToSelected = (order: Order) => {
       if (selectedIdsRef.current.length === 0) return
-      const updated = issueOrder(simRef.current, selectedIdsRef.current, order, gridRef.current)
+      const eligible = selectedIdsRef.current.filter((id) => {
+        const entity = simRef.current.entities.find((entry) => entry.id === id)
+        return entity?.team === 'player' && entity.kind !== 'hq'
+      })
+      if (eligible.length === 0) return
+      const updated = issueOrder(simRef.current, eligible, order, gridRef.current)
       simRef.current = updated
     }
 
@@ -417,14 +423,13 @@ export const CanvasLayer3D = React.memo(
       const wasDrag = dragBox ? dragMovedRef.current : false
 
       if (!wasDrag && dx < 6 && dy < 6) {
-        let pick = pickAt(renderer.getPickContext(), end.x, end.y)
-        if (pick.kind === 'none' || pick.kind === 'ground') {
+        let pick = pickUnitAt(renderer.getPickContext(), end.x, end.y)
+        if (pick.kind === 'none') {
           const padId = pickPadAt(renderer.getPickContext(), end.x, end.y)
           if (padId) {
             pick = { kind: 'pad', padId }
           } else {
-            const unitPick = pickUnitAt(renderer.getPickContext(), end.x, end.y)
-            if (unitPick.kind !== 'none') pick = unitPick
+            pick = pickAt(renderer.getPickContext(), end.x, end.y)
           }
         }
         if (pick.kind === 'pad') {
@@ -461,6 +466,23 @@ export const CanvasLayer3D = React.memo(
               selectedIdsRef.current = [entity.id]
             }
             emitSelection()
+            dragBoxRef.current = null
+            updateDragBox(null)
+            return
+          }
+          if (entity?.team === 'enemy') {
+            const hasPlayerSelection = selectedIdsRef.current.some((id) => {
+              const selected = simRef.current.entities.find((entry) => entry.id === id)
+              return selected?.team === 'player' && selected.kind !== 'hq'
+            })
+            if (hasPlayerSelection) {
+              issueToSelected({ type: 'attack', targetId: entity.id, targetPos: { ...entity.pos } })
+              commandModeRef.current = 'move'
+            } else {
+              selectedIdsRef.current = [entity.id]
+              strongholdSelectedRef.current = false
+              emitSelection()
+            }
             dragBoxRef.current = null
             updateDragBox(null)
             return
@@ -549,6 +571,7 @@ export const CanvasLayer3D = React.memo(
               pads: padsRef.current,
               buildings: buildingsRef.current,
               hoveredPadId: hoveredPadIdRef.current,
+              hoveredHq: hoveredHqRef.current,
               selectedPadId: selectedPadRef.current,
               padUnlockLevels: padUnlockLevelsRef.current,
               strongholdLevel: runRef.current.strongholdLevel
@@ -602,6 +625,8 @@ export const CanvasLayer3D = React.memo(
 
       const padId = pickPadAt(renderer.getPickContext(), end.x, end.y)
       hoveredPadIdRef.current = padId
+      const unitPick = pickUnitAt(renderer.getPickContext(), end.x, end.y)
+      hoveredHqRef.current = unitPick.kind === 'hq'
     }
 
     const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -619,10 +644,9 @@ export const CanvasLayer3D = React.memo(
       const renderer = rendererRef.current
       if (!renderer) return
       const rect = event.currentTarget.getBoundingClientRect()
-      let pick = pickAt(renderer.getPickContext(), event.clientX - rect.left, event.clientY - rect.top)
-      if (pick.kind === 'none' || pick.kind === 'ground') {
-        const unitPick = pickUnitAt(renderer.getPickContext(), event.clientX - rect.left, event.clientY - rect.top)
-        if (unitPick.kind !== 'none') pick = unitPick
+      let pick = pickUnitAt(renderer.getPickContext(), event.clientX - rect.left, event.clientY - rect.top)
+      if (pick.kind === 'none') {
+        pick = pickAt(renderer.getPickContext(), event.clientX - rect.left, event.clientY - rect.top)
       }
       if (pick.kind === 'unit') {
         const enemy = simRef.current.entities.find((entry) => entry.id === pick.entityId && entry.team === 'enemy')
@@ -675,11 +699,13 @@ export const CanvasLayer3D = React.memo(
           onPointerCancel={() => {
             activePointerIdRef.current = null
             dragBoxRef.current = null
+            hoveredHqRef.current = false
             updateDragBox(null)
           }}
           onContextMenu={handleContextMenu}
           onPointerLeave={() => {
             hoveredPadIdRef.current = null
+            hoveredHqRef.current = false
             dragBoxRef.current = null
             updateDragBox(null)
           }}

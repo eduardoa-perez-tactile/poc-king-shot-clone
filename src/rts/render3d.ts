@@ -12,6 +12,7 @@ import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTextur
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight'
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight'
 import { PAD_SIZE } from './pads'
+import { BUILDING_DEFS } from '../config/buildings'
 import type { BuildingPad } from '../config/levels'
 import type { RunBuilding } from '../run/types'
 import type { Camera as Camera2D } from './render'
@@ -19,18 +20,38 @@ import type { EntityState, SimState, Vec2 } from './types'
 import type { PickMeta } from './input/input3d'
 
 const HIT_FLASH_DURATION = 0.14
-const UNIT_SCALE = 1.6
+const UNIT_SCALE_PLAYER = 1.1
+const UNIT_SCALE_ENEMY = 1.0
+const UNIT_SCALE_HERO = 1.8
+const UNIT_SCALE_ELITE = 1.5
 const BASE_UNIT_HEIGHT = 2
 const BASE_UNIT_RADIUS = 1
 const BASE_BUILDING_HEIGHT = 10
 const BASE_BUILDING_PADDING = 0.72
-const LABEL_TEXTURE_SIZE = 256
+const LABEL_TEXTURE_SIZE = 384
+const HEALTH_BAR_HEIGHT = 1.2
+const HEALTH_BAR_DEPTH = 2.2
+const DAMAGE_LABEL_FONT = 96
+const DAMAGE_LABEL_SCALE = 1.3
+const PROJECTILE_SCALE = 3
+const BUILDING_LABEL_FONT = 72
+const BUILDING_LABEL_SCALE = 1.9
+const UNIT_LABEL_FONT = 84
+const UNIT_LABEL_SCALE = 1.4
 
 type UnitGroupKey = string
 
 interface ThinGroup {
   mesh: Mesh
   ids: string[]
+  matrices: Float32Array
+  colors: Float32Array
+  capacity: number
+  baseColor: Color3
+}
+
+interface BarGroup {
+  mesh: Mesh
   matrices: Float32Array
   colors: Float32Array
   capacity: number
@@ -50,6 +71,7 @@ export interface Render3DOverlays {
   selectedPadId?: string | null
   padUnlockLevels?: Record<string, number>
   strongholdLevel?: number
+  hoveredHq?: boolean
 }
 
 export interface Render3DOptions {
@@ -196,17 +218,61 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   const bossMaterial = createMaterial(scene, Color3.FromHexString('#991b1b'), 0.4)
   const miniBossMaterial = createMaterial(scene, Color3.FromHexString('#f97316'), 0.4)
   const selectionMaterial = createMaterial(scene, Color3.FromHexString('#22c55e'), 0.8)
+  const rangeMaterial = createMaterial(scene, Color3.FromHexString('#38bdf8'), 0.35)
+  const hqHoverMaterial = createMaterial(scene, Color3.FromHexString('#facc15'), 0.7)
   const projectileMaterial = createMaterial(scene, Color3.FromHexString('#f97316'), 0.8)
+  const healthBgMaterial = createMaterial(scene, Color3.FromHexString('#0f172a'), 0.2)
+  const healthPlayerMaterial = createMaterial(scene, Color3.FromHexString('#22c55e'), 0.5)
+  const healthEnemyMaterial = createMaterial(scene, Color3.FromHexString('#ef4444'), 0.5)
+  healthBgMaterial.backFaceCulling = false
+  healthPlayerMaterial.backFaceCulling = false
+  healthEnemyMaterial.backFaceCulling = false
 
   let ground: Mesh | null = null
   let obstacles: Mesh[] = []
   const padMeshes = new Map<string, Mesh>()
   const buildingMeshes = new Map<string, Mesh>()
+  const buildingLabels = new Map<string, LabelMesh>()
   const unitGroups = new Map<UnitGroupKey, ThinGroup>()
   const specialMeshes = new Map<string, Mesh>()
   const labelMeshes = new Map<string, LabelMesh>()
   const damageLabels: LabelMesh[] = []
   const selectionRings: Mesh[] = []
+  const rangeRings: Mesh[] = []
+  let hqHoverRing: Mesh | null = null
+
+  const healthBgGroup: BarGroup = {
+    mesh: MeshBuilder.CreateBox('health_bg', { size: 1 }, scene),
+    matrices: new Float32Array(0),
+    colors: new Float32Array(0),
+    capacity: 0,
+    baseColor: healthBgMaterial.diffuseColor
+  }
+  healthBgGroup.mesh.material = healthBgMaterial
+  healthBgGroup.mesh.isPickable = false
+  healthBgGroup.mesh.thinInstanceEnablePicking = false
+
+  const healthPlayerGroup: BarGroup = {
+    mesh: MeshBuilder.CreateBox('health_player', { size: 1 }, scene),
+    matrices: new Float32Array(0),
+    colors: new Float32Array(0),
+    capacity: 0,
+    baseColor: healthPlayerMaterial.diffuseColor
+  }
+  healthPlayerGroup.mesh.material = healthPlayerMaterial
+  healthPlayerGroup.mesh.isPickable = false
+  healthPlayerGroup.mesh.thinInstanceEnablePicking = false
+
+  const healthEnemyGroup: BarGroup = {
+    mesh: MeshBuilder.CreateBox('health_enemy', { size: 1 }, scene),
+    matrices: new Float32Array(0),
+    colors: new Float32Array(0),
+    capacity: 0,
+    baseColor: healthEnemyMaterial.diffuseColor
+  }
+  healthEnemyGroup.mesh.material = healthEnemyMaterial
+  healthEnemyGroup.mesh.isPickable = false
+  healthEnemyGroup.mesh.thinInstanceEnablePicking = false
 
   const projectileGroup: ThinGroup = {
     mesh: MeshBuilder.CreateSphere('projectile_base', { diameter: 2 }, scene),
@@ -269,6 +335,24 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     return ring
   }
 
+  const ensureHqHoverRing = () => {
+    if (hqHoverRing) return hqHoverRing
+    const ring = MeshBuilder.CreateTorus('hq_hover', { diameter: 2, thickness: 0.3 }, scene)
+    ring.material = hqHoverMaterial
+    ring.isPickable = false
+    hqHoverRing = ring
+    return ring
+  }
+
+  const ensureRangeRing = (index: number) => {
+    if (rangeRings[index]) return rangeRings[index]
+    const ring = MeshBuilder.CreateTorus(`range_${index}`, { diameter: 2, thickness: 0.12 }, scene)
+    ring.material = rangeMaterial
+    ring.isPickable = false
+    rangeRings[index] = ring
+    return ring
+  }
+
   const ensureUnitGroup = (key: UnitGroupKey, color: Color3) => {
     if (unitGroups.has(key)) return unitGroups.get(key)!
     const mesh = MeshBuilder.CreateBox(`unit_${key}`, { size: BASE_UNIT_RADIUS * 2 }, scene)
@@ -283,6 +367,24 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     const group: ThinGroup = { mesh, ids: [], matrices: new Float32Array(0), colors: new Float32Array(0), capacity: 0, baseColor: color }
     unitGroups.set(key, group)
     return group
+  }
+
+  const ensureBuildingLabel = (padId: string) => {
+    if (buildingLabels.has(padId)) return buildingLabels.get(padId)!
+    const { mesh, texture } = createLabel(scene, `building_label_${padId}`)
+    mesh.scaling = new Vector3(BUILDING_LABEL_SCALE, BUILDING_LABEL_SCALE, BUILDING_LABEL_SCALE)
+    const entry = { mesh, texture, text: '' }
+    buildingLabels.set(padId, entry)
+    return entry
+  }
+
+  const ensureUnitLabel = (id: string) => {
+    if (labelMeshes.has(id)) return labelMeshes.get(id)!
+    const { mesh, texture } = createLabel(scene, `label_${id}`)
+    mesh.scaling = new Vector3(UNIT_LABEL_SCALE, UNIT_LABEL_SCALE, UNIT_LABEL_SCALE)
+    const entry = { mesh, texture, text: '' }
+    labelMeshes.set(id, entry)
+    return entry
   }
 
   const ensureSpecialMesh = (entity: EntityState) => {
@@ -305,18 +407,10 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     return mesh
   }
 
-  const ensureLabelMesh = (id: string) => {
-    if (labelMeshes.has(id)) return labelMeshes.get(id)!
-    const { mesh, texture } = createLabel(scene, `label_${id}`)
-    const entry = { mesh, texture, text: '' }
-    labelMeshes.set(id, entry)
-    return entry
-  }
-
   const ensureDamageLabel = (index: number) => {
     if (damageLabels[index]) return damageLabels[index]
     const { mesh, texture } = createLabel(scene, `damage_${index}`)
-    mesh.scaling = new Vector3(0.7, 0.7, 0.7)
+    mesh.scaling = new Vector3(DAMAGE_LABEL_SCALE, DAMAGE_LABEL_SCALE, DAMAGE_LABEL_SCALE)
     const entry = { mesh, texture, text: '' }
     damageLabels[index] = entry
     return entry
@@ -332,7 +426,8 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     }
     group.ids = entities.map((entity) => entity.id)
     entities.forEach((entity, index) => {
-      const scale = new Vector3(entity.radius * UNIT_SCALE, entity.radius * 0.6 * UNIT_SCALE, entity.radius * UNIT_SCALE)
+      const scaleFactor = entity.team === 'enemy' ? UNIT_SCALE_ENEMY : UNIT_SCALE_PLAYER
+      const scale = new Vector3(entity.radius * scaleFactor, entity.radius * 0.6 * scaleFactor, entity.radius * scaleFactor)
       const height = BASE_UNIT_HEIGHT * scale.y
       const pos = new Vector3(entity.pos.x, height / 2, entity.pos.y)
       const matrix = Matrix.Compose(scale, Quaternion.Identity(), pos)
@@ -350,6 +445,55 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     group.mesh.thinInstanceRefreshBoundingInfo(true)
   }
 
+  const updateBars = (group: BarGroup, entries: Array<{ pos: Vec2; width: number; hpPct: number; yOffset: number }>) => {
+    const count = entries.length
+    if (count > group.capacity) {
+      const nextCap = Math.max(count, group.capacity + 16)
+      group.capacity = nextCap
+      group.matrices = new Float32Array(nextCap * 16)
+      group.colors = new Float32Array(nextCap * 4)
+    }
+    entries.forEach((entry, index) => {
+      const scale = new Vector3(entry.width, HEALTH_BAR_HEIGHT, HEALTH_BAR_DEPTH)
+      const pos = new Vector3(entry.pos.x, entry.yOffset, entry.pos.y)
+      const matrix = Matrix.Compose(scale, Quaternion.Identity(), pos)
+      matrix.copyToArray(group.matrices, index * 16)
+      group.colors[index * 4 + 0] = group.baseColor.r
+      group.colors[index * 4 + 1] = group.baseColor.g
+      group.colors[index * 4 + 2] = group.baseColor.b
+      group.colors[index * 4 + 3] = 1
+    })
+    group.mesh.thinInstanceSetBuffer('matrix', group.matrices, 16, false)
+    group.mesh.thinInstanceSetBuffer('color', group.colors, 4, false)
+    group.mesh.thinInstanceCount = count
+    group.mesh.thinInstanceRefreshBoundingInfo(true)
+  }
+
+  const updateHealthBars = (sim: SimState) => {
+    const all = sim.entities
+    const bgEntries = all.map((entity) => ({
+      pos: entity.pos,
+      width: Math.max(16, entity.radius * 2.8),
+      hpPct: Math.max(0, Math.min(1, entity.hp / entity.maxHp)),
+      yOffset: entity.radius * 1.1 + 18
+    }))
+    const playerEntries = all.filter((entity) => entity.team === 'player').map((entity) => ({
+      pos: entity.pos,
+      width: Math.max(16, entity.radius * 2.8) * Math.max(0, Math.min(1, entity.hp / entity.maxHp)),
+      hpPct: Math.max(0, Math.min(1, entity.hp / entity.maxHp)),
+      yOffset: entity.radius * 1.1 + 18
+    }))
+    const enemyEntries = all.filter((entity) => entity.team === 'enemy').map((entity) => ({
+      pos: entity.pos,
+      width: Math.max(16, entity.radius * 2.8) * Math.max(0, Math.min(1, entity.hp / entity.maxHp)),
+      hpPct: Math.max(0, Math.min(1, entity.hp / entity.maxHp)),
+      yOffset: entity.radius * 1.1 + 18
+    }))
+    updateBars(healthBgGroup, bgEntries)
+    updateBars(healthPlayerGroup, playerEntries)
+    updateBars(healthEnemyGroup, enemyEntries)
+  }
+
   const updateProjectiles = (projectiles: SimState['projectiles']) => {
     const count = projectiles.length
     if (count > projectileGroup.capacity) {
@@ -360,7 +504,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     }
     projectileGroup.ids = projectiles.map((proj) => proj.id)
     projectiles.forEach((proj, index) => {
-      const scale = new Vector3(2, 2, 2)
+      const scale = new Vector3(PROJECTILE_SCALE, PROJECTILE_SCALE, PROJECTILE_SCALE)
       const pos = new Vector3(proj.pos.x, 4, proj.pos.y)
       const matrix = Matrix.Compose(scale, Quaternion.Identity(), pos)
       matrix.copyToArray(projectileGroup.matrices, index * 16)
@@ -384,10 +528,10 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     labelMap.forEach((label, id) => {
       const entity = sim.entities.find((entry) => entry.id === id)
       if (!entity) return
-      const entry = ensureLabelMesh(id)
+      const entry = ensureUnitLabel(id)
       activeIds.add(id)
       if (entry.text !== label) {
-        drawLabel(entry.texture, label, '#f8fafc', 64)
+        drawLabel(entry.texture, label, '#f8fafc', UNIT_LABEL_FONT)
         entry.text = label
       }
       entry.mesh.position = new Vector3(entity.pos.x, entity.radius + 12, entity.pos.y)
@@ -402,7 +546,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     const numbers = sim.damageNumbers
     numbers.forEach((entry, index) => {
       const label = ensureDamageLabel(index)
-      drawLabel(label.texture, entry.text, entry.color, 60)
+      drawLabel(label.texture, entry.text, entry.color, DAMAGE_LABEL_FONT)
       label.text = entry.text
       label.mesh.position = new Vector3(entry.x, 16 + (entry.life - entry.ttl) * 0.4 * Math.abs(entry.vy), entry.y)
       label.mesh.setEnabled(true)
@@ -430,6 +574,24 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     }
   }
 
+  const updateRanges = (sim: SimState, selection: string[]) => {
+    selection.forEach((id, index) => {
+      const entity = sim.entities.find((entry) => entry.id === id)
+      const ring = ensureRangeRing(index)
+      if (!entity || entity.kind === 'hq') {
+        ring.setEnabled(false)
+        return
+      }
+      const diameter = Math.max(4, entity.range * 2)
+      ring.scaling = new Vector3(diameter / 2, 1, diameter / 2)
+      ring.position = new Vector3(entity.pos.x, 0.18, entity.pos.y)
+      ring.setEnabled(true)
+    })
+    for (let i = selection.length; i < rangeRings.length; i += 1) {
+      rangeRings[i].setEnabled(false)
+    }
+  }
+
   const updateSpecialMeshes = (sim: SimState) => {
     const activeIds = new Set<string>()
     sim.entities.forEach((entity) => {
@@ -441,7 +603,8 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
         mesh.scaling = new Vector3(PAD_SIZE.w * 0.45, height, PAD_SIZE.h * 0.45)
         mesh.position = new Vector3(entity.pos.x, height / 2, entity.pos.y)
       } else {
-        const scale = new Vector3(entity.radius * UNIT_SCALE, entity.radius * UNIT_SCALE, entity.radius * UNIT_SCALE)
+        const scaleFactor = entity.kind === 'hero' ? UNIT_SCALE_HERO : UNIT_SCALE_ELITE
+        const scale = new Vector3(entity.radius * scaleFactor, entity.radius * scaleFactor, entity.radius * scaleFactor)
         const height = BASE_UNIT_HEIGHT * scale.y
         mesh.scaling = scale
         mesh.position = new Vector3(entity.pos.x, height / 2, entity.pos.y)
@@ -472,9 +635,19 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
         mesh.scaling = new Vector3(PAD_SIZE.w * BASE_BUILDING_PADDING, height, PAD_SIZE.h * BASE_BUILDING_PADDING)
         mesh.position = new Vector3(pad.x, height / 2, pad.y)
         mesh.setEnabled(true)
+        const label = ensureBuildingLabel(pad.id)
+        const name = BUILDING_DEFS[building.id].name
+        if (label.text !== name) {
+          drawLabel(label.texture, name, '#e2e8f0', BUILDING_LABEL_FONT)
+          label.text = name
+        }
+        label.mesh.position = new Vector3(pad.x, height + 6, pad.y)
+        label.mesh.setEnabled(true)
       } else {
         const mesh = buildingMeshes.get(pad.id)
         if (mesh) mesh.setEnabled(false)
+        const label = buildingLabels.get(pad.id)
+        if (label) label.mesh.setEnabled(false)
       }
     })
     buildingMeshes.forEach((mesh, padId) => {
@@ -482,6 +655,25 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
         mesh.setEnabled(false)
       }
     })
+    buildingLabels.forEach((label, padId) => {
+      if (!activeBuildingPads.has(padId)) {
+        label.mesh.setEnabled(false)
+      }
+    })
+  }
+
+  const updateHqHover = (sim: SimState, hovered: boolean | undefined) => {
+    if (!hovered) {
+      if (hqHoverRing) hqHoverRing.setEnabled(false)
+      return
+    }
+    const hq = sim.entities.find((entity) => entity.kind === 'hq')
+    if (!hq) return
+    const ring = ensureHqHoverRing()
+    const diameter = Math.max(PAD_SIZE.w, PAD_SIZE.h) * 1.1
+    ring.scaling = new Vector3(diameter / 2, 1, diameter / 2)
+    ring.position = new Vector3(hq.pos.x, 0.25, hq.pos.y)
+    ring.setEnabled(true)
   }
 
   const updatePads = (overlays: Render3DOverlays) => {
@@ -555,6 +747,9 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     })
     updateProjectiles(input.sim.projectiles)
     updateSelection(input.sim, input.selection)
+    updateRanges(input.sim, input.selection)
+    updateHealthBars(input.sim)
+    updateHqHover(input.sim, input.overlays.hoveredHq)
     updateLabels(input.sim, Boolean(input.options?.showLabels))
     updateDamageNumbers(input.sim)
   }
