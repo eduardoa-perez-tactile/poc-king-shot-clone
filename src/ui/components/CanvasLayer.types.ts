@@ -13,7 +13,14 @@ export interface CanvasTelemetry {
   heroMaxHp: number
   qReadyIn: number
   eReadyIn: number
-  camera: { x: number; y: number; zoom: number; viewW: number; viewH: number }
+  camera: {
+    x: number
+    y: number
+    zoom: number
+    viewW: number
+    viewH: number
+    viewPolygon?: Array<{ x: number; y: number }>
+  }
   playerUnits: Array<{ x: number; y: number; kind: 'hero' | 'unit' }>
   enemyUnits: Array<{ x: number; y: number }>
 }
