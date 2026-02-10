@@ -1,14 +1,16 @@
 import React, { useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import { buildCombatResult, createGridForCombat, createSimState, issueOrder, stepSim, useHeroAbility } from '../../rts/sim'
-import { clampCamera, Camera } from '../../rts/render'
+import type { Camera } from '../../rts/render'
 import { pickAt, pickPadAt, pickUnitAt } from '../../rts/input/input3d'
 import { initRenderer3D, type Renderer3D } from '../../rts/render3d'
+import { CameraController } from '../../rts/CameraController'
 import type { Order, SimState } from '../../rts/types'
 import { UNIT_DEFS } from '../../config/units'
 import type { Grid } from '../../rts/pathfinding'
 import type { CanvasHandle, CanvasLayerProps, CanvasTelemetry } from './CanvasLayer.types'
 
 const FIXED_DT = 1 / 30
+type CanvasWithRendererMarker = HTMLCanvasElement & { __rts3dDispose?: () => void }
 
 export const CanvasLayer3D = React.memo(
   React.forwardRef<CanvasHandle, CanvasLayerProps>(({
@@ -43,11 +45,12 @@ export const CanvasLayer3D = React.memo(
     const simRef = useRef<SimState>(createSimState(combat, run))
     const gridRef = useRef<Grid>(createGridForCombat(combat))
     const rafRef = useRef<number | null>(null)
+    const loopTokenRef = useRef(0)
     const selectedIdsRef = useRef<string[]>([])
     const strongholdSelectedRef = useRef(false)
     const hoveredPadIdRef = useRef<string | null>(null)
     const hoveredHqRef = useRef(false)
-    const cameraRef = useRef<Camera>({ x: 0, y: 0, zoom: 1 })
+    const cameraControllerRef = useRef<CameraController | null>(null)
     const commandModeRef = useRef<'move' | 'attackMove'>('move')
     const controlGroupsRef = useRef<Record<number, string[]>>({})
     const phaseRef = useRef(phase)
@@ -111,6 +114,12 @@ export const CanvasLayer3D = React.memo(
       combatRef.current = combat
       gridRef.current = createGridForCombat(combat)
       rendererRef.current?.setMap(combat.map)
+      cameraControllerRef.current?.setMapBounds({
+        minX: 0,
+        maxX: combat.map.width,
+        minZ: 0,
+        maxZ: combat.map.height
+      })
     }, [combat])
 
     useEffect(() => {
@@ -177,11 +186,7 @@ export const CanvasLayer3D = React.memo(
 
     useImperativeHandle(ref, () => ({
       panTo: (x: number, y: number) => {
-        const canvas = canvasRef.current
-        if (!canvas) return
-        const viewW = canvas.width / cameraRef.current.zoom
-        const viewH = canvas.height / cameraRef.current.zoom
-        cameraRef.current = { ...cameraRef.current, x: x - viewW / 2, y: y - viewH / 2 }
+        cameraControllerRef.current?.focusOn(x, y)
       },
       castAbility: (key: 'q' | 'e') => {
         if (phaseRef.current !== 'combat' || pausedRef.current) return
@@ -202,11 +207,43 @@ export const CanvasLayer3D = React.memo(
     useEffect(() => {
       const canvas = canvasRef.current
       if (!canvas) return
+      const canvasWithMarker = canvas as CanvasWithRendererMarker
+      if (canvasWithMarker.__rts3dDispose) {
+        canvasWithMarker.__rts3dDispose()
+        delete canvasWithMarker.__rts3dDispose
+      }
       const renderer = initRenderer3D(canvas, combatRef.current.map)
       rendererRef.current = renderer
-      return () => {
+      const controller = new CameraController({
+        scene: renderer.scene,
+        camera: renderer.camera,
+        canvas,
+        bounds: {
+          minX: 0,
+          maxX: combatRef.current.map.width,
+          minZ: 0,
+          maxZ: combatRef.current.map.height
+        },
+        target: () => {
+          const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
+          return hero ? { x: hero.pos.x, z: hero.pos.y } : null
+        }
+      })
+      cameraControllerRef.current = controller
+
+      const dispose = () => {
+        controller.dispose()
+        cameraControllerRef.current = null
         renderer.dispose()
         rendererRef.current = null
+      }
+
+      canvasWithMarker.__rts3dDispose = dispose
+      return () => {
+        if (canvasWithMarker.__rts3dDispose === dispose) {
+          delete canvasWithMarker.__rts3dDispose
+        }
+        dispose()
       }
     }, [])
 
@@ -215,9 +252,11 @@ export const CanvasLayer3D = React.memo(
       const container = containerRef.current
       if (!canvas || !container) return
       const resize = () => {
-        canvas.width = container.clientWidth
-        canvas.height = container.clientHeight
-        rendererRef.current?.resize(canvas.width, canvas.height)
+        const width = Math.max(1, Math.floor(container.clientWidth))
+        const height = Math.max(1, Math.floor(container.clientHeight))
+        canvas.style.width = `${width}px`
+        canvas.style.height = `${height}px`
+        rendererRef.current?.resize(width, height)
       }
       const observer = new ResizeObserver(() => {
         window.requestAnimationFrame(resize)
@@ -246,10 +285,36 @@ export const CanvasLayer3D = React.memo(
       const enemyUnits = sim.entities
         .filter((entity) => entity.team === 'enemy')
         .map((entity) => ({ x: entity.pos.x, y: entity.pos.y }))
-      const canvas = canvasRef.current
-      const camera = cameraRef.current
-      const viewW = canvas ? canvas.width / camera.zoom : 0
-      const viewH = canvas ? canvas.height / camera.zoom : 0
+      const renderer = rendererRef.current
+      const renderCamera = renderer?.camera
+      const viewPolygon = renderer?.getViewPolygon() ?? null
+      let viewW = renderCamera ? Math.abs(renderCamera.orthoRight - renderCamera.orthoLeft) : 0
+      let viewH = renderCamera ? Math.abs(renderCamera.orthoTop - renderCamera.orthoBottom) : 0
+      let viewX = renderCamera?.target.x ?? 0
+      let viewY = renderCamera?.target.z ?? 0
+      if (viewW > 0) viewX -= viewW / 2
+      if (viewH > 0) viewY -= viewH / 2
+      if (viewPolygon && viewPolygon.length > 0) {
+        let minX = Infinity
+        let maxX = -Infinity
+        let minY = Infinity
+        let maxY = -Infinity
+        viewPolygon.forEach((point) => {
+          minX = Math.min(minX, point.x)
+          maxX = Math.max(maxX, point.x)
+          minY = Math.min(minY, point.y)
+          maxY = Math.max(maxY, point.y)
+        })
+        if (Number.isFinite(minX) && Number.isFinite(minY)) {
+          viewX = minX
+          viewY = minY
+          if (Number.isFinite(maxX) && Number.isFinite(maxY)) {
+            // Overwrite with AABB from the polygon for fallback sizing.
+            viewW = maxX - minX
+            viewH = maxY - minY
+          }
+        }
+      }
       const payload: CanvasTelemetry = {
         waveIndex: sim.waveIndex,
         waveCount: sim.combat.waves.length,
@@ -260,7 +325,7 @@ export const CanvasLayer3D = React.memo(
         heroMaxHp: hero?.maxHp ?? 0,
         qReadyIn,
         eReadyIn,
-        camera: { x: camera.x, y: camera.y, zoom: camera.zoom, viewW, viewH },
+        camera: { x: viewX, y: viewY, zoom: 1, viewW, viewH, viewPolygon: viewPolygon ?? undefined },
         playerUnits,
         enemyUnits
       }
@@ -362,18 +427,6 @@ export const CanvasLayer3D = React.memo(
             selectedIdsRef.current = group
             emitSelection()
           }
-        }
-        if (event.key === 'ArrowUp') {
-          cameraRef.current = { ...cameraRef.current, y: cameraRef.current.y - 40 }
-        }
-        if (event.key === 'ArrowDown') {
-          cameraRef.current = { ...cameraRef.current, y: cameraRef.current.y + 40 }
-        }
-        if (event.key === 'ArrowLeft') {
-          cameraRef.current = { ...cameraRef.current, x: cameraRef.current.x - 40 }
-        }
-        if (event.key === 'ArrowRight') {
-          cameraRef.current = { ...cameraRef.current, x: cameraRef.current.x + 40 }
         }
       }
       window.addEventListener('keydown', handleKey)
@@ -529,7 +582,10 @@ export const CanvasLayer3D = React.memo(
     }
 
     useEffect(() => {
+      const loopToken = loopTokenRef.current + 1
+      loopTokenRef.current = loopToken
       const loop = (time: number) => {
+        if (loopTokenRef.current !== loopToken) return
         if (!pausedRef.current) {
           let acc = loopState.acc + (time - loopState.last) / 1000
           loopState.last = time
@@ -561,11 +617,17 @@ export const CanvasLayer3D = React.memo(
         const canvas = canvasRef.current
         const renderer = rendererRef.current
         if (canvas && renderer) {
-          const clamped = clampCamera(cameraRef.current, canvas.width, canvas.height, combatRef.current.map.width, combatRef.current.map.height)
-          cameraRef.current = clamped
+          const renderCamera = renderer.camera
+          const viewW = Math.abs(renderCamera.orthoRight - renderCamera.orthoLeft)
+          const viewH = Math.abs(renderCamera.orthoTop - renderCamera.orthoBottom)
+          const cameraState: Camera = {
+            x: renderCamera.target.x - viewW / 2,
+            y: renderCamera.target.z - viewH / 2,
+            zoom: 1
+          }
           renderer.update({
             sim: simRef.current,
-            camera: clamped,
+            camera: cameraState,
             selection: selectedIdsRef.current,
             overlays: {
               pads: padsRef.current,
@@ -588,6 +650,7 @@ export const CanvasLayer3D = React.memo(
       const loopState = { last: performance.now(), acc: 0 }
       rafRef.current = requestAnimationFrame(loop)
       return () => {
+        loopTokenRef.current += 1
         if (rafRef.current) cancelAnimationFrame(rafRef.current)
       }
     }, [])
@@ -670,21 +733,6 @@ export const CanvasLayer3D = React.memo(
         }
       }
     }
-
-    useEffect(() => {
-      const canvas = canvasRef.current
-      if (!canvas) return
-      const onWheel = (event: WheelEvent) => {
-        if (inputBlockedRef.current) return
-        event.preventDefault()
-        cameraRef.current = {
-          ...cameraRef.current,
-          zoom: Math.min(1.6, Math.max(0.6, cameraRef.current.zoom - event.deltaY * 0.001))
-        }
-      }
-      canvas.addEventListener('wheel', onWheel, { passive: false })
-      return () => canvas.removeEventListener('wheel', onWheel)
-    }, [])
 
     const label = useMemo(() => (phase === 'combat' ? 'Combat' : 'Build'), [phase])
 

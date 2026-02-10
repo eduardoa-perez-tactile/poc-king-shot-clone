@@ -7,6 +7,7 @@ export interface MiniMapView {
   viewY: number
   viewW: number
   viewH: number
+  viewPolygon?: Array<{ x: number; y: number }>
 }
 
 export const MiniMap: React.FC<{
@@ -59,7 +60,22 @@ export const MiniMap: React.FC<{
 
     ctx.strokeStyle = '#facc15'
     ctx.lineWidth = 1
-    ctx.strokeRect(view.viewX * scaleX, view.viewY * scaleY, view.viewW * scaleX, view.viewH * scaleY)
+    if (view.viewPolygon && view.viewPolygon.length >= 3) {
+      ctx.beginPath()
+      view.viewPolygon.forEach((point, index) => {
+        const x = point.x * scaleX
+        const y = point.y * scaleY
+        if (index === 0) {
+          ctx.moveTo(x, y)
+        } else {
+          ctx.lineTo(x, y)
+        }
+      })
+      ctx.closePath()
+      ctx.stroke()
+    } else {
+      ctx.strokeRect(view.viewX * scaleX, view.viewY * scaleY, view.viewW * scaleX, view.viewH * scaleY)
+    }
   }, [obstacles, hq, view, playerUnits, enemyUnits])
 
   return (

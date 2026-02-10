@@ -814,7 +814,8 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
                     viewX: telemetry.camera.x,
                     viewY: telemetry.camera.y,
                     viewW: telemetry.camera.viewW,
-                    viewH: telemetry.camera.viewH
+                    viewH: telemetry.camera.viewH,
+                    viewPolygon: telemetry.camera.viewPolygon
                   }
                 : null
             }

@@ -104,6 +104,7 @@ export interface Renderer3D {
   setMap: (map: SimState['combat']['map']) => void
   getPickContext: () => PickContext3D
   projectToScreen: (pos: Vec2) => { x: number; y: number } | null
+  getViewPolygon: () => Vec2[] | null
 }
 
 const toWorld = (pos: Vec2) => new Vector3(pos.x, 0, pos.y)
@@ -257,15 +258,21 @@ const buildEffectKey = (effect: SimState['effects'][number]) =>
   `${effect.kind}_${effect.bornAt.toFixed(2)}_${effect.pos.x.toFixed(1)}_${effect.pos.y.toFixed(1)}_${effect.radius}`
 
 export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat']['map']): Renderer3D => {
-  const engine = new Engine(canvas, true, { antialias: true })
+  const engine = new Engine(canvas, true, { antialias: true }, true)
   const scene = new Scene(engine)
   scene.clearColor = new Color4(0.04, 0.07, 0.13, 1)
 
   const camera = new ArcRotateCamera('rts_camera', -Math.PI / 4, 0.95532, 220, new Vector3(0, 0, 0), scene)
+  scene.activeCamera = camera
+  scene.activeCameras = null
+  scene.cameraToUseForPointers = camera
+  scene.autoClear = true
+  scene.autoClearDepthAndStencil = true
   camera.mode = BabylonCamera.ORTHOGRAPHIC_CAMERA
+  camera.setCameraRigMode(BabylonCamera.RIG_MODE_NONE)
   camera.inputs.clear()
-  camera.minZ = 0.1
-  camera.maxZ = 2000
+  camera.minZ = 1
+  camera.maxZ = 1200
 
   const hemi = new HemisphericLight('hemi', new Vector3(0, 1, 0), scene)
   hemi.intensity = 0.75
@@ -861,22 +868,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     })
   }
 
-  const updateCamera = (cam: Camera2D) => {
-    const viewW = engine.getRenderWidth() / cam.zoom
-    const viewH = engine.getRenderHeight() / cam.zoom
-    const centerX = cam.x + viewW / 2
-    const centerZ = cam.y + viewH / 2
-    camera.alpha = -Math.PI / 4
-    camera.beta = 0.95532
-    camera.setTarget(new Vector3(centerX, 0, centerZ))
-    camera.orthoLeft = -viewW / 2
-    camera.orthoRight = viewW / 2
-    camera.orthoTop = viewH / 2
-    camera.orthoBottom = -viewH / 2
-  }
-
   const update = (input: Render3DUpdateInput) => {
-    updateCamera(input.camera)
     updatePads(input.overlays)
     updateBuildings(input.overlays.pads, input.overlays.buildings)
     updateSpecialMeshes(input.sim)
@@ -908,16 +900,20 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     updateVfx(input.sim)
   }
 
-  const render = () => scene.render()
+  const render = () => {
+    // Defensive: ensure we render only a single camera and fully clear the frame.
+    if (scene.activeCamera !== camera) {
+      scene.activeCamera = camera
+    }
+    if (scene.activeCameras) {
+      scene.activeCameras = null
+    }
+    engine.clear(scene.clearColor, true, true, true)
+    scene.render()
+  }
 
   const resize = (width: number, height: number) => {
     engine.resize(true)
-    if (width > 0 && height > 0) {
-      camera.orthoLeft = -width / 2
-      camera.orthoRight = width / 2
-      camera.orthoTop = height / 2
-      camera.orthoBottom = -height / 2
-    }
   }
 
   const dispose = () => {
@@ -937,12 +933,37 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   })
 
   const projectToScreen = (pos: Vec2) => {
-    const width = engine.getRenderWidth()
-    const height = engine.getRenderHeight()
+    const level = engine.getHardwareScalingLevel()
+    const width = engine.getRenderWidth() * level
+    const height = engine.getRenderHeight() * level
     if (!width || !height) return null
     const viewport = camera.viewport.toGlobal(width, height)
     const projected = Vector3.Project(new Vector3(pos.x, 0, pos.y), Matrix.Identity(), camera.getTransformationMatrix(), viewport)
     return { x: projected.x, y: projected.y }
+  }
+
+  const getViewPolygon = () => {
+    const level = engine.getHardwareScalingLevel()
+    const width = engine.getRenderWidth() * level
+    const height = engine.getRenderHeight() * level
+    if (!width || !height) return null
+    const corners = [
+      { x: 0, y: 0 },
+      { x: width, y: 0 },
+      { x: width, y: height },
+      { x: 0, y: height }
+    ]
+    const points: Vec2[] = []
+    corners.forEach((corner) => {
+      const ray = scene.createPickingRay(corner.x, corner.y, Matrix.Identity(), camera)
+      const dirY = ray.direction.y
+      if (Math.abs(dirY) < 1e-6) return
+      const t = -ray.origin.y / dirY
+      if (!Number.isFinite(t) || t <= 0) return
+      const hit = ray.origin.add(ray.direction.scale(t))
+      points.push({ x: hit.x, y: hit.z })
+    })
+    return points.length === 4 ? points : null
   }
 
   ensureGround(map)
@@ -958,6 +979,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     dispose,
     setMap,
     getPickContext,
-    projectToScreen
+    projectToScreen,
+    getViewPolygon
   }
 }
