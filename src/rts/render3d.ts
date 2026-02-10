@@ -933,8 +933,9 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   })
 
   const projectToScreen = (pos: Vec2) => {
-    const width = engine.getRenderWidth()
-    const height = engine.getRenderHeight()
+    const level = engine.getHardwareScalingLevel()
+    const width = engine.getRenderWidth() * level
+    const height = engine.getRenderHeight() * level
     if (!width || !height) return null
     const viewport = camera.viewport.toGlobal(width, height)
     const projected = Vector3.Project(new Vector3(pos.x, 0, pos.y), Matrix.Identity(), camera.getTransformationMatrix(), viewport)
@@ -942,8 +943,9 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   }
 
   const getViewPolygon = () => {
-    const width = engine.getRenderWidth()
-    const height = engine.getRenderHeight()
+    const level = engine.getHardwareScalingLevel()
+    const width = engine.getRenderWidth() * level
+    const height = engine.getRenderHeight() * level
     if (!width || !height) return null
     const corners = [
       { x: 0, y: 0 },
