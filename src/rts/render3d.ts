@@ -18,16 +18,18 @@ import type { RunBuilding } from '../run/types'
 import type { Camera as Camera2D } from './render'
 import type { EntityState, SimState, Vec2 } from './types'
 import type { PickMeta } from './input/input3d'
+import { createBuildingFactory, type BuildingVisualInstance } from './render/visuals/buildingFactory'
+import { createUnitFactory, type SpecialUnitVisual } from './render/visuals/unitFactory'
+import { VfxManager, type HeroVfxType } from './render/vfx/VfxManager'
 
 const HIT_FLASH_DURATION = 0.14
-const UNIT_SCALE_PLAYER = 1.1
-const UNIT_SCALE_ENEMY = 1.0
-const UNIT_SCALE_HERO = 1.8
-const UNIT_SCALE_ELITE = 1.5
+const UNIT_SCALE_PLAYER = 0.82
+const UNIT_SCALE_ENEMY = 0.78
+const UNIT_SCALE_HERO = 1.25
+const UNIT_SCALE_ELITE = 1.2
 const BASE_UNIT_HEIGHT = 2
 const BASE_UNIT_RADIUS = 1
 const BASE_BUILDING_HEIGHT = 10
-const BASE_BUILDING_PADDING = 0.72
 const LABEL_TEXTURE_SIZE = 384
 const HEALTH_BAR_HEIGHT = 1.2
 const HEALTH_BAR_DEPTH = 2.2
@@ -114,6 +116,30 @@ const createMaterial = (scene: Scene, color: Color3, emissive = 0.1) => {
   return mat
 }
 
+const createGroundGridTexture = (scene: Scene) => {
+  const texture = new DynamicTexture('ground_grid', { width: 512, height: 512 }, scene, false)
+  const ctx = texture.getContext()
+  ctx.fillStyle = '#0b1220'
+  ctx.fillRect(0, 0, 512, 512)
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)'
+  ctx.lineWidth = 1
+  const step = 64
+  for (let x = 0; x <= 512; x += step) {
+    ctx.beginPath()
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, 512)
+    ctx.stroke()
+  }
+  for (let y = 0; y <= 512; y += step) {
+    ctx.beginPath()
+    ctx.moveTo(0, y)
+    ctx.lineTo(512, y)
+    ctx.stroke()
+  }
+  texture.update()
+  return texture
+}
+
 const createLabel = (scene: Scene, name: string) => {
   const texture = new DynamicTexture(name, { width: LABEL_TEXTURE_SIZE, height: LABEL_TEXTURE_SIZE / 2 }, scene, true)
   texture.hasAlpha = true
@@ -190,6 +216,46 @@ const buildLabelMap = (sim: SimState) => {
   return labelMap
 }
 
+const getHeroVfxType = (entity?: EntityState): HeroVfxType => {
+  if (!entity || entity.kind !== 'hero') return 'unknown'
+  if (entity.heroId === 'mage' || entity.heroId === 'golem' || entity.heroId === 'dragon') return entity.heroId
+  return 'vanguard'
+}
+
+const findClosestEntity = (pos: Vec2, entities: EntityState[], maxDist = 80) => {
+  let closest: EntityState | undefined
+  let best = maxDist
+  entities.forEach((entity) => {
+    const dx = entity.pos.x - pos.x
+    const dy = entity.pos.y - pos.y
+    const dist = Math.hypot(dx, dy)
+    if (dist <= best) {
+      best = dist
+      closest = entity
+    }
+  })
+  return closest
+}
+
+const findClosestHero = (pos: Vec2, entities: EntityState[], maxDist = 120) => {
+  let closest: EntityState | undefined
+  let best = maxDist
+  entities.forEach((entity) => {
+    if (entity.kind !== 'hero') return
+    const dx = entity.pos.x - pos.x
+    const dy = entity.pos.y - pos.y
+    const dist = Math.hypot(dx, dy)
+    if (dist <= best) {
+      best = dist
+      closest = entity
+    }
+  })
+  return closest
+}
+
+const buildEffectKey = (effect: SimState['effects'][number]) =>
+  `${effect.kind}_${effect.bornAt.toFixed(2)}_${effect.pos.x.toFixed(1)}_${effect.pos.y.toFixed(1)}_${effect.radius}`
+
 export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat']['map']): Renderer3D => {
   const engine = new Engine(canvas, true, { antialias: true })
   const scene = new Scene(engine)
@@ -207,17 +273,19 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   dir.intensity = 0.6
 
   const groundMaterial = createMaterial(scene, Color3.FromHexString('#0b1220'), 0.2)
+  const groundGrid = createGroundGridTexture(scene)
+  groundMaterial.diffuseTexture = groundGrid
+  groundMaterial.diffuseColor = Color3.White()
+  groundMaterial.emissiveColor = Color3.FromHexString('#0b1220').scale(0.35)
   const padMaterial = createMaterial(scene, Color3.FromHexString('#1f2937'), 0.2)
   const padHoverMaterial = createMaterial(scene, Color3.FromHexString('#0ea5e9'), 0.5)
   const padSelectedMaterial = createMaterial(scene, Color3.FromHexString('#38bdf8'), 0.6)
   const padLockedMaterial = createMaterial(scene, Color3.FromHexString('#334155'), 0.1)
   const padEmptyMaterial = createMaterial(scene, Color3.FromHexString('#111827'), 0.2)
-  const buildingMaterial = createMaterial(scene, Color3.FromHexString('#1f2937'), 0.2)
-  const hqMaterial = createMaterial(scene, Color3.FromHexString('#2563eb'), 0.5)
-  const heroMaterial = createMaterial(scene, Color3.FromHexString('#f59e0b'), 0.6)
-  const bossMaterial = createMaterial(scene, Color3.FromHexString('#991b1b'), 0.4)
-  const miniBossMaterial = createMaterial(scene, Color3.FromHexString('#f97316'), 0.4)
   const selectionMaterial = createMaterial(scene, Color3.FromHexString('#22c55e'), 0.8)
+  const selectionHeroMaterial = createMaterial(scene, Color3.FromHexString('#f59e0b'), 0.85)
+  const selectionBossMaterial = createMaterial(scene, Color3.FromHexString('#ef4444'), 0.85)
+  const selectionMiniBossMaterial = createMaterial(scene, Color3.FromHexString('#f97316'), 0.85)
   const rangeMaterial = createMaterial(scene, Color3.FromHexString('#38bdf8'), 0.35)
   const hqHoverMaterial = createMaterial(scene, Color3.FromHexString('#facc15'), 0.7)
   const projectileMaterial = createMaterial(scene, Color3.FromHexString('#f97316'), 0.8)
@@ -228,18 +296,27 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   healthPlayerMaterial.backFaceCulling = false
   healthEnemyMaterial.backFaceCulling = false
 
+  const buildingFactory = createBuildingFactory(scene)
+  const unitFactory = createUnitFactory(scene)
+  const vfx = new VfxManager(scene)
+
   let ground: Mesh | null = null
   let obstacles: Mesh[] = []
   const padMeshes = new Map<string, Mesh>()
-  const buildingMeshes = new Map<string, Mesh>()
+  const buildingMeshes = new Map<string, BuildingVisualInstance>()
   const buildingLabels = new Map<string, LabelMesh>()
   const unitGroups = new Map<UnitGroupKey, ThinGroup>()
-  const specialMeshes = new Map<string, Mesh>()
+  const specialMeshes = new Map<string, SpecialUnitVisual>()
   const labelMeshes = new Map<string, LabelMesh>()
   const damageLabels: LabelMesh[] = []
   const selectionRings: Mesh[] = []
   const rangeRings: Mesh[] = []
   let hqHoverRing: Mesh | null = null
+
+  let lastSimTime = 0
+  let prevEffectKeys = new Set<string>()
+  let prevProjectileIds = new Set<string>()
+  const prevEntities = new Map<string, EntityState>()
 
   const healthBgGroup: BarGroup = {
     mesh: MeshBuilder.CreateBox('health_bg', { size: 1 }, scene),
@@ -316,14 +393,13 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     return mesh
   }
 
-  const ensureBuildingMesh = (padId: string) => {
+  const ensureBuildingMesh = (padId: string, buildingId: RunBuilding['id'], level: number) => {
     if (buildingMeshes.has(padId)) return buildingMeshes.get(padId)!
-    const mesh = MeshBuilder.CreateBox(`building_${padId}`, { size: 1 }, scene)
-    mesh.material = buildingMaterial
-    mesh.isPickable = true
-    mesh.metadata = { kind: 'building', padId } as PickMeta
-    buildingMeshes.set(padId, mesh)
-    return mesh
+    const instance = buildingFactory.create(buildingId, PAD_SIZE, level, padId)
+    instance.basePlate.isPickable = true
+    instance.basePlate.metadata = { kind: 'building', padId } as PickMeta
+    buildingMeshes.set(padId, instance)
+    return instance
   }
 
   const ensureSelectionRing = (index: number) => {
@@ -390,21 +466,18 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   const ensureSpecialMesh = (entity: EntityState) => {
     const existing = specialMeshes.get(entity.id)
     if (existing) return existing
-    let mesh: Mesh
+    let visual: SpecialUnitVisual
     if (entity.kind === 'hq') {
-      mesh = MeshBuilder.CreateBox(`hq_${entity.id}`, { size: 1 }, scene)
-      mesh.material = hqMaterial
+      visual = unitFactory.createHq(entity.id)
     } else if (entity.kind === 'hero') {
-      mesh = MeshBuilder.CreateBox(`hero_${entity.id}`, { size: 1 }, scene)
-      mesh.material = heroMaterial
+      visual = unitFactory.createHero(entity.id)
     } else {
-      mesh = MeshBuilder.CreateBox(`elite_${entity.id}`, { size: 1 }, scene)
-      mesh.material = entity.tier === 'boss' ? bossMaterial : miniBossMaterial
+      visual = unitFactory.createElite(entity.id, entity.tier === 'boss' ? 'boss' : 'miniBoss')
     }
-    mesh.isPickable = true
-    mesh.metadata = { kind: entity.kind === 'hq' ? 'hq' : 'unit', entityId: entity.id } as PickMeta
-    specialMeshes.set(entity.id, mesh)
-    return mesh
+    visual.primary.isPickable = true
+    visual.primary.metadata = { kind: entity.kind === 'hq' ? 'hq' : 'unit', entityId: entity.id } as PickMeta
+    specialMeshes.set(entity.id, visual)
+    return visual
   }
 
   const ensureDamageLabel = (index: number) => {
@@ -556,7 +629,82 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     }
   }
 
+  const updateVfx = (sim: SimState) => {
+    if (sim.time < lastSimTime) {
+      prevEntities.clear()
+      prevEffectKeys = new Set<string>()
+      prevProjectileIds = new Set<string>()
+      lastSimTime = sim.time
+      return
+    }
+    const dt = lastSimTime ? Math.max(0, sim.time - lastSimTime) : 0
+    const entityMap = new Map(sim.entities.map((entity) => [entity.id, entity]))
+
+    if (prevEntities.size > 0) {
+      const currentIds = new Set(entityMap.keys())
+      prevEntities.forEach((entity, id) => {
+        if (currentIds.has(id)) return
+        vfx.playUnitDeath(toWorld(entity.pos), entity.tier)
+      })
+    }
+
+    const nextProjectileIds = new Set<string>()
+    sim.projectiles.forEach((proj) => {
+      nextProjectileIds.add(proj.id)
+      if (prevProjectileIds.has(proj.id)) return
+      const target = entityMap.get(proj.targetId)
+      const source = proj.sourceId ? entityMap.get(proj.sourceId) : undefined
+      const from = toWorld(proj.pos)
+      const to = target ? toWorld(target.pos) : from
+      if (source?.kind === 'hero') {
+        vfx.playHeroAttack(getHeroVfxType(source), from, to, 'ranged')
+      } else if (source?.tier === 'boss' || source?.tier === 'miniBoss') {
+        vfx.playHeroAttack('boss', from, to, 'ranged')
+      } else {
+        vfx.playRangedShot(from, to, source?.kind === 'archer' ? 'arrow' : 'bolt')
+      }
+    })
+    prevProjectileIds = nextProjectileIds
+
+    const nextEffectKeys = new Set<string>()
+    sim.effects.forEach((effect) => {
+      const key = buildEffectKey(effect)
+      nextEffectKeys.add(key)
+      if (prevEffectKeys.has(key)) return
+      if (effect.kind === 'slash' && effect.from && effect.to) {
+        const attacker = findClosestEntity(effect.from, sim.entities, 120)
+        if (attacker?.kind === 'hero') {
+          vfx.playHeroAttack(getHeroVfxType(attacker), toWorld(effect.from), toWorld(effect.to), 'melee')
+        } else if (attacker?.tier === 'boss' || attacker?.tier === 'miniBoss') {
+          vfx.playHeroAttack('boss', toWorld(effect.from), toWorld(effect.to), 'melee')
+        } else {
+          vfx.playMeleeSwing(toWorld(effect.from), toWorld(effect.to))
+        }
+      }
+      if (effect.kind === 'hit') {
+        const intensity = effect.radius >= 18 ? 1.35 : 1
+        vfx.playHit(toWorld(effect.pos), intensity)
+      }
+      if (effect.kind === 'aoe') {
+        const hero = findClosestHero(effect.pos, sim.entities)
+        vfx.playHeroAttack(getHeroVfxType(hero), toWorld(effect.pos), toWorld(effect.pos), 'aoe', effect.radius)
+      }
+      if (effect.kind === 'heal') {
+        const hero = findClosestHero(effect.pos, sim.entities)
+        vfx.playHeroAttack(getHeroVfxType(hero), toWorld(effect.pos), toWorld(effect.pos), 'heal', effect.radius)
+      }
+    })
+    prevEffectKeys = nextEffectKeys
+
+    prevEntities.clear()
+    sim.entities.forEach((entity) => prevEntities.set(entity.id, entity))
+
+    vfx.update(dt)
+    lastSimTime = sim.time
+  }
+
   const updateSelection = (sim: SimState, selection: string[]) => {
+    const pulse = 1 + Math.sin(sim.time * 5) * 0.08
     selection.forEach((id, index) => {
       const entity = sim.entities.find((entry) => entry.id === id)
       const ring = ensureSelectionRing(index)
@@ -565,7 +713,15 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
         return
       }
       const diameter = (entity.radius + 6) * 2
-      ring.scaling = new Vector3(diameter / 2, 1, diameter / 2)
+      ring.material =
+        entity.tier === 'boss'
+          ? selectionBossMaterial
+          : entity.tier === 'miniBoss'
+            ? selectionMiniBossMaterial
+            : entity.kind === 'hero'
+              ? selectionHeroMaterial
+              : selectionMaterial
+      ring.scaling = new Vector3((diameter / 2) * pulse, 1, (diameter / 2) * pulse)
       ring.position = new Vector3(entity.pos.x, 0.2, entity.pos.y)
       ring.setEnabled(true)
     })
@@ -596,25 +752,23 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     const activeIds = new Set<string>()
     sim.entities.forEach((entity) => {
       if (entity.kind !== 'hero' && entity.kind !== 'elite' && entity.kind !== 'hq') return
-      const mesh = ensureSpecialMesh(entity)
+      const visual = ensureSpecialMesh(entity)
       activeIds.add(entity.id)
       if (entity.kind === 'hq') {
         const height = BASE_BUILDING_HEIGHT + Math.max(0, entity.radius)
-        mesh.scaling = new Vector3(PAD_SIZE.w * 0.45, height, PAD_SIZE.h * 0.45)
-        mesh.position = new Vector3(entity.pos.x, height / 2, entity.pos.y)
+        visual.root.scaling = new Vector3(PAD_SIZE.w * 0.45, height, PAD_SIZE.h * 0.45)
+        visual.root.position = new Vector3(entity.pos.x, height / 2, entity.pos.y)
       } else {
         const scaleFactor = entity.kind === 'hero' ? UNIT_SCALE_HERO : UNIT_SCALE_ELITE
         const scale = new Vector3(entity.radius * scaleFactor, entity.radius * scaleFactor, entity.radius * scaleFactor)
-        const height = BASE_UNIT_HEIGHT * scale.y
-        mesh.scaling = scale
-        mesh.position = new Vector3(entity.pos.x, height / 2, entity.pos.y)
+        visual.root.scaling = scale
+        visual.root.position = new Vector3(entity.pos.x, 0, entity.pos.y)
       }
       const isHit = typeof entity.lastHitTime === 'number' && sim.time - entity.lastHitTime < HIT_FLASH_DURATION
-      const mat = mesh.material as StandardMaterial | null
-      if (mat) {
-        mat.emissiveColor = isHit ? Color3.White() : (mat.diffuseColor ?? Color3.White()).scale(0.2)
-      }
-      mesh.setEnabled(true)
+      visual.materials.forEach((mat) => {
+        mat.emissiveColor = isHit ? Color3.White() : (mat.diffuseColor ?? Color3.White()).scale(0.25)
+      })
+      visual.setEnabled(true)
     })
     specialMeshes.forEach((mesh, id) => {
       if (!activeIds.has(id)) {
@@ -630,18 +784,17 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     pads.forEach((pad) => {
       const building = buildingByPad.get(pad.id)
       if (building) {
-        const mesh = ensureBuildingMesh(pad.id)
-        const height = BASE_BUILDING_HEIGHT + building.level * 6
-        mesh.scaling = new Vector3(PAD_SIZE.w * BASE_BUILDING_PADDING, height, PAD_SIZE.h * BASE_BUILDING_PADDING)
-        mesh.position = new Vector3(pad.x, height / 2, pad.y)
-        mesh.setEnabled(true)
+        const instance = ensureBuildingMesh(pad.id, building.id, building.level)
+        instance.root.position = new Vector3(pad.x, 0, pad.y)
+        instance.setLevel(building.level)
+        instance.setEnabled(true)
         const label = ensureBuildingLabel(pad.id)
         const name = BUILDING_DEFS[building.id].name
         if (label.text !== name) {
           drawLabel(label.texture, name, '#e2e8f0', BUILDING_LABEL_FONT)
           label.text = name
         }
-        label.mesh.position = new Vector3(pad.x, height + 6, pad.y)
+        label.mesh.position = new Vector3(pad.x, instance.height + 18, pad.y)
         label.mesh.setEnabled(true)
       } else {
         const mesh = buildingMeshes.get(pad.id)
@@ -752,6 +905,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     updateHqHover(input.sim, input.overlays.hoveredHq)
     updateLabels(input.sim, Boolean(input.options?.showLabels))
     updateDamageNumbers(input.sim)
+    updateVfx(input.sim)
   }
 
   const render = () => scene.render()
