@@ -1,5 +1,15 @@
 import React, { useEffect, useImperativeHandle, useMemo, useRef } from 'react'
-import { buildCombatResult, createGridForCombat, createSimState, issueOrder, stepSim, useHeroAbility } from '../../rts/sim'
+import {
+  buildCombatResult,
+  createGridForCombat,
+  createSimState,
+  getPlayerPositionSnapshot,
+  issueOrder,
+  rallyFriendlyToHero,
+  stepSim,
+  type PlayerInputState,
+  useHeroAbility
+} from '../../rts/sim'
 import type { Camera } from '../../rts/render'
 import { pickAt, pickPadAt, pickUnitAt } from '../../rts/input/input3d'
 import { initRenderer3D, type Renderer3D } from '../../rts/render3d'
@@ -8,6 +18,7 @@ import type { Order, SimState } from '../../rts/types'
 import { UNIT_DEFS } from '../../config/units'
 import type { Grid } from '../../rts/pathfinding'
 import type { CanvasHandle, CanvasLayerProps, CanvasTelemetry } from './CanvasLayer.types'
+import { isGameplayKeyboardBlockedByFocus } from '../../rts/input/focusGuard'
 
 const FIXED_DT = 1 / 30
 type CanvasWithRendererMarker = HTMLCanvasElement & { __rts3dDispose?: () => void }
@@ -52,6 +63,7 @@ export const CanvasLayer3D = React.memo(
     const hoveredHqRef = useRef(false)
     const cameraControllerRef = useRef<CameraController | null>(null)
     const commandModeRef = useRef<'move' | 'attackMove'>('move')
+    const playerInputRef = useRef<PlayerInputState>({ up: false, down: false, left: false, right: false, worldX: 0, worldY: 0 })
     const controlGroupsRef = useRef<Record<number, string[]>>({})
     const phaseRef = useRef(phase)
     const pausedRef = useRef(Boolean(paused))
@@ -127,10 +139,12 @@ export const CanvasLayer3D = React.memo(
       runRef.current = run
       if (prev === run) return
       if (phaseRef.current === 'build') {
+        const playerPositions = getPlayerPositionSnapshot(simRef.current)
         const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
         simRef.current = createSimState(combatRef.current, run, {
           heroPos: hero ? { ...hero.pos } : combatRef.current.map.playerSpawn,
-          heroHp: hero?.hp
+          heroHp: hero?.hp,
+          playerPositions
         })
         lastWaveIndexRef.current = simRef.current.waveIndex
         endedRef.current = false
@@ -157,10 +171,12 @@ export const CanvasLayer3D = React.memo(
       const prev = phaseRef.current
       phaseRef.current = phase
       if (prev === 'build' && phase === 'combat') {
+        const playerPositions = getPlayerPositionSnapshot(simRef.current)
         const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
         simRef.current = createSimState(combat, run, {
           heroPos: hero ? { ...hero.pos } : combat.map.playerSpawn,
-          heroHp: hero?.hp
+          heroHp: hero?.hp,
+          playerPositions
         })
         lastWaveIndexRef.current = simRef.current.waveIndex
         selectedIdsRef.current = []
@@ -170,10 +186,12 @@ export const CanvasLayer3D = React.memo(
         onSelectionRef.current?.({ kind: 'none' })
       }
       if (prev === 'combat' && phase === 'build') {
+        const playerPositions = getPlayerPositionSnapshot(simRef.current)
         const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
         simRef.current = createSimState(combat, run, {
           heroPos: hero ? { ...hero.pos } : combat.map.playerSpawn,
-          heroHp: resetOnBuild ? undefined : hero?.hp
+          heroHp: resetOnBuild ? undefined : hero?.hp,
+          playerPositions
         })
         lastWaveIndexRef.current = simRef.current.waveIndex
         selectedIdsRef.current = []
@@ -184,6 +202,21 @@ export const CanvasLayer3D = React.memo(
       }
     }, [phase, combat, resetOnBuild, run])
 
+    const rallyToHero = () => {
+      const rallied = rallyFriendlyToHero(simRef.current, gridRef.current)
+      simRef.current = rallied.state
+    }
+
+    const syncInputVectorToIsometricAxes = () => {
+      const input = playerInputRef.current
+      const horizontal = (input.right ? 1 : 0) - (input.left ? 1 : 0)
+      const vertical = (input.down ? 1 : 0) - (input.up ? 1 : 0)
+      // Map screen-relative arrows to isometric world axes (45deg):
+      // Up => world upper-right, Right => world lower-right, etc.
+      input.worldX = horizontal + vertical
+      input.worldY = horizontal - vertical
+    }
+
     useImperativeHandle(ref, () => ({
       panTo: (x: number, y: number) => {
         cameraControllerRef.current?.focusOn(x, y)
@@ -192,6 +225,10 @@ export const CanvasLayer3D = React.memo(
         if (phaseRef.current !== 'combat' || pausedRef.current) return
         const next = useHeroAbility(simRef.current, key)
         simRef.current = next
+      },
+      rallyUnits: () => {
+        if (pausedRef.current) return
+        rallyToHero()
       },
       resetDay: () => {
         simRef.current = createSimState(combatRef.current, runRef.current)
@@ -397,6 +434,35 @@ export const CanvasLayer3D = React.memo(
     useEffect(() => {
       const handleKey = (event: KeyboardEvent) => {
         if (inputBlocked) return
+        if (isGameplayKeyboardBlockedByFocus()) return
+        if (event.key === 'ArrowUp') {
+          playerInputRef.current.up = true
+          syncInputVectorToIsometricAxes()
+          event.preventDefault()
+          return
+        }
+        if (event.key === 'ArrowDown') {
+          playerInputRef.current.down = true
+          syncInputVectorToIsometricAxes()
+          event.preventDefault()
+          return
+        }
+        if (event.key === 'ArrowLeft') {
+          playerInputRef.current.left = true
+          syncInputVectorToIsometricAxes()
+          event.preventDefault()
+          return
+        }
+        if (event.key === 'ArrowRight') {
+          playerInputRef.current.right = true
+          syncInputVectorToIsometricAxes()
+          event.preventDefault()
+          return
+        }
+        if (event.code === 'KeyT' && !pausedRef.current) {
+          rallyToHero()
+          return
+        }
         if (event.key === 'Escape') {
           if (phaseRef.current === 'combat' && onPauseToggleRef.current) {
             onPauseToggleRef.current()
@@ -429,8 +495,33 @@ export const CanvasLayer3D = React.memo(
           }
         }
       }
+      const handleKeyUp = (event: KeyboardEvent) => {
+        if (event.key === 'ArrowUp') {
+          playerInputRef.current.up = false
+          syncInputVectorToIsometricAxes()
+          return
+        }
+        if (event.key === 'ArrowDown') {
+          playerInputRef.current.down = false
+          syncInputVectorToIsometricAxes()
+          return
+        }
+        if (event.key === 'ArrowLeft') {
+          playerInputRef.current.left = false
+          syncInputVectorToIsometricAxes()
+          return
+        }
+        if (event.key === 'ArrowRight') {
+          playerInputRef.current.right = false
+          syncInputVectorToIsometricAxes()
+        }
+      }
       window.addEventListener('keydown', handleKey)
-      return () => window.removeEventListener('keydown', handleKey)
+      window.addEventListener('keyup', handleKeyUp)
+      return () => {
+        window.removeEventListener('keydown', handleKey)
+        window.removeEventListener('keyup', handleKeyUp)
+      }
     }, [inputBlocked])
 
     const issueToSelected = (order: Order) => {
@@ -590,7 +681,13 @@ export const CanvasLayer3D = React.memo(
           let acc = loopState.acc + (time - loopState.last) / 1000
           loopState.last = time
           while (acc >= FIXED_DT) {
-            const next = stepSim(simRef.current, FIXED_DT, gridRef.current, phaseRef.current === 'combat' ? 'combat' : 'build')
+            const next = stepSim(
+              simRef.current,
+              FIXED_DT,
+              gridRef.current,
+              phaseRef.current === 'combat' ? 'combat' : 'build',
+              playerInputRef.current
+            )
             simRef.current = next
             if (next.waveIndex !== lastWaveIndexRef.current) {
               for (let i = lastWaveIndexRef.current; i < next.waveIndex; i += 1) {

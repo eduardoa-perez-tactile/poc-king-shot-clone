@@ -5,7 +5,7 @@ import { getProducerLevelStatMultipliers, isUnitProducerBuilding } from '../game
 import { getHQBonusHp, getUnitStatMultipliers } from '../run/economy'
 import { getRunLevel } from '../run/runState'
 import { RunState } from '../run/types'
-import { buildGrid, findPath, Grid } from './pathfinding'
+import { buildGrid, findPath, Grid, worldToCell } from './pathfinding'
 import {
   CombatDefinition,
   CombatEffect,
@@ -14,6 +14,7 @@ import {
   DamageNumber,
   EntityState,
   Order,
+  PlayerPositionSnapshot,
   Projectile,
   SimState,
   Vec2
@@ -46,6 +47,14 @@ const getDamageNumber = () =>
 const distance = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.y - b.y)
 
 const DAMAGE_NUMBER_COOLDOWN = 0.18
+const HERO_INPUT_EPS = 0.0001
+const FORMATION_SLOTS_PER_RING = 8
+const FORMATION_BASE_RADIUS = 56
+const FORMATION_RING_GAP = 40
+const FORMATION_PHASE = -Math.PI / 2
+const SEPARATION_CELL_SIZE = 48
+const SEPARATION_STRENGTH = 0.45
+const SEPARATION_RADIUS_MULTIPLIER = 0.9
 
 const isUnitKind = (kind: EntityState['kind']): kind is UnitType =>
   kind === 'infantry' || kind === 'archer' || kind === 'cavalry'
@@ -75,6 +84,94 @@ const jitter = (pos: Vec2) => ({
   y: pos.y + (Math.random() - 0.5) * 40
 })
 
+export interface PlayerInputState {
+  up: boolean
+  down: boolean
+  left: boolean
+  right: boolean
+  worldX?: number
+  worldY?: number
+}
+
+const isInputActive = (input?: PlayerInputState | null) =>
+  Boolean(
+    input &&
+      (input.up ||
+        input.down ||
+        input.left ||
+        input.right ||
+        Math.abs(input.worldX ?? 0) > HERO_INPUT_EPS ||
+        Math.abs(input.worldY ?? 0) > HERO_INPUT_EPS)
+  )
+
+const clampToMap = (pos: Vec2, radius: number, combat: CombatDefinition): Vec2 => ({
+  x: Math.min(combat.map.width - radius, Math.max(radius, pos.x)),
+  y: Math.min(combat.map.height - radius, Math.max(radius, pos.y))
+})
+
+const isWalkablePosition = (grid: Grid, combat: CombatDefinition, pos: Vec2, radius: number) => {
+  const clamped = clampToMap(pos, radius, combat)
+  if (clamped.x !== pos.x || clamped.y !== pos.y) return false
+  const sampleOffsets = [
+    { x: 0, y: 0 },
+    { x: radius, y: 0 },
+    { x: -radius, y: 0 },
+    { x: 0, y: radius },
+    { x: 0, y: -radius },
+    { x: radius * 0.7, y: radius * 0.7 },
+    { x: radius * 0.7, y: -radius * 0.7 },
+    { x: -radius * 0.7, y: radius * 0.7 },
+    { x: -radius * 0.7, y: -radius * 0.7 }
+  ]
+  for (const sample of sampleOffsets) {
+    const cell = worldToCell(grid, { x: pos.x + sample.x, y: pos.y + sample.y })
+    if (grid.blocked[cell.y]?.[cell.x]) return false
+  }
+  return true
+}
+
+const moveWithCollision = (entity: EntityState, targetPos: Vec2, grid: Grid, combat: CombatDefinition) => {
+  const clamped = clampToMap(targetPos, entity.radius, combat)
+  if (isWalkablePosition(grid, combat, clamped, entity.radius)) {
+    entity.pos.x = clamped.x
+    entity.pos.y = clamped.y
+    return
+  }
+  const slideX = { x: clamped.x, y: entity.pos.y }
+  if (isWalkablePosition(grid, combat, slideX, entity.radius)) {
+    entity.pos.x = slideX.x
+  }
+  const slideY = { x: entity.pos.x, y: clamped.y }
+  if (isWalkablePosition(grid, combat, slideY, entity.radius)) {
+    entity.pos.y = slideY.y
+  }
+}
+
+const getFormationTarget = (center: Vec2, index: number, spacing = FORMATION_BASE_RADIUS) => {
+  const ring = Math.floor(index / FORMATION_SLOTS_PER_RING)
+  const angleIndex = index % FORMATION_SLOTS_PER_RING
+  const angle = FORMATION_PHASE + (Math.PI * 2 * angleIndex) / FORMATION_SLOTS_PER_RING
+  const radius = spacing + ring * FORMATION_RING_GAP
+  return {
+    x: center.x + Math.cos(angle) * radius,
+    y: center.y + Math.sin(angle) * radius
+  }
+}
+
+const getStableEntityOrderKey = (entity: EntityState) => {
+  const owner = entity.ownerBuildingId ?? 'zzz'
+  const squad = entity.squadId ?? `hero_${entity.heroInstanceId ?? entity.id}`
+  return `${owner}_${squad}_${entity.id}`
+}
+
+const hashId = (id: string) => {
+  let hash = 0
+  for (let i = 0; i < id.length; i += 1) {
+    hash = (hash * 31 + id.charCodeAt(i)) | 0
+  }
+  return hash >>> 0
+}
+
 const createTroopEntity = (
   type: UnitType,
   team: 'player' | 'enemy',
@@ -82,6 +179,7 @@ const createTroopEntity = (
   squadSize: number,
   multipliers: { hp: number; attack: number; attackSpeed?: number },
   squadId?: string,
+  options?: { ownerBuildingId?: string; ownerBuildingPadId?: string },
   tier: EntityState['tier'] = 'normal'
 ): EntityState => {
   const troop = UNIT_DEFS[type]
@@ -108,7 +206,9 @@ const createTroopEntity = (
     path: [],
     troopCount: squadSize,
     buffs: [],
-    squadId
+    squadId,
+    ownerBuildingId: options?.ownerBuildingId,
+    ownerBuildingPadId: options?.ownerBuildingPadId
   }
 }
 
@@ -290,10 +390,20 @@ const applySplashDamage = (
   addEffect(effects, 'aoe', target.pos, special.radius, '#facc15', time, 0.25)
 }
 
+const resolvePlayerPosition = (
+  basePos: Vec2,
+  snapshotPos: Vec2 | undefined,
+  fallbackToJitter: boolean
+) => {
+  if (snapshotPos) return { ...snapshotPos }
+  if (!fallbackToJitter) return { ...basePos }
+  return jitter(basePos)
+}
+
 export const createSimState = (
   combat: CombatDefinition,
   run: RunState,
-  options?: { heroPos?: Vec2; heroHp?: number }
+  options?: { heroPos?: Vec2; heroHp?: number; playerPositions?: PlayerPositionSnapshot }
 ): SimState => {
   const entities: EntityState[] = []
   const hqHp = combat.hqBaseHp + getHQBonusHp(run)
@@ -301,7 +411,7 @@ export const createSimState = (
 
   const heroStats = combat.hero.stats
   const heroHp = options?.heroHp ?? heroStats.hp
-  const heroPos = options?.heroPos ?? combat.map.playerSpawn
+  const heroPos = options?.heroPos ?? options?.playerPositions?.hero ?? combat.map.playerSpawn
   const hero = createHeroEntity(
     heroPos,
     { ...heroStats, hp: heroHp },
@@ -317,7 +427,8 @@ export const createSimState = (
     const def = HERO_RECRUIT_DEFS[heroEntry.heroId]
     if (!def) return
     const basePos = heroEntry.spawnPos ?? combat.map.playerSpawn
-    const spawnPos = heroEntry.spawnPos ? { ...basePos } : jitter(basePos)
+    const snapshotPos = heroEntry.id ? options?.playerPositions?.heroes[heroEntry.id] : undefined
+    const spawnPos = resolvePlayerPosition(basePos, snapshotPos, !heroEntry.spawnPos)
     entities.push(
       createHeroEntity(spawnPos, def.stats, {
         heroId: def.id,
@@ -344,7 +455,8 @@ export const createSimState = (
         ? getProducerLevelStatMultipliers(level.producerDefaults, ownerBuildingLevel)
         : { hp: 1, attack: 1, attackSpeed: 1 }
     const basePos = squad.spawnPos ?? combat.map.playerSpawn
-    const spawnPos = squad.spawnPos ? { ...basePos } : jitter(basePos)
+    const snapshotPos = squad.id ? options?.playerPositions?.squads[squad.id] : undefined
+    const spawnPos = resolvePlayerPosition(basePos, snapshotPos, !squad.spawnPos)
     entities.push(
       createTroopEntity(
         squad.type,
@@ -356,9 +468,41 @@ export const createSimState = (
           attack: (1 + mult.attack) * producerMult.attack,
           attackSpeed: producerMult.attackSpeed
         },
-        squad.id
+        squad.id,
+        {
+          ownerBuildingId,
+          ownerBuildingPadId: squad.ownerBuildingPadId
+        }
       )
     )
+  })
+
+  const spawnGrid = buildGrid(combat.map.width, combat.map.height, 40, combat.map.obstacles)
+  entities.forEach((entity) => {
+    if (entity.team !== 'player' || entity.kind === 'hq') return
+    if (isWalkablePosition(spawnGrid, combat, entity.pos, entity.radius)) return
+    let nudged: Vec2 | null = null
+    for (let radius = 8; radius <= 96 && !nudged; radius += 8) {
+      for (let slot = 0; slot < FORMATION_SLOTS_PER_RING; slot += 1) {
+        const angle = (Math.PI * 2 * slot) / FORMATION_SLOTS_PER_RING
+        const candidate = clampToMap(
+          {
+            x: entity.pos.x + Math.cos(angle) * radius,
+            y: entity.pos.y + Math.sin(angle) * radius
+          },
+          entity.radius,
+          combat
+        )
+        if (isWalkablePosition(spawnGrid, combat, candidate, entity.radius)) {
+          nudged = candidate
+          break
+        }
+      }
+    }
+    if (!nudged) {
+      nudged = clampToMap(combat.map.playerSpawn, entity.radius, combat)
+    }
+    entity.pos = nudged
   })
 
   return {
@@ -396,6 +540,112 @@ const moveAlongPath = (entity: EntityState, dt: number) => {
   const dirY = (next.y - entity.pos.y) / dist
   entity.pos.x += dirX * entity.speed * dt
   entity.pos.y += dirY * entity.speed * dt
+}
+
+const stepHeroFromInput = (sim: SimState, dt: number, grid: Grid, input?: PlayerInputState | null) => {
+  if (!isInputActive(input)) return
+  const hero = sim.entities.find((entity) => entity.id === sim.heroEntityId && entity.team === 'player')
+  if (!hero || hero.hp <= 0) return
+
+  const hasWorldVector = typeof input?.worldX === 'number' || typeof input?.worldY === 'number'
+  const moveX = hasWorldVector ? (input?.worldX ?? 0) : (input?.right ? 1 : 0) - (input?.left ? 1 : 0)
+  const moveY = hasWorldVector ? (input?.worldY ?? 0) : (input?.down ? 1 : 0) - (input?.up ? 1 : 0)
+  const mag = Math.hypot(moveX, moveY)
+  if (mag <= HERO_INPUT_EPS) return
+  const dirX = moveX / mag
+  const dirY = moveY / mag
+  const step = hero.speed * dt
+  moveWithCollision(
+    hero,
+    {
+      x: hero.pos.x + dirX * step,
+      y: hero.pos.y + dirY * step
+    },
+    grid,
+    sim.combat
+  )
+  hero.order = { type: 'stop' }
+  hero.path = []
+  hero.targetId = undefined
+}
+
+const applySeparation = (sim: SimState, grid: Grid, dt: number) => {
+  const candidates = sim.entities
+    .map((entity, index) => ({ entity, index }))
+    .filter(({ entity }) => entity.hp > 0 && entity.kind !== 'hq')
+  if (candidates.length <= 1) return
+
+  const buckets = new Map<string, number[]>()
+  const corrections = new Map<number, Vec2>()
+
+  candidates.forEach(({ entity, index }) => {
+    const cellX = Math.floor(entity.pos.x / SEPARATION_CELL_SIZE)
+    const cellY = Math.floor(entity.pos.y / SEPARATION_CELL_SIZE)
+    const key = `${cellX},${cellY}`
+    const list = buckets.get(key)
+    if (list) {
+      list.push(index)
+    } else {
+      buckets.set(key, [index])
+    }
+  })
+
+  candidates.forEach(({ entity, index }) => {
+    const cellX = Math.floor(entity.pos.x / SEPARATION_CELL_SIZE)
+    const cellY = Math.floor(entity.pos.y / SEPARATION_CELL_SIZE)
+    let pushX = 0
+    let pushY = 0
+
+    for (let dy = -1; dy <= 1; dy += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        const key = `${cellX + dx},${cellY + dy}`
+        const bucket = buckets.get(key)
+        if (!bucket) continue
+        bucket.forEach((otherIndex) => {
+          if (otherIndex === index) return
+          const other = sim.entities[otherIndex]
+          if (!other || other.hp <= 0) return
+          if (other.team !== entity.team) return
+          const minDist = (entity.radius + other.radius) * SEPARATION_RADIUS_MULTIPLIER
+          let deltaX = entity.pos.x - other.pos.x
+          let deltaY = entity.pos.y - other.pos.y
+          let dist = Math.hypot(deltaX, deltaY)
+          if (dist < HERO_INPUT_EPS) {
+            const seed = hashId(entity.id) ^ hashId(other.id)
+            const angle = ((seed % 360) * Math.PI) / 180
+            deltaX = Math.cos(angle)
+            deltaY = Math.sin(angle)
+            dist = 1
+          }
+          if (dist >= minDist) return
+          const overlap = minDist - dist
+          const weight = overlap / minDist
+          pushX += (deltaX / dist) * weight
+          pushY += (deltaY / dist) * weight
+        })
+      }
+    }
+
+    const pushMag = Math.hypot(pushX, pushY)
+    if (pushMag <= HERO_INPUT_EPS) return
+    const maxStep = (entity.speed * 0.2 + 20) * dt
+    const scale = Math.min(maxStep, pushMag * SEPARATION_STRENGTH) / pushMag
+    corrections.set(index, { x: pushX * scale, y: pushY * scale })
+  })
+
+  corrections.forEach((correction, index) => {
+    const entity = sim.entities[index]
+    if (!entity) return
+    moveWithCollision(
+      entity,
+      {
+        x: entity.pos.x + correction.x,
+        y: entity.pos.y + correction.y
+      },
+      grid,
+      sim.combat
+    )
+  })
 }
 
 const findClosestEnemy = (entity: EntityState, entities: EntityState[], range: number) => {
@@ -498,6 +748,7 @@ const spawnWave = (sim: SimState) => {
             attack: enemyMult.attackMultiplier
           },
           undefined,
+          undefined,
           'normal'
         )
       )
@@ -517,7 +768,13 @@ const spawnWave = (sim: SimState) => {
   sim.waveIndex += 1
 }
 
-export const stepSim = (state: SimState, dt: number, grid: Grid, mode: 'build' | 'combat'): SimState => {
+export const stepSim = (
+  state: SimState,
+  dt: number,
+  grid: Grid,
+  mode: 'build' | 'combat',
+  playerInput?: PlayerInputState | null
+): SimState => {
   if (state.status !== 'running') return state
   const time = state.time + dt
   const entities = state.entities.map((entity) => ({ ...entity, pos: { ...entity.pos }, buffs: [...entity.buffs] }))
@@ -527,6 +784,7 @@ export const stepSim = (state: SimState, dt: number, grid: Grid, mode: 'build' |
   const stats: CombatStats = { ...state.stats, lostSquads: [...state.stats.lostSquads], lostHeroes: [...state.stats.lostHeroes] }
 
   const sim: SimState = { ...state, time, entities, projectiles, effects, stats, damageNumbers }
+  stepHeroFromInput(sim, dt, grid, playerInput)
 
   const enemiesRemaining = entities.filter((entity) => entity.team === 'enemy').length
 
@@ -623,6 +881,8 @@ export const stepSim = (state: SimState, dt: number, grid: Grid, mode: 'build' |
       }
     }
   })
+
+  applySeparation(sim, grid, dt)
 
   projectiles.forEach((proj) => {
     const target = entityMap.get(proj.targetId)
@@ -740,12 +1000,95 @@ export const useHeroAbility = (state: SimState, ability: 'q' | 'e'): SimState =>
   return { ...state, entities, effects, damageNumbers, heroAbilityCooldowns }
 }
 
+export const getPlayerPositionSnapshot = (state: SimState): PlayerPositionSnapshot => {
+  const squads: Record<string, Vec2> = {}
+  const heroes: Record<string, Vec2> = {}
+  let hero: Vec2 | undefined
+
+  state.entities.forEach((entity) => {
+    if (entity.team !== 'player' || entity.hp <= 0) return
+    if (entity.id === state.heroEntityId && entity.kind === 'hero') {
+      hero = { ...entity.pos }
+      return
+    }
+    if (entity.squadId) {
+      squads[entity.squadId] = { ...entity.pos }
+      return
+    }
+    if (entity.heroInstanceId) {
+      heroes[entity.heroInstanceId] = { ...entity.pos }
+    }
+  })
+
+  return {
+    hero,
+    squads,
+    heroes
+  }
+}
+
+export const rallyFriendlyToHero = (
+  state: SimState,
+  grid: Grid
+): { state: SimState; squadCount: number; ringCount: number } => {
+  const hero = state.entities.find((entity) => entity.id === state.heroEntityId && entity.kind === 'hero' && entity.team === 'player')
+  if (!hero) return { state, squadCount: 0, ringCount: 0 }
+
+  const rallyUnits = state.entities
+    .filter((entity) => entity.team === 'player' && entity.kind !== 'hq' && entity.id !== hero.id && entity.hp > 0)
+    .slice()
+    .sort((a, b) => getStableEntityOrderKey(a).localeCompare(getStableEntityOrderKey(b)))
+
+  if (rallyUnits.length === 0) return { state, squadCount: 0, ringCount: 0 }
+
+  const byId = new Map(rallyUnits.map((entity, index) => [entity.id, index]))
+  const targets = rallyUnits.map((_, index) => getFormationTarget(hero.pos, index, FORMATION_BASE_RADIUS))
+  const updatedEntities = state.entities.map((entity) => {
+    const slot = byId.get(entity.id)
+    if (slot === undefined) return entity
+    const targetPos = targets[slot]
+    const next: EntityState = {
+      ...entity,
+      order: { type: 'move', targetPos: { ...targetPos } },
+      targetId: undefined,
+      path: []
+    }
+    next.path = next.canFly ? [targetPos] : findPath(grid, next.pos, targetPos)
+    return next
+  })
+
+  const ringCount = Math.max(1, Math.ceil(rallyUnits.length / FORMATION_SLOTS_PER_RING))
+  return {
+    state: { ...state, entities: updatedEntities },
+    squadCount: rallyUnits.length,
+    ringCount
+  }
+}
+
 export const issueOrder = (state: SimState, ids: string[], order: Order, grid: Grid): SimState => {
+  const entityById = new Map(state.entities.map((entity) => [entity.id, entity]))
+  const sortedIds = ids
+    .slice()
+    .sort((a, b) => {
+      const aEntity = entityById.get(a)
+      const bEntity = entityById.get(b)
+      if (!aEntity || !bEntity) return a.localeCompare(b)
+      return getStableEntityOrderKey(aEntity).localeCompare(getStableEntityOrderKey(bEntity))
+    })
+  const targetById = new Map<string, Vec2>()
+  if (order.targetPos && sortedIds.length > 1 && (order.type === 'move' || order.type === 'attackMove')) {
+    sortedIds.forEach((id, index) => {
+      targetById.set(id, getFormationTarget(order.targetPos!, index, FORMATION_BASE_RADIUS))
+    })
+  }
+
   const entities = state.entities.map((entity) => {
     if (!ids.includes(entity.id)) return entity
-    const next: EntityState = { ...entity, order: { ...order }, targetId: order.targetId, path: [] }
-    if (order.targetPos) {
-      next.path = next.canFly ? [order.targetPos] : findPath(grid, next.pos, order.targetPos)
+    const targetPos = targetById.get(entity.id) ?? order.targetPos
+    const nextOrder: Order = { ...order, targetPos: targetPos ? { ...targetPos } : undefined }
+    const next: EntityState = { ...entity, order: nextOrder, targetId: order.targetId, path: [] }
+    if (targetPos) {
+      next.path = next.canFly ? [targetPos] : findPath(grid, next.pos, targetPos)
     }
     return next
   })
@@ -758,12 +1101,14 @@ export const createGridForCombat = (combat: CombatDefinition) =>
 export const buildCombatResult = (state: SimState): CombatResult => {
   const hq = state.entities.find((entity) => entity.kind === 'hq')
   const hqHpPercent = hq ? Math.max(0, Math.round((hq.hp / hq.maxHp) * 100)) : 0
+  const playerPositions = getPlayerPositionSnapshot(state)
   return {
     victory: state.status === 'win',
     stats: state.stats,
     lostSquadIds: state.stats.lostSquads,
     lostHeroIds: state.stats.lostHeroes,
     bossDefeated: state.bossDefeated,
-    hqHpPercent
+    hqHpPercent,
+    playerPositions
   }
 }

@@ -1,11 +1,22 @@
 import React, { useEffect, useImperativeHandle, useMemo, useRef } from 'react'
-import { buildCombatResult, createGridForCombat, createSimState, issueOrder, stepSim, useHeroAbility } from '../../rts/sim'
+import {
+  buildCombatResult,
+  createGridForCombat,
+  createSimState,
+  getPlayerPositionSnapshot,
+  issueOrder,
+  rallyFriendlyToHero,
+  stepSim,
+  type PlayerInputState,
+  useHeroAbility
+} from '../../rts/sim'
 import { clampCamera, renderScene, screenToWorld, Camera } from '../../rts/render'
 import { hitTestPad } from '../../rts/pads'
 import type { EntityState, Order, SimState, Vec2 } from '../../rts/types'
 import { UNIT_DEFS } from '../../config/units'
 import type { Grid } from '../../rts/pathfinding'
 import type { CanvasHandle, CanvasLayerProps, CanvasTelemetry } from './CanvasLayer.types'
+import { isGameplayKeyboardBlockedByFocus } from '../../rts/input/focusGuard'
 
 const FIXED_DT = 1 / 30
 
@@ -65,6 +76,7 @@ export const CanvasLayer2D = React.memo(
     const hoveredPadIdRef = useRef<string | null>(null)
     const cameraRef = useRef<Camera>({ x: 0, y: 0, zoom: 1 })
     const commandModeRef = useRef<'move' | 'attackMove'>('move')
+    const playerInputRef = useRef<PlayerInputState>({ up: false, down: false, left: false, right: false })
     const controlGroupsRef = useRef<Record<number, string[]>>({})
     const phaseRef = useRef(phase)
     const pausedRef = useRef(Boolean(paused))
@@ -133,10 +145,12 @@ export const CanvasLayer2D = React.memo(
       runRef.current = run
       if (prev === run) return
       if (phaseRef.current === 'build') {
+        const playerPositions = getPlayerPositionSnapshot(simRef.current)
         const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
         simRef.current = createSimState(combatRef.current, run, {
           heroPos: hero ? { ...hero.pos } : combatRef.current.map.playerSpawn,
-          heroHp: hero?.hp
+          heroHp: hero?.hp,
+          playerPositions
         })
         lastWaveIndexRef.current = simRef.current.waveIndex
         endedRef.current = false
@@ -163,10 +177,12 @@ export const CanvasLayer2D = React.memo(
       const prev = phaseRef.current
       phaseRef.current = phase
       if (prev === 'build' && phase === 'combat') {
+        const playerPositions = getPlayerPositionSnapshot(simRef.current)
         const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
         simRef.current = createSimState(combat, run, {
           heroPos: hero ? { ...hero.pos } : combat.map.playerSpawn,
-          heroHp: hero?.hp
+          heroHp: hero?.hp,
+          playerPositions
         })
         lastWaveIndexRef.current = simRef.current.waveIndex
         selectedIdsRef.current = []
@@ -176,10 +192,12 @@ export const CanvasLayer2D = React.memo(
         onSelectionRef.current?.({ kind: 'none' })
       }
       if (prev === 'combat' && phase === 'build') {
+        const playerPositions = getPlayerPositionSnapshot(simRef.current)
         const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
         simRef.current = createSimState(combat, run, {
           heroPos: hero ? { ...hero.pos } : combat.map.playerSpawn,
-          heroHp: resetOnBuild ? undefined : hero?.hp
+          heroHp: resetOnBuild ? undefined : hero?.hp,
+          playerPositions
         })
         lastWaveIndexRef.current = simRef.current.waveIndex
         selectedIdsRef.current = []
@@ -189,6 +207,11 @@ export const CanvasLayer2D = React.memo(
         onSelectionRef.current?.({ kind: 'none' })
       }
     }, [phase, combat, resetOnBuild, run])
+
+    const rallyToHero = () => {
+      const rallied = rallyFriendlyToHero(simRef.current, gridRef.current)
+      simRef.current = rallied.state
+    }
 
     useImperativeHandle(ref, () => ({
       panTo: (x: number, y: number) => {
@@ -202,6 +225,10 @@ export const CanvasLayer2D = React.memo(
         if (phaseRef.current !== 'combat' || pausedRef.current) return
         const next = useHeroAbility(simRef.current, key)
         simRef.current = next
+      },
+      rallyUnits: () => {
+        if (pausedRef.current) return
+        rallyToHero()
       },
       resetDay: () => {
         simRef.current = createSimState(combatRef.current, runRef.current)
@@ -335,6 +362,31 @@ export const CanvasLayer2D = React.memo(
     useEffect(() => {
       const handleKey = (event: KeyboardEvent) => {
         if (inputBlocked) return
+        if (isGameplayKeyboardBlockedByFocus()) return
+        if (event.key === 'ArrowUp') {
+          playerInputRef.current.up = true
+          event.preventDefault()
+          return
+        }
+        if (event.key === 'ArrowDown') {
+          playerInputRef.current.down = true
+          event.preventDefault()
+          return
+        }
+        if (event.key === 'ArrowLeft') {
+          playerInputRef.current.left = true
+          event.preventDefault()
+          return
+        }
+        if (event.key === 'ArrowRight') {
+          playerInputRef.current.right = true
+          event.preventDefault()
+          return
+        }
+        if (event.code === 'KeyT' && !pausedRef.current) {
+          rallyToHero()
+          return
+        }
         if (event.key === 'Escape') {
           if (phaseRef.current === 'combat' && onPauseToggleRef.current) {
             onPauseToggleRef.current()
@@ -366,21 +418,30 @@ export const CanvasLayer2D = React.memo(
             emitSelection()
           }
         }
+      }
+      const handleKeyUp = (event: KeyboardEvent) => {
         if (event.key === 'ArrowUp') {
-          cameraRef.current = { ...cameraRef.current, y: cameraRef.current.y - 40 }
+          playerInputRef.current.up = false
+          return
         }
         if (event.key === 'ArrowDown') {
-          cameraRef.current = { ...cameraRef.current, y: cameraRef.current.y + 40 }
+          playerInputRef.current.down = false
+          return
         }
         if (event.key === 'ArrowLeft') {
-          cameraRef.current = { ...cameraRef.current, x: cameraRef.current.x - 40 }
+          playerInputRef.current.left = false
+          return
         }
         if (event.key === 'ArrowRight') {
-          cameraRef.current = { ...cameraRef.current, x: cameraRef.current.x + 40 }
+          playerInputRef.current.right = false
         }
       }
       window.addEventListener('keydown', handleKey)
-      return () => window.removeEventListener('keydown', handleKey)
+      window.addEventListener('keyup', handleKeyUp)
+      return () => {
+        window.removeEventListener('keydown', handleKey)
+        window.removeEventListener('keyup', handleKeyUp)
+      }
     }, [inputBlocked])
 
     const issueToSelected = (order: Order) => {
@@ -404,7 +465,13 @@ export const CanvasLayer2D = React.memo(
 
         if (!pausedRef.current) {
           while (acc >= FIXED_DT) {
-            const next = stepSim(simRef.current, FIXED_DT, gridRef.current, phaseRef.current === 'combat' ? 'combat' : 'build')
+            const next = stepSim(
+              simRef.current,
+              FIXED_DT,
+              gridRef.current,
+              phaseRef.current === 'combat' ? 'combat' : 'build',
+              playerInputRef.current
+            )
             simRef.current = next
             if (next.waveIndex !== lastWaveIndexRef.current) {
               for (let i = lastWaveIndexRef.current; i < next.waveIndex; i += 1) {

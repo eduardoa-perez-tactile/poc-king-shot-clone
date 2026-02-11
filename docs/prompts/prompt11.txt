@@ -1,0 +1,120 @@
+You are Codex working in the Kingshot-like browser RTS roguelike project (Babylon.js scene + React UI overlay). Implement the following new gameplay features. Keep performance constraints: no per-frame React rerenders, use pooling/instancing, and keep input/event systems consistent with the current architecture.
+
+AUTHORITATIVE NEW FEATURES
+1) Keyboard movement for the player (hero/monarch):
+- Arrow keys now move the player character.
+- Arrow keys must NOT control the camera or minimap anymore (remove/disable old bindings).
+- Movement should be smooth and frame-rate independent (dt-based).
+- Must respect world bounds + obstacles if the game already has navigation/collision; otherwise clamp to map bounds and keep simple.
+
+2) “Call units to me” command:
+- Pressing 'T' issues a rally/call command: all friendly squads are ordered to move to positions around the player.
+- To keep it simple, use fixed offset slots around the player (e.g., ring points) so the formation is stable and readable.
+- If there are more squads than slots, reuse slots with increasing radius rings or queue them behind (simple deterministic rule).
+- Must work during battle phase; may also be allowed in build phase if units exist and are placed.
+
+3) Prevent unit overlap (basic separation):
+- Friendly units (or squads) cannot occupy the exact same space anymore.
+- Add a lightweight avoidance / separation mechanic to keep units from stacking.
+- Must be performant: avoid O(n^2) across all units if large; use spatial hashing / grid buckets or reuse any existing broadphase.
+- Apply to:
+  a) movement targets (slot assignment to avoid same destination)
+  b) local steering separation while moving / idle so they don’t collapse into one point.
+
+4) Preserve unit positions across battle transitions:
+- Previously units reset position at beginning/end of battle; remove this behavior.
+- Units should remain where they were placed/ended after battle to support strategy.
+- If the game needs a “safe” fallback (e.g., units inside blocked geometry), gently nudge them to nearest valid point, but never teleport to default rally unless explicitly requested.
+
+IMPLEMENTATION DETAILS
+
+A) INPUT SYSTEM CHANGES
+- Update the input manager to bind:
+  - ArrowUp/Down/Left/Right => player movement vector
+  - KeyT => rally/call command
+- Ensure old arrow-key bindings for camera pan and minimap are removed or gated behind a different key set.
+- Add a simple “input focus” guard so typing in UI fields (Dashboard) does not move the player:
+  - If an input/textarea is focused, ignore gameplay key handlers.
+
+B) PLAYER MOVEMENT
+- Add a PlayerController component/system:
+  - reads current key state each frame
+  - computes desired direction (normalize)
+  - applies speed * dt to player transform
+  - rotates player to face movement direction (if applicable)
+- Integrate with collision:
+  - If there’s already a navmesh/pathing system, request a move step and resolve collisions.
+  - If not, implement basic collision against static obstacles if available; else clamp to map rectangle.
+
+C) RALLY / FORMATION SLOTS AROUND PLAYER
+- Define slot offsets in local space relative to player, example (tune later):
+  - 8 slots on ring radius R1: N, NE, E, SE, S, SW, W, NW
+  - if squads > 8, allocate a second ring radius R2 with same angles, etc.
+- Deterministic assignment:
+  - sort squads by stable key (buildingId then squadId) so distribution is consistent.
+  - assign slot i => ring = floor(i/slotsPerRing), angleIndex = i % slotsPerRing.
+- Convert local offsets to world positions using player orientation (or just world axes if simpler).
+- Issue move commands to squads:
+  - Set squad.rallyTarget = computed position.
+  - If you have per-unit members, either move the squad root and keep members in formation, or assign per-member offsets around the squad target.
+
+D) NO OVERLAP: SPATIAL SEPARATION
+Goal: avoid visual stacking without heavy physics.
+
+- Add a simple separation steering step each update for units (and/or squad roots):
+  1) Broadphase: spatial hash grid
+     - cellSize ~ unitRadius*2 to 3x
+     - insert each unit position into grid each frame (or reuse existing broadphase).
+  2) For each unit, query neighbors in same + adjacent 8 cells.
+  3) Compute separation vector:
+     - for each neighbor within minDist: push away proportional to overlap (minDist - dist).
+     - accumulate and clamp to maxSeparationForce.
+  4) Apply as:
+     - additive velocity component, or
+     - small position correction after movement step (cheap).
+- Apply also when units reach their rally slot (idle) so they spread slightly rather than stack.
+- Ensure determinism and stability:
+  - Use fixed dt integration where possible.
+  - Avoid jitter by smoothing (lerp force) or applying only a fraction per frame.
+
+E) PRESERVE POSITIONS ACROSS BATTLE START/END
+- Identify current code that resets unit positions:
+  - “onBattleStart” / “onBattleEnd” or phase transition handlers.
+- Remove the reset calls for friendly units and squad roots.
+- Ensure that:
+  - units remain spawned and remain at last known transform
+  - their AI state is reinitialized without teleportation (e.g., reacquire targets, reset attack cooldowns if needed)
+- If there is a hard requirement to regroup at some moments, make it explicit via player action (T key) rather than automatic.
+
+F) UI / DEBUG
+- Add a small debug overlay (optional) toggled by existing debug flag to show:
+  - player movement vector
+  - number of squads rallied and ring count
+  - separation grid stats (optional)
+- Do not add per-frame React updates; use Babylon GUI or a debug text mesh, or update React only on events.
+
+G) TESTING / VERIFICATION (lightweight)
+- Add dev assertions or small tests:
+  - Arrow keys no longer change camera position (ensure camera controller ignores arrows).
+  - Player moves with arrows (position changes).
+  - Pressing T assigns rally targets (non-null, distinct-ish).
+  - Units do not all end at same position after rally; separation keeps min distance.
+  - Battle start/end does not teleport friendly units.
+
+FILES / TOUCHPOINTS (LIKELY)
+- input/Keybinds or InputManager
+- player/HeroController or entity system for the hero
+- camera/RTSCameraController (remove arrow bindings)
+- units/SquadController + movement/steering
+- phase/BattlePhase transitions (remove resets)
+- optional: spatial hash utility in /sim or /ai
+
+DELIVERABLES
+- PR-ready changes implementing all 4 features.
+- Small note in /docs or /notes describing:
+  - new keybinds
+  - how rally slot formation works
+  - how separation works (high level)
+  - confirmation that units persist across phases
+
+Keep changes minimal and consistent with existing patterns (event bus/state store). No new heavyweight physics engine.

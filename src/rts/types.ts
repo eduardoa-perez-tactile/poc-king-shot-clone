@@ -54,6 +54,8 @@ export interface EntityState {
   troopCount?: number
   buffs: EntityBuff[]
   squadId?: string
+  ownerBuildingId?: string
+  ownerBuildingPadId?: string
   heroId?: HeroRecruitId | string
   heroName?: string
   heroDescription?: string
@@ -66,6 +68,12 @@ export interface EntityState {
   canFly?: boolean
   lastHitTime?: number
   lastDamageNumberAt?: number
+}
+
+export interface PlayerPositionSnapshot {
+  hero?: Vec2
+  squads: Record<string, Vec2>
+  heroes: Record<string, Vec2>
 }
 
 export interface Projectile {
@@ -151,6 +159,7 @@ export interface CombatResult {
   lostHeroIds: string[]
   bossDefeated: boolean
   hqHpPercent: number
+  playerPositions: PlayerPositionSnapshot
 }
 
 export interface SimState {
