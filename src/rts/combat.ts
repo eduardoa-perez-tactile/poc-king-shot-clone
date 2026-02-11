@@ -9,6 +9,7 @@ export const buildCombatDefinition = (run: RunState): CombatDefinition => {
   const dayPlan = getRunDayPlan(run)
   const lastDay = Math.max(...level.days.map((day) => day.day))
   const miniBossAfterWave = dayPlan.miniBossAfterWave ?? 2
+  const suppressDayOneMiniBoss = level.minibossRules.suppressDay1MiniBoss && run.dayNumber === 1
   const miniBossId: EliteId = dayPlan.miniBossId ?? 'miniBoss'
   const bossId: EliteId = level.bossId ?? 'boss'
   let waves = dayPlan.waves.map((wave) => ({
@@ -19,7 +20,7 @@ export const buildCombatDefinition = (run: RunState): CombatDefinition => {
     eliteCount: wave.eliteCount
   }))
 
-  if (miniBossAfterWave > 0 && waves.length >= miniBossAfterWave) {
+  if (!suppressDayOneMiniBoss && miniBossAfterWave > 0 && waves.length >= miniBossAfterWave) {
     const insertIndex = Math.min(waves.length, miniBossAfterWave)
     waves = [
       ...waves.slice(0, insertIndex),
@@ -31,6 +32,8 @@ export const buildCombatDefinition = (run: RunState): CombatDefinition => {
       },
       ...waves.slice(insertIndex)
     ]
+  } else if (suppressDayOneMiniBoss && import.meta.env.DEV) {
+    console.debug('[Combat] Day 1 miniboss suppressed by level rule.')
   }
 
   if (run.dayNumber === lastDay && waves.length > 0) {

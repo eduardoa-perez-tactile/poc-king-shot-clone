@@ -2,7 +2,7 @@ import { BuildingId } from '../config/buildings'
 import { HeroRecruitId } from '../config/heroes'
 import { UnitType } from '../config/units'
 
-export type RunPhase = 'build' | 'combat' | 'day_end' | 'win' | 'lose'
+export type RunPhase = 'build' | 'battle_cry' | 'combat' | 'day_end' | 'win' | 'lose'
 
 export interface RunBuilding {
   id: BuildingId
@@ -20,6 +20,9 @@ export interface RunSquad {
   size: number
   spawnPos?: { x: number; y: number }
   spawnPadId?: string
+  ownerBuildingPadId?: string
+  ownerBuildingId?: BuildingId
+  ownerBuildingLevel?: number
 }
 
 export interface RunHero {

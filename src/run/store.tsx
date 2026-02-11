@@ -1,8 +1,8 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { getLevelById, getLevels } from '../config/levels'
 import { HERO_RECRUIT_DEFS, HeroRecruitId } from '../config/heroes'
-import { getBuildingUnlockLevel, getPadUnlockLevel, getStrongholdMaxLevel } from '../config/stronghold'
 import { UnitType } from '../config/units'
+import { isBuildingAllowedOnPad } from '../game/rules/progression'
 import { loadSave, saveGame, clearSave } from '../storage/runSave'
 import { getBuildingPurchaseCost, getBuildingUpgradeCost, getUnitCost } from './economy'
 import {
@@ -16,7 +16,10 @@ import {
   canUpgradeStronghold,
   createInitialMeta,
   createRunState,
+  getBuildingUnlockLevelForLevel,
+  getPadUnlockLevelForRunLevel,
   getRunLevel,
+  getStrongholdMaxLevelForLevel,
   markBossDefeated,
   markHqHp,
   recomputeGoalsProgress,
@@ -66,7 +69,7 @@ export const useRunStore = () => {
   return ctx
 }
 
-const normalizeRunPhase = (phase: RunPhase): RunPhase => (phase === 'combat' ? 'build' : phase)
+const normalizeRunPhase = (phase: RunPhase): RunPhase => (phase === 'combat' || phase === 'battle_cry' ? 'build' : phase)
 
 export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const saved = useMemo(() => loadSave(), [])
@@ -74,12 +77,25 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [activeRun, setActiveRun] = useState<RunState | null>(() => normalizeRun(saved?.activeRun ?? null))
   const [runPhase, setRunPhase] = useState<RunPhase>(() => (saved?.runPhase ? normalizeRunPhase(saved.runPhase) : 'build'))
   const [lastCombat, setLastCombat] = useState<CombatOutcome | undefined>(undefined)
+  const battleCryTimeoutRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (battleCryTimeoutRef.current) {
+        window.clearTimeout(battleCryTimeoutRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     saveGame({ meta, activeRun, runPhase })
   }, [meta, activeRun, runPhase])
 
   const startRun = (levelId: string) => {
+    if (battleCryTimeoutRef.current) {
+      window.clearTimeout(battleCryTimeoutRef.current)
+      battleCryTimeoutRef.current = null
+    }
     const level = getLevelById(levelId)
     if (!level) return
     const run = recomputeGoalsProgress(createRunState(levelId), level)
@@ -89,6 +105,10 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }
 
   const abandonRun = () => {
+    if (battleCryTimeoutRef.current) {
+      window.clearTimeout(battleCryTimeoutRef.current)
+      battleCryTimeoutRef.current = null
+    }
     setActiveRun(null)
     setRunPhase('build')
     setLastCombat(undefined)
@@ -102,12 +122,17 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const buyBuildingAction = (id: BuildingId, padId: string) => {
     if (!activeRun || runPhase !== 'build') return
     if (!canBuildBuilding(activeRun, id)) return
+    const level = getRunLevel(activeRun)
+    const pad = level.buildingPads.find((entry) => entry.id === padId)
+    if (!pad || !isBuildingAllowedOnPad(pad, id)) return
+    const padUnlock = getPadUnlockLevelForRunLevel(level, padId)
+    if (activeRun.strongholdLevel < padUnlock) return
     const cost = getBuildingPurchaseCost(id)
     if (activeRun.gold < cost) return
     if (activeRun.buildings.some((building) => building.padId === padId)) return
     const next = recomputeGoalsProgress(
       { ...addBuilding(activeRun, id, padId), gold: activeRun.gold - cost },
-      getRunLevel(activeRun)
+      level
     )
     setActiveRun(next)
   }
@@ -160,11 +185,22 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const startCombat = () => {
     if (!activeRun || runPhase !== 'build') return
-    setRunPhase('combat')
+    setRunPhase('battle_cry')
+    if (battleCryTimeoutRef.current) {
+      window.clearTimeout(battleCryTimeoutRef.current)
+    }
+    battleCryTimeoutRef.current = window.setTimeout(() => {
+      setRunPhase((phase) => (phase === 'battle_cry' ? 'combat' : phase))
+      battleCryTimeoutRef.current = null
+    }, 450)
   }
 
   const resolveCombat = (outcome: CombatOutcome) => {
     if (!activeRun) return
+    if (battleCryTimeoutRef.current) {
+      window.clearTimeout(battleCryTimeoutRef.current)
+      battleCryTimeoutRef.current = null
+    }
     const level = getRunLevel(activeRun)
     const updated = activeRun
     const withBoss = outcome.bossDefeated ? markBossDefeated(updated, updated.dayNumber) : updated
@@ -226,6 +262,10 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }
 
   const clearAll = () => {
+    if (battleCryTimeoutRef.current) {
+      window.clearTimeout(battleCryTimeoutRef.current)
+      battleCryTimeoutRef.current = null
+    }
     clearSave()
     setMeta(createInitialMeta())
     setActiveRun(null)
@@ -300,14 +340,24 @@ const normalizeRun = (run: RunState | null): RunState | null => {
       heroSummonUsed: building.heroSummonUsed ?? 0
     }
   })
+  const unitRoster = (run.unitRoster ?? []).map((squad) => {
+    const ownerPadId = squad.ownerBuildingPadId ?? squad.spawnPadId
+    const ownerBuilding = ownerPadId ? buildings.find((entry) => entry.padId === ownerPadId) : undefined
+    return {
+      ...squad,
+      ownerBuildingPadId: ownerPadId,
+      ownerBuildingId: squad.ownerBuildingId ?? ownerBuilding?.id,
+      ownerBuildingLevel: squad.ownerBuildingLevel ?? ownerBuilding?.level ?? 1
+    }
+  })
   const heroProgress = run.heroProgress ?? { hp: 0, attack: 0 }
   const heroRoster = run.heroRoster ?? []
-  const minStronghold = run.buildings.reduce((acc, building) => {
-    const buildingLevel = getBuildingUnlockLevel(building.id)
-    const padLevel = getPadUnlockLevel(building.padId)
+  const minStronghold = buildings.reduce((acc, building) => {
+    const buildingLevel = getBuildingUnlockLevelForLevel(level, building.id)
+    const padLevel = getPadUnlockLevelForRunLevel(level, building.padId)
     return Math.max(acc, buildingLevel, padLevel)
   }, 1)
-  const strongholdLevel = Math.min(getStrongholdMaxLevel(), Math.max(run.strongholdLevel ?? 1, minStronghold))
+  const strongholdLevel = Math.min(getStrongholdMaxLevelForLevel(level), Math.max(run.strongholdLevel ?? 1, minStronghold))
   const strongholdUpgradeInProgress = run.strongholdUpgradeInProgress ?? null
-  return { ...run, buildings, heroProgress, heroRoster, strongholdLevel, strongholdUpgradeInProgress }
+  return { ...run, buildings, unitRoster, heroProgress, heroRoster, strongholdLevel, strongholdUpgradeInProgress }
 }

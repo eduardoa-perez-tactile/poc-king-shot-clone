@@ -79,11 +79,13 @@ export const uiActions = {
 }
 
 export const useUiStore = <T,>(selector: (state: UiState) => T) =>
-  useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener)
-      return () => listeners.delete(listener)
-    },
-    () => selector(state),
-    () => selector(state)
+  selector(
+    useSyncExternalStore(
+      (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      () => state,
+      () => state
+    )
   )

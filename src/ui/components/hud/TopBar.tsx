@@ -9,7 +9,7 @@ import { Tooltip } from '../ui/Tooltip'
 export const TopBar: React.FC<{
   mission: string
   day: number
-  phase: 'build' | 'combat' | 'day_end'
+  phase: 'build' | 'battle_cry' | 'combat' | 'day_end'
   objective: string
   waveLabel?: string
   gold: number

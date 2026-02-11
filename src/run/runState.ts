@@ -1,15 +1,12 @@
 import { BuildingId, BUILDING_DEFS } from '../config/buildings'
-import {
-  getBuildingLevelCapForStronghold,
-  getBuildingUnlockLevel,
-  getPadUnlockLevel,
-  getStrongholdMaxLevel,
-  getStrongholdUpgradeCost,
-  isBuildingUnlockedAtStronghold
-} from '../config/stronghold'
 import { HeroRecruitId, HERO_RECRUIT_DEFS } from '../config/heroes'
 import { getDayPlan, getLevelById, LevelDefinition, LevelGoal, HeroRuntime } from '../config/levels'
 import { UnitType, UNIT_DEFS } from '../config/units'
+import {
+  getPadUnlockLevelForLevel,
+  getUnlockedPadIdsForStrongholdLevel,
+  isUnitProducerBuilding
+} from '../game/rules/progression'
 import { IncomeBreakdown, MetaState, RunBuilding, RunHero, RunPhase, RunSquad, RunState } from './types'
 import {
   getBuildingPurchaseCost,
@@ -32,6 +29,93 @@ const HERO_ID = (() => {
 })()
 
 const DAY_END_BONUS_GOLD = 20
+const PRODUCER_SPAWN_OFFSETS = [
+  { x: -70, y: -60 },
+  { x: 0, y: -72 },
+  { x: 70, y: -60 },
+  { x: -88, y: 0 },
+  { x: 88, y: 0 },
+  { x: -70, y: 60 },
+  { x: 0, y: 72 },
+  { x: 70, y: 60 }
+]
+
+export const getStrongholdMaxLevelForLevel = (level: LevelDefinition) => Math.max(1, Math.floor(level.stronghold.maxLevel))
+
+export const getStrongholdUpgradeCostForLevel = (level: LevelDefinition, currentLevel: number) => {
+  const index = Math.max(0, currentLevel - 1)
+  return Math.max(0, Math.floor(level.stronghold.upgradeCostsByLevel[index] ?? 0))
+}
+
+const getPerBuildingCapForStrongholdLevel = (level: LevelDefinition, strongholdLevel: number, id: BuildingId) => {
+  const caps = level.stronghold.perBuildingLevelCaps[id]
+  if (!Array.isArray(caps) || caps.length === 0) return null
+  const index = Math.max(0, Math.min(strongholdLevel - 1, caps.length - 1))
+  return Math.max(0, Math.floor(caps[index] ?? 0))
+}
+
+export const getBuildingLevelCapForRun = (run: RunState, id: BuildingId, levelDef?: LevelDefinition) => {
+  const level = levelDef ?? getRunLevel(run)
+  const globalCap = Math.max(0, Math.floor(level.stronghold.globalMaxBuildingLevelCap))
+  const perBuildingCap = getPerBuildingCapForStrongholdLevel(level, run.strongholdLevel, id)
+  const buildingMaxLevel = Math.max(1, Math.floor(level.buildings[id]?.maxLevel ?? BUILDING_DEFS[id].maxLevel))
+  const cap = typeof perBuildingCap === 'number' ? Math.min(globalCap, perBuildingCap) : globalCap
+  return Math.max(0, Math.min(cap, buildingMaxLevel))
+}
+
+export const getBuildingUnlockLevelForLevel = (level: LevelDefinition, id: BuildingId) =>
+  Math.max(1, Math.floor(level.stronghold.buildingUnlockLevels[id] ?? 1))
+
+export const isBuildingUnlockedAtStrongholdForLevel = (
+  level: LevelDefinition,
+  strongholdLevel: number,
+  id: BuildingId
+) => strongholdLevel >= getBuildingUnlockLevelForLevel(level, id) && getBuildingLevelCapForStrongholdLevel(level, strongholdLevel, id) > 0
+
+export const getBuildingLevelCapForStrongholdLevel = (
+  level: LevelDefinition,
+  strongholdLevel: number,
+  id: BuildingId
+) => {
+  const globalCap = Math.max(0, Math.floor(level.stronghold.globalMaxBuildingLevelCap))
+  const perBuildingCap = getPerBuildingCapForStrongholdLevel(level, strongholdLevel, id)
+  const buildingMaxLevel = Math.max(1, Math.floor(level.buildings[id]?.maxLevel ?? BUILDING_DEFS[id].maxLevel))
+  const cap = typeof perBuildingCap === 'number' ? Math.min(globalCap, perBuildingCap) : globalCap
+  return Math.max(0, Math.min(cap, buildingMaxLevel))
+}
+
+export const getPadUnlockLevelForRunLevel = (level: LevelDefinition, padId: string) =>
+  Math.max(1, Math.floor(getPadUnlockLevelForLevel(level, padId)))
+
+export const isPadUnlockedAtStrongholdForRunLevel = (level: LevelDefinition, strongholdLevel: number, padId: string) =>
+  strongholdLevel >= getPadUnlockLevelForRunLevel(level, padId)
+
+export const getUnlockedBuildingTypesForRunLevel = (level: LevelDefinition, strongholdLevel: number): BuildingId[] =>
+  (Object.keys(BUILDING_DEFS) as BuildingId[]).filter((id) => isBuildingUnlockedAtStrongholdForLevel(level, strongholdLevel, id))
+
+export const getStrongholdUnlockDeltaForRun = (run: RunState, levelDef?: LevelDefinition) => {
+  const level = levelDef ?? getRunLevel(run)
+  const nextLevel = Math.min(run.strongholdLevel + 1, getStrongholdMaxLevelForLevel(level))
+  if (nextLevel === run.strongholdLevel) {
+    return {
+      buildingTypes: [] as BuildingId[],
+      padIds: [] as string[],
+      maxBuildingCap: Math.max(0, Math.floor(level.stronghold.globalMaxBuildingLevelCap))
+    }
+  }
+  const buildingTypes = (Object.keys(BUILDING_DEFS) as BuildingId[]).filter(
+    (id) =>
+      !isBuildingUnlockedAtStrongholdForLevel(level, run.strongholdLevel, id) &&
+      isBuildingUnlockedAtStrongholdForLevel(level, nextLevel, id)
+  )
+  const currentPads = new Set(getUnlockedPadIdsForStrongholdLevel(level, run.strongholdLevel))
+  const nextPads = getUnlockedPadIdsForStrongholdLevel(level, nextLevel).filter((padId) => !currentPads.has(padId))
+  return {
+    buildingTypes,
+    padIds: nextPads,
+    maxBuildingCap: Math.max(0, Math.floor(level.stronghold.globalMaxBuildingLevelCap))
+  }
+}
 
 export const createInitialMeta = (): MetaState => ({
   unlockedLevels: ['level_1'],
@@ -39,16 +123,97 @@ export const createInitialMeta = (): MetaState => ({
   completedLevels: []
 })
 
+const getPadPosition = (level: LevelDefinition, padId: string) => {
+  const pad = level.buildingPads.find((entry) => entry.id === padId)
+  if (!pad) return null
+  return { x: pad.x, y: pad.y }
+}
+
+const getProducerSpawnPosition = (
+  level: LevelDefinition,
+  run: RunState,
+  padId: string,
+  spawnIndex: number
+): { x: number; y: number } | undefined => {
+  const padPos = getPadPosition(level, padId)
+  if (!padPos) return undefined
+  const existing = run.unitRoster.filter((entry) => entry.ownerBuildingPadId === padId).length
+  const offset = PRODUCER_SPAWN_OFFSETS[(existing + spawnIndex) % PRODUCER_SPAWN_OFFSETS.length]
+  return { x: padPos.x + offset.x, y: padPos.y + offset.y }
+}
+
+const updateProducerOwnedSquadsLevel = (run: RunState, padId: string, nextLevel: number): RunState => ({
+  ...run,
+  unitRoster: run.unitRoster.map((squad) =>
+    squad.ownerBuildingPadId === padId ? { ...squad, ownerBuildingLevel: nextLevel } : squad
+  )
+})
+
+const addProducerSquads = (
+  run: RunState,
+  level: LevelDefinition,
+  buildingId: BuildingId,
+  padId: string,
+  buildingLevel: number,
+  count: number
+): RunState => {
+  const type = BUILDING_DEFS[buildingId].unlocksUnit
+  if (!type || count <= 0) return run
+  const spawnCount = Math.max(0, Math.floor(count))
+  if (spawnCount === 0) return run
+  const nextRoster = run.unitRoster.slice()
+  for (let i = 0; i < spawnCount; i += 1) {
+    const spawnPos = getProducerSpawnPosition(level, { ...run, unitRoster: nextRoster }, padId, i)
+    nextRoster.push({
+      id: SQUAD_ID(),
+      type,
+      size: UNIT_DEFS[type].squadSize,
+      spawnPos,
+      spawnPadId: padId,
+      ownerBuildingPadId: padId,
+      ownerBuildingId: buildingId,
+      ownerBuildingLevel: buildingLevel
+    })
+  }
+  if (import.meta.env.DEV && (buildingId === 'barracks' || buildingId === 'range') && spawnCount > 0) {
+    console.debug(`[ProducerSpawn] ${buildingId}@${padId} spawned ${spawnCount} squad(s) at level ${buildingLevel}.`)
+  }
+  return { ...run, unitRoster: nextRoster }
+}
+
+const applyProducerAutoSpawnOnBuild = (run: RunState, level: LevelDefinition, buildingId: BuildingId, padId: string, levelGained = 1) => {
+  if (!isUnitProducerBuilding(buildingId)) return run
+  const onBuild = Math.max(0, Math.floor(level.producerDefaults.unitsOnBuild))
+  const perUpgrade = Math.max(0, Math.floor(level.producerDefaults.unitsPerUpgradeLevel))
+  const extra = Math.max(0, levelGained - 1) * perUpgrade
+  return addProducerSquads(run, level, buildingId, padId, Math.max(1, levelGained), onBuild + extra)
+}
+
+const applyProducerAutoSpawnOnUpgrade = (
+  run: RunState,
+  level: LevelDefinition,
+  buildingId: BuildingId,
+  padId: string,
+  previousLevel: number,
+  nextLevel: number
+) => {
+  if (!isUnitProducerBuilding(buildingId)) return run
+  const levelGain = Math.max(0, nextLevel - previousLevel)
+  const count = Math.max(0, Math.floor(level.producerDefaults.unitsPerUpgradeLevel)) * levelGain
+  const withScaledExisting = updateProducerOwnedSquadsLevel(run, padId, nextLevel)
+  return addProducerSquads(withScaledExisting, level, buildingId, padId, nextLevel, count)
+}
+
 export const createRunState = (levelId: string): RunState => {
   const level = getLevelById(levelId)
   if (!level) throw new Error(`Unknown level: ${levelId}`)
   const minStrongholdForStart = level.startingBuildings.reduce((acc, building) => {
-    const buildingLevel = getBuildingUnlockLevel(building.id)
-    const padLevel = getPadUnlockLevel(building.padId)
+    const buildingLevel = getBuildingUnlockLevelForLevel(level, building.id)
+    const padLevel = getPadUnlockLevelForRunLevel(level, building.padId)
     return Math.max(acc, buildingLevel, padLevel)
   }, 1)
-  const initialStronghold = Math.min(getStrongholdMaxLevel(), minStrongholdForStart)
-  return {
+  const initialStronghold = Math.min(getStrongholdMaxLevelForLevel(level), minStrongholdForStart)
+  const baseRun: RunState = {
     levelId: level.id,
     dayNumber: 1,
     daysSurvived: 0,
@@ -69,42 +234,57 @@ export const createRunState = (levelId: string): RunState => {
     heroProgress: { hp: 0, attack: 0 },
     difficultyScaling: 1
   }
+  const withInitialProducerSquads = baseRun.buildings.reduce((acc, building) => {
+    if (!isUnitProducerBuilding(building.id)) return acc
+    return applyProducerAutoSpawnOnBuild(acc, level, building.id, building.padId, building.level)
+  }, baseRun)
+  return withInitialProducerSquads
 }
 
 export const addBuilding = (run: RunState, id: BuildingId, padId: string): RunState => {
   if (run.buildings.some((building) => building.padId === padId)) return run
+  const level = getRunLevel(run)
   const maxHp = getBuildingMaxHp(id, 1)
-  return {
+  const nextRun: RunState = {
     ...run,
     buildings: [
       ...run.buildings,
       { id, level: 1, padId, hp: maxHp, maxHp, purchasedUnitsCount: 0, heroSummonUsed: 0 }
     ]
   }
+  return applyProducerAutoSpawnOnBuild(nextRun, level, id, padId, 1)
 }
 
 export const upgradeBuilding = (run: RunState, padId: string): RunState => {
-  return {
+  const level = getRunLevel(run)
+  const target = run.buildings.find((building) => building.padId === padId)
+  if (!target) return run
+  const nextLevel = target.level + 1
+  const nextRun = {
     ...run,
     buildings: run.buildings.map((building) =>
       building.padId === padId
         ? (() => {
-            const nextLevel = building.level + 1
-            const maxHp = getBuildingMaxHp(building.id, nextLevel)
-            return { ...building, level: nextLevel, hp: maxHp, maxHp }
+            const nextMaxHp = getBuildingMaxHp(building.id, nextLevel)
+            return { ...building, level: nextLevel, hp: nextMaxHp, maxHp: nextMaxHp }
           })()
         : building
     )
   }
+  return applyProducerAutoSpawnOnUpgrade(nextRun, level, target.id, padId, target.level, nextLevel)
 }
 
 export const buySquad = (run: RunState, type: UnitType, spawnPos?: { x: number; y: number }, spawnPadId?: string): RunState => {
+  const ownerBuilding = spawnPadId ? run.buildings.find((entry) => entry.padId === spawnPadId) : null
   const squad: RunSquad = {
     id: SQUAD_ID(),
     type,
     size: UNIT_DEFS[type].squadSize,
     spawnPos,
-    spawnPadId
+    spawnPadId,
+    ownerBuildingPadId: spawnPadId,
+    ownerBuildingId: ownerBuilding?.id,
+    ownerBuildingLevel: ownerBuilding?.level ?? 1
   }
   const buildings = spawnPadId
     ? run.buildings.map((building) =>
@@ -189,29 +369,34 @@ export const areGoalsComplete = (run: RunState, level: LevelDefinition) =>
 export const canAffordBuilding = (run: RunState, id: BuildingId) => run.gold >= getBuildingPurchaseCost(id)
 
 export const canUpgradeBuilding = (run: RunState, padId: string) => {
+  const level = getRunLevel(run)
   const current = run.buildings.find((building) => building.padId === padId)
   if (!current) return false
-  if (!isBuildingUnlockedAtStronghold(run.strongholdLevel, current.id)) return false
-  const cap = getBuildingLevelCapForStronghold(run.strongholdLevel, current.id)
+  if (!isBuildingUnlockedAtStrongholdForLevel(level, run.strongholdLevel, current.id)) return false
+  const cap = getBuildingLevelCapForStrongholdLevel(level, run.strongholdLevel, current.id)
   if (current.level >= cap) return false
   const cost = getBuildingUpgradeCost(current.id, current.level + 1)
   return run.gold >= cost
 }
 
-export const canBuildBuilding = (run: RunState, id: BuildingId) =>
-  isBuildingUnlockedAtStronghold(run.strongholdLevel, id)
+export const canBuildBuilding = (run: RunState, id: BuildingId) => {
+  const level = getRunLevel(run)
+  return isBuildingUnlockedAtStrongholdForLevel(level, run.strongholdLevel, id)
+}
 
 export const canUpgradeStronghold = (run: RunState) => {
-  const maxLevel = getStrongholdMaxLevel()
+  const level = getRunLevel(run)
+  const maxLevel = getStrongholdMaxLevelForLevel(level)
   if (run.strongholdLevel >= maxLevel) return false
-  const cost = getStrongholdUpgradeCost(run.strongholdLevel)
+  const cost = getStrongholdUpgradeCostForLevel(level, run.strongholdLevel)
   return run.gold >= cost
 }
 
 export const upgradeStronghold = (run: RunState) => {
-  const maxLevel = getStrongholdMaxLevel()
+  const level = getRunLevel(run)
+  const maxLevel = getStrongholdMaxLevelForLevel(level)
   if (run.strongholdLevel >= maxLevel) return run
-  const cost = getStrongholdUpgradeCost(run.strongholdLevel)
+  const cost = getStrongholdUpgradeCostForLevel(level, run.strongholdLevel)
   if (run.gold < cost) return run
   return {
     ...run,
@@ -232,6 +417,7 @@ export const canBuySquadFromBuilding = (run: RunState, type: UnitType, padId?: s
   if (!padId) return true
   const building = run.buildings.find((entry) => entry.padId === padId)
   if (!building) return false
+  if (isUnitProducerBuilding(building.id)) return false
   const cap = getUnitPurchaseCap(run)
   const purchased = building.purchasedUnitsCount ?? 0
   return purchased < cap

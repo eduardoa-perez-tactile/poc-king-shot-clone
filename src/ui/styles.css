@@ -913,6 +913,19 @@ select:focus {
   gap: 12px;
 }
 
+.dashboard-screen input,
+.dashboard-screen select,
+.dashboard-screen textarea {
+  background: rgba(7, 18, 40, 0.92);
+  color: var(--text);
+  caret-color: var(--text);
+}
+
+.dashboard-screen textarea::placeholder,
+.dashboard-screen input::placeholder {
+  color: rgba(148, 163, 184, 0.7);
+}
+
 .dashboard-tabs {
   display: flex;
   flex-wrap: wrap;
