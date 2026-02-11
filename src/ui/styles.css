@@ -836,3 +836,146 @@ select {
   background: conic-gradient(rgba(2, 6, 23, 0.75) calc(var(--cooldown, 0) * 1%), transparent 0);
   transition: opacity 120ms ease;
 }
+
+.dashboard-screen {
+  min-height: 100vh;
+  gap: 0;
+}
+
+.dashboard-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr 300px;
+  gap: 12px;
+  padding: 12px;
+  min-height: calc(100vh - 88px);
+}
+
+.dashboard-sidebar,
+.dashboard-main,
+.dashboard-actions {
+  min-height: 0;
+  overflow: auto;
+}
+
+.dashboard-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dashboard-sidebar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dashboard-level-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dashboard-level-item {
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.dashboard-level-item.active {
+  border-color: var(--accent);
+  background: rgba(76, 201, 240, 0.12);
+}
+
+.dashboard-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dashboard-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dashboard-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dashboard-section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dashboard-inline-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dashboard-full-width {
+  grid-column: 1 / -1;
+}
+
+.dashboard-row-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(15, 23, 42, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dashboard-issues,
+.dashboard-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.dashboard-diff-row {
+  border-bottom: 1px dashed rgba(148, 163, 184, 0.2);
+  padding-bottom: 6px;
+}
+
+.dashboard-json {
+  min-height: 420px;
+  width: 100%;
+  font-family: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.dashboard-file-input {
+  display: none;
+}
+
+@media (max-width: 1300px) {
+  .dashboard-layout {
+    grid-template-columns: 260px 1fr;
+  }
+  .dashboard-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 900px) {
+  .dashboard-layout {
+    grid-template-columns: 1fr;
+  }
+  .dashboard-section-grid,
+  .dashboard-inline-grid {
+    grid-template-columns: 1fr;
+  }
+}

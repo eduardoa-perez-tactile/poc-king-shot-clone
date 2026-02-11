@@ -1,10 +1,10 @@
 import React from 'react'
 import { useRunStore } from '../../run/store'
-import { LEVELS } from '../../config/levels'
+import { getLevelById } from '../../config/levels'
 
 export const WinScreen: React.FC<{ onLevelSelect: () => void }> = ({ onLevelSelect }) => {
   const { activeRun } = useRunStore()
-  const level = activeRun ? LEVELS.find((entry) => entry.id === activeRun.levelId) : null
+  const level = activeRun ? getLevelById(activeRun.levelId) : null
   return (
     <div className="menu">
       <div className="menu-card">

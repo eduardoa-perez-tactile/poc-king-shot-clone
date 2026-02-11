@@ -1,0 +1,151 @@
+You are implementing a new “Game Dashboard” feature for our single-player browser RTS roguelike (Babylon.js 3D scene with ortho RTS camera + React UI overlay). The Dashboard is a configuration tool for fine-tuning the meta-game and level content. It must be accessible from the Main Menu via an additional button.
+
+High-level goals
+- Add a new Main Menu button: “Dashboard”.
+- Dashboard is a React route/screen that lets us view/edit EVERYTHING inside a level definition (waves, enemies, bosses, pads, buildings, unlock rules, economy values, caps, etc.), then run that level immediately to play-test, then return and iterate.
+- Support import/export JSON, validation, undo/redo, and safe persistence.
+- Must not introduce per-frame React rerenders in the map scene; config edits happen only in the Dashboard screen.
+- Keep changes local to “dev tuning” mode by default, but allow explicit “Save to Disk / Download” export.
+
+Assumptions about existing project structure (adjust to real code)
+- React app has screens/routes: MainMenu, MissionSelect, MapScene.
+- Level data currently lives in JSON/TS modules (e.g., /src/game/data/levels/*.ts or .json) and is loaded by MissionSelect/MapScene.
+- There is a “LevelDefinition” type or similar. If not, create one.
+- There is a game runtime state store (or equivalent) used by MapScene.
+
+Implementation tasks
+
+1) Data model + schema
+- Define a single canonical LevelDefinition type that includes ALL tunable fields, including (at minimum):
+  - metadata: id, name, difficulty, description, biome/theme, seed
+  - economy: startingGold, goldPerKill, endOfDayGoldBonus, buildPhaseDuration, etc.
+  - stronghold: startingLevel, maxLevel, upgradeCosts, gates/unlocks
+  - pads: list of pad ids, positions, unlock conditions, allowed building categories
+  - buildings: build costs, upgrade costs, per-level caps, global max level cap (currently 3), producer unit caps rules (e.g., 4 per Stronghold level per producer), recruiter unlock at Stronghold Lv3, etc.
+  - units: squad stats, costs, production times, cap rules
+  - enemies: catalog references + per-wave spawns (count, composition, timing, paths/targets)
+  - waves: waveCount, wave durations, spawn schedules, miniboss after wave 2, final boss wave, etc.
+  - hero: starting hero stats, battle cry parameters, VFX toggles, etc.
+  - any other level modifiers already in the game (damage multipliers, etc.)
+- Create a JSON Schema (or Zod schema) for LevelDefinition so we can:
+  - validate on edit
+  - provide defaults
+  - generate basic forms
+- Add a version field and migration hook:
+  - LevelDefinition.version = number
+  - migrateLevel(def): LevelDefinition that upgrades older versions to newest
+
+2) Persistence strategy
+- Implement a “tuning store” that holds edited LevelDefinitions:
+  - In-memory + localStorage persistence under a namespace key (e.g., kingshot:tuningLevels:v1)
+  - The dashboard loads from:
+    1) tuned overrides (localStorage) if present
+    2) otherwise base shipped levels
+- Provide buttons:
+  - “Save Overrides” (writes to localStorage)
+  - “Revert Level to Base” (removes override for that level)
+  - “Revert All Overrides”
+  - “Export Overrides JSON” (download)
+  - “Import Overrides JSON” (upload; validates; merges)
+- Ensure MissionSelect and MapScene resolve levels by:
+  - getLevelById(id): return override if exists else base
+
+3) Main Menu integration
+- Add button “Dashboard” to Main Menu.
+- Clicking navigates to /dashboard.
+
+4) Dashboard UI requirements (React)
+Layout
+- Left sidebar: list of levels (searchable), create duplicate, create new, delete (override only).
+- Main panel: tabbed editor for the selected level:
+  - Overview (metadata)
+  - Economy
+  - Stronghold & gates
+  - Pads & build slots (list + position editor)
+  - Buildings tuning
+  - Units tuning
+  - Waves (wave list)
+  - Enemies (catalog + per-wave composition)
+  - Bosses/miniboss rules
+  - Validation & diff
+- Right panel: actions + “Playtest Level”.
+
+Editing experience
+- Use controlled forms, but avoid heavy re-renders by scoping state:
+  - Use a dedicated editor store (Zustand or useReducer) for the dashboard.
+- Provide:
+  - Undo/redo (stack with max depth, e.g., 50)
+  - Validation panel (schema errors, missing refs, negative values, etc.)
+  - Diff view: show JSON diff between base and edited (only for current level)
+  - Raw JSON editor (monaco optional; otherwise textarea) with “Apply JSON” + validation
+
+Specific editors
+- Waves editor:
+  - list of waves; each wave has spawn groups:
+    - enemyTypeId, count, startTime, interval, lane/path, target priorities
+  - buttons: add/remove wave, duplicate wave, add spawn group
+  - guardrails: miniboss after wave 2; final wave has boss (but allow toggle)
+- Pads editor:
+  - list of pads with ids and positions (x,z)
+  - Provide “Preview on grid” 2D mini-canvas (simple) OR numeric inputs only if faster
+  - Validate duplicate ids, out-of-bounds positions
+- Buildings/units:
+  - table-like editing for cost, stats, caps
+  - ability to “Reset row to base”
+
+5) Playtest flow
+- From Dashboard, “Playtest Level” launches MapScene using the currently edited LevelDefinition WITHOUT requiring saving to localStorage.
+- Implement a “PlaytestSession” mode:
+  - pass levelDef directly via navigation state OR a global runtime store field (e.g., setPlaytestLevel(def))
+  - MapScene, on load, prefers playtestLevel if present; otherwise uses getLevelById(id).
+- Provide a way to return to Dashboard after playtest:
+  - On pause/menu in MapScene: add button “Back to Dashboard”
+  - Restores the Dashboard editor state (keep it in memory; do not wipe unless user leaves)
+
+6) Safety & validation checks (must implement)
+- Every reference must resolve:
+  - wave enemyTypeId must exist in enemy catalog
+  - building type ids must exist
+- Hard constraints should warn, not crash:
+  - if global max building level > 3, warn (but allow override if desired)
+  - if caps inconsistent with Stronghold levels, warn
+- Never allow invalid JSON to enter runtime:
+  - Playtest button disabled until current level is valid OR allow “force playtest” with confirmation modal (dev-only)
+
+7) Dev/prod behavior
+- Dashboard should be accessible in dev builds.
+- In production, either:
+  - hide the button by default behind a “?dev=1” query param, OR
+  - show but warn it’s for tuning and stored locally.
+(Choose simplest: show only if process.env.NODE_ENV !== 'production' OR a runtime flag.)
+
+8) Files to add/modify (example)
+- src/game/types/LevelDefinition.ts (type + defaults)
+- src/game/data/levels/index.ts (base levels)
+- src/game/tuning/tuningStore.ts (overrides + localStorage)
+- src/ui/screens/Dashboard/Dashboard.tsx
+- src/ui/screens/Dashboard/editors/* (tabs/editors)
+- src/ui/router.tsx (route)
+- src/ui/screens/MainMenu.tsx (button)
+- src/game/runtime/playtest.ts (optional)
+- src/ui/screens/MapScene/PauseMenu.tsx (Back to Dashboard)
+
+9) Done criteria
+- From Main Menu: Dashboard opens.
+- Can edit a level, see validation errors.
+- Can playtest edited level immediately; map uses edited content.
+- Can return to dashboard and keep edits.
+- Can save overrides to localStorage and see them applied in Mission Select / normal play.
+- Can export/import overrides JSON.
+- No runtime crashes on invalid data; clear warnings/errors shown.
+
+Implementation notes
+- Prefer Zod for schema + inferred TS types if already in stack; otherwise JSON Schema + ajv.
+- Prefer Zustand for stores if already used; otherwise useReducer with context.
+- Keep MapScene performance constraints: no reactive config updates mid-frame; config is loaded once at scene init.
+
+Start by scanning the repo to match real file structure, existing level definitions, and existing stores, then implement minimal vertical slice:
+1) LevelDefinition type + schema + getLevelById override resolution
+2) Main menu button + dashboard route
+3) Simple editor: raw JSON textarea + validation + playtest
+Then expand to structured tabs (waves/pads/etc.)

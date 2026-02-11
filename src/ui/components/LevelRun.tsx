@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BuildingId, BUILDING_DEFS } from '../../config/buildings'
 import { HERO_RECRUIT_DEFS, HeroRecruitId } from '../../config/heroes'
-import { LEVELS } from '../../config/levels'
+import { getLevelById } from '../../config/levels'
 import { UnitType, UNIT_DEFS } from '../../config/units'
 import { getBuildingUpgradeCost, getHQBonusHp, getIncomeBreakdown, getSquadCap, getUnitCost, getUnitPurchaseCap } from '../../run/economy'
 import { canBuySquadFromBuilding } from '../../run/runState'
@@ -76,7 +76,7 @@ const describeLevelEffects = (id: BuildingId, level: number) => {
   return parts.join(' · ')
 }
 
-export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
+export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => void }> = ({ onExit, onBackToDashboard }) => {
   const {
     activeRun,
     runPhase,
@@ -104,7 +104,7 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
   const isMobile = useMediaQuery('(max-width: 639px)')
 
   if (!activeRun) return null
-  const level = LEVELS.find((entry) => entry.id === activeRun.levelId)
+  const level = getLevelById(activeRun.levelId)
   if (!level) return null
 
   const combatDefinition = buildCombatDefinition(activeRun)
@@ -865,6 +865,9 @@ export const LevelRun: React.FC<{ onExit: () => void }> = ({ onExit }) => {
             <div className="mt-4 flex flex-col gap-2">
               <Button variant="primary" onClick={() => uiActions.togglePause(false)}>Resume</Button>
               <Button variant="secondary" onClick={() => canvasRef.current?.resetDay()}>Restart Day</Button>
+              {onBackToDashboard && (
+                <Button variant="secondary" onClick={onBackToDashboard}>Back to Dashboard</Button>
+              )}
               <Button variant="danger" onClick={onExit}>Quit to Level Select</Button>
             </div>
           </div>

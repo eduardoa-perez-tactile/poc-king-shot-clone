@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import { LEVELS, getLevelById } from '../config/levels'
+import { getLevelById, getLevels } from '../config/levels'
 import { HERO_RECRUIT_DEFS, HeroRecruitId } from '../config/heroes'
 import { getBuildingUnlockLevel, getPadUnlockLevel, getStrongholdMaxLevel } from '../config/stronghold'
 import { UnitType } from '../config/units'
@@ -256,14 +256,14 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   return <RunContext.Provider value={value}>{children}</RunContext.Provider>
 }
 
-const levelIndexById = (id: string) => LEVELS.findIndex((level) => level.id === id)
+const levelIndexById = (id: string) => getLevels().findIndex((level) => level.id === id)
 
-const getLevelByIndex = (index: number) => LEVELS[index] ?? null
+const getLevelByIndex = (index: number) => getLevels()[index] ?? null
 
 const normalizeRun = (run: RunState | null): RunState | null => {
   if (!run) return null
   const level = getLevelById(run.levelId)
-  if (!level) return run
+  if (!level) return null
   const usedPads = new Set<string>()
   const pads = level.buildingPads
   const buildings = run.buildings.map((building, index) => {
