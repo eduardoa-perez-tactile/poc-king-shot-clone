@@ -63,7 +63,7 @@ export const CanvasLayer3D = React.memo(
     const hoveredHqRef = useRef(false)
     const cameraControllerRef = useRef<CameraController | null>(null)
     const commandModeRef = useRef<'move' | 'attackMove'>('move')
-    const playerInputRef = useRef<PlayerInputState>({ up: false, down: false, left: false, right: false })
+    const playerInputRef = useRef<PlayerInputState>({ up: false, down: false, left: false, right: false, worldX: 0, worldY: 0 })
     const controlGroupsRef = useRef<Record<number, string[]>>({})
     const phaseRef = useRef(phase)
     const pausedRef = useRef(Boolean(paused))
@@ -205,6 +205,15 @@ export const CanvasLayer3D = React.memo(
     const rallyToHero = () => {
       const rallied = rallyFriendlyToHero(simRef.current, gridRef.current)
       simRef.current = rallied.state
+    }
+
+    const syncInputVectorToIsometricAxes = () => {
+      const input = playerInputRef.current
+      const horizontal = (input.right ? 1 : 0) - (input.left ? 1 : 0)
+      const vertical = (input.up ? 1 : 0) - (input.down ? 1 : 0)
+      // Convert screen-relative arrows to world-plane movement for the fixed isometric camera.
+      input.worldX = -vertical
+      input.worldY = horizontal
     }
 
     useImperativeHandle(ref, () => ({
@@ -427,21 +436,25 @@ export const CanvasLayer3D = React.memo(
         if (isGameplayKeyboardBlockedByFocus()) return
         if (event.key === 'ArrowUp') {
           playerInputRef.current.up = true
+          syncInputVectorToIsometricAxes()
           event.preventDefault()
           return
         }
         if (event.key === 'ArrowDown') {
           playerInputRef.current.down = true
+          syncInputVectorToIsometricAxes()
           event.preventDefault()
           return
         }
         if (event.key === 'ArrowLeft') {
           playerInputRef.current.left = true
+          syncInputVectorToIsometricAxes()
           event.preventDefault()
           return
         }
         if (event.key === 'ArrowRight') {
           playerInputRef.current.right = true
+          syncInputVectorToIsometricAxes()
           event.preventDefault()
           return
         }
@@ -484,18 +497,22 @@ export const CanvasLayer3D = React.memo(
       const handleKeyUp = (event: KeyboardEvent) => {
         if (event.key === 'ArrowUp') {
           playerInputRef.current.up = false
+          syncInputVectorToIsometricAxes()
           return
         }
         if (event.key === 'ArrowDown') {
           playerInputRef.current.down = false
+          syncInputVectorToIsometricAxes()
           return
         }
         if (event.key === 'ArrowLeft') {
           playerInputRef.current.left = false
+          syncInputVectorToIsometricAxes()
           return
         }
         if (event.key === 'ArrowRight') {
           playerInputRef.current.right = false
+          syncInputVectorToIsometricAxes()
         }
       }
       window.addEventListener('keydown', handleKey)

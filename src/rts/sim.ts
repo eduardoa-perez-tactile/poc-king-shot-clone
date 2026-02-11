@@ -89,10 +89,20 @@ export interface PlayerInputState {
   down: boolean
   left: boolean
   right: boolean
+  worldX?: number
+  worldY?: number
 }
 
 const isInputActive = (input?: PlayerInputState | null) =>
-  Boolean(input && (input.up || input.down || input.left || input.right))
+  Boolean(
+    input &&
+      (input.up ||
+        input.down ||
+        input.left ||
+        input.right ||
+        Math.abs(input.worldX ?? 0) > HERO_INPUT_EPS ||
+        Math.abs(input.worldY ?? 0) > HERO_INPUT_EPS)
+  )
 
 const clampToMap = (pos: Vec2, radius: number, combat: CombatDefinition): Vec2 => ({
   x: Math.min(combat.map.width - radius, Math.max(radius, pos.x)),
@@ -537,8 +547,9 @@ const stepHeroFromInput = (sim: SimState, dt: number, grid: Grid, input?: Player
   const hero = sim.entities.find((entity) => entity.id === sim.heroEntityId && entity.team === 'player')
   if (!hero || hero.hp <= 0) return
 
-  const moveX = (input?.right ? 1 : 0) - (input?.left ? 1 : 0)
-  const moveY = (input?.down ? 1 : 0) - (input?.up ? 1 : 0)
+  const hasWorldVector = typeof input?.worldX === 'number' || typeof input?.worldY === 'number'
+  const moveX = hasWorldVector ? (input?.worldX ?? 0) : (input?.right ? 1 : 0) - (input?.left ? 1 : 0)
+  const moveY = hasWorldVector ? (input?.worldY ?? 0) : (input?.down ? 1 : 0) - (input?.up ? 1 : 0)
   const mag = Math.hypot(moveX, moveY)
   if (mag <= HERO_INPUT_EPS) return
   const dirX = moveX / mag
