@@ -4,6 +4,12 @@ import { ELITE_DEFS } from '../../../config/elites'
 import { UNIT_DEFS, UnitType } from '../../../config/units'
 import { LevelDefinition, validateLevelDefinition } from '../../../game/types/LevelDefinition'
 import {
+  PadType,
+  buildPadUnlockLevelsFromByLevel,
+  buildPadUnlocksByLevelFromLevels,
+  getAllowedBuildingTypesForPadType
+} from '../../../game/rules/progression'
+import {
   DashboardTab,
   applySelectedLevelJson,
   createDashboardLevel,
@@ -49,6 +55,7 @@ const TABS: Array<{ id: DashboardTab; label: string }> = [
 ]
 
 const MAX_DIFF_ROWS = 250
+const PAD_TYPES: PadType[] = ['TOWER_ONLY', 'UNIT_PRODUCER', 'HERO']
 
 const serializeValue = (value: unknown) => {
   if (typeof value === 'string') return value
@@ -200,6 +207,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
         next.economy.buildPhaseDurationSec = value
       }
       return next
+    })
+  }
+
+  const updateStrongholdUnlocksByLevel = (nextByLevel: Record<string, string[]>) => {
+    patchSelectedLevel((level) => {
+      const normalizedByLevel: Record<string, string[]> = {}
+      Object.keys(nextByLevel).forEach((levelKey) => {
+        const ids = nextByLevel[levelKey] ?? []
+        normalizedByLevel[levelKey] = Array.from(new Set(ids.map((id) => id.trim()).filter((id) => id.length > 0)))
+      })
+      return {
+        ...level,
+        stronghold: {
+          ...level.stronghold,
+          padUnlocksByLevel: normalizedByLevel,
+          padUnlockLevels: buildPadUnlockLevelsFromByLevel(normalizedByLevel)
+        }
+      }
     })
   }
 
@@ -435,10 +460,23 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
                 <input
                   value={selectedLevel.stronghold.maxLevel}
                   onChange={(event) =>
-                    patchSelectedLevel((level) => ({
-                      ...level,
-                      stronghold: { ...level.stronghold, maxLevel: parseNumberInput(event.target.value, level.stronghold.maxLevel) }
-                    }))
+                    patchSelectedLevel((level) => {
+                      const nextMaxLevel = Math.max(1, parseNumberInput(event.target.value, level.stronghold.maxLevel))
+                      const nextByLevel: Record<string, string[]> = {}
+                      for (let lv = 1; lv <= nextMaxLevel; lv += 1) {
+                        const key = String(lv)
+                        nextByLevel[key] = (level.stronghold.padUnlocksByLevel[key] ?? []).slice()
+                      }
+                      return {
+                        ...level,
+                        stronghold: {
+                          ...level.stronghold,
+                          maxLevel: nextMaxLevel,
+                          padUnlocksByLevel: nextByLevel,
+                          padUnlockLevels: buildPadUnlockLevelsFromByLevel(nextByLevel)
+                        }
+                      }
+                    })
                   }
                 />
               </label>
@@ -490,6 +528,32 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
                   }
                 />
               </label>
+              <div className="dashboard-full-width dashboard-row-card">
+                <h3>Pad Unlocks by Stronghold Level</h3>
+                <div className="dashboard-stack">
+                  {Array.from({ length: Math.max(1, selectedLevel.stronghold.maxLevel) }, (_, idx) => {
+                    const unlockLevel = idx + 1
+                    const levelKey = String(unlockLevel)
+                    const ids = selectedLevel.stronghold.padUnlocksByLevel[levelKey] ?? []
+                    return (
+                      <label key={levelKey}>
+                        <span className="muted">Lv {unlockLevel} unlock pad IDs (comma separated)</span>
+                        <input
+                          value={ids.join(',')}
+                          onChange={(event) => {
+                            const nextByLevel = { ...selectedLevel.stronghold.padUnlocksByLevel }
+                            nextByLevel[levelKey] = event.target.value
+                              .split(',')
+                              .map((value) => value.trim())
+                              .filter((value) => value.length > 0)
+                            updateStrongholdUnlocksByLevel(nextByLevel)
+                          }}
+                        />
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
           )}
 
@@ -596,6 +660,104 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
 
           {activeTab === 'units' && (
             <div className="dashboard-stack">
+              <div className="dashboard-row-card">
+                <h3>Producer Defaults</h3>
+                <div className="dashboard-inline-grid">
+                  <label>
+                    <span className="muted">Units on Build</span>
+                    <input
+                      value={selectedLevel.producerDefaults.unitsOnBuild}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          producerDefaults: {
+                            ...level.producerDefaults,
+                            unitsOnBuild: parseNumberInput(event.target.value, level.producerDefaults.unitsOnBuild)
+                          }
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span className="muted">Units per Upgrade Level</span>
+                    <input
+                      value={selectedLevel.producerDefaults.unitsPerUpgradeLevel}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          producerDefaults: {
+                            ...level.producerDefaults,
+                            unitsPerUpgradeLevel: parseNumberInput(event.target.value, level.producerDefaults.unitsPerUpgradeLevel)
+                          }
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span className="muted">Health Mult/Level</span>
+                    <input
+                      value={selectedLevel.producerDefaults.unitStatScalingPerLevel.healthMultPerLevel}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          producerDefaults: {
+                            ...level.producerDefaults,
+                            unitStatScalingPerLevel: {
+                              ...level.producerDefaults.unitStatScalingPerLevel,
+                              healthMultPerLevel: parseNumberInput(
+                                event.target.value,
+                                level.producerDefaults.unitStatScalingPerLevel.healthMultPerLevel
+                              )
+                            }
+                          }
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span className="muted">Damage Mult/Level</span>
+                    <input
+                      value={selectedLevel.producerDefaults.unitStatScalingPerLevel.damageMultPerLevel}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          producerDefaults: {
+                            ...level.producerDefaults,
+                            unitStatScalingPerLevel: {
+                              ...level.producerDefaults.unitStatScalingPerLevel,
+                              damageMultPerLevel: parseNumberInput(
+                                event.target.value,
+                                level.producerDefaults.unitStatScalingPerLevel.damageMultPerLevel
+                              )
+                            }
+                          }
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span className="muted">Attack Speed Mult/Level</span>
+                    <input
+                      value={selectedLevel.producerDefaults.unitStatScalingPerLevel.attackSpeedMultPerLevel}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          producerDefaults: {
+                            ...level.producerDefaults,
+                            unitStatScalingPerLevel: {
+                              ...level.producerDefaults.unitStatScalingPerLevel,
+                              attackSpeedMultPerLevel: parseNumberInput(
+                                event.target.value,
+                                level.producerDefaults.unitStatScalingPerLevel.attackSpeedMultPerLevel
+                              )
+                            }
+                          }
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+              </div>
               {Object.values(selectedLevel.units).map((unit) => (
                 <div key={unit.type} className="dashboard-row-card">
                   <div className="dashboard-inline-grid">
@@ -700,17 +862,82 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
 
           {activeTab === 'pads' && (
             <div className="dashboard-stack">
+              <div className="dashboard-row-card">
+                <h3>Pad Constraints</h3>
+                <div className="dashboard-inline-grid">
+                  <label>
+                    <span className="muted">Min Tower Pads</span>
+                    <input
+                      value={selectedLevel.padConstraints.minTowerPads}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          padConstraints: {
+                            ...level.padConstraints,
+                            minTowerPads: parseNumberInput(event.target.value, level.padConstraints.minTowerPads)
+                          }
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span className="muted">Max Unit Producer Pads</span>
+                    <input
+                      value={selectedLevel.padConstraints.maxUnitProducerPads}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          padConstraints: {
+                            ...level.padConstraints,
+                            maxUnitProducerPads: parseNumberInput(event.target.value, level.padConstraints.maxUnitProducerPads)
+                          }
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span className="muted">Max Hero Pads</span>
+                    <input
+                      value={selectedLevel.padConstraints.maxHeroPads}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          padConstraints: {
+                            ...level.padConstraints,
+                            maxHeroPads: parseNumberInput(event.target.value, level.padConstraints.maxHeroPads)
+                          }
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+              </div>
               <div className="button-row">
                 <button
                   className="btn success"
                   onClick={() =>
-                    patchSelectedLevel((level) => ({
-                      ...level,
-                      buildingPads: [
-                        ...level.buildingPads,
-                        { id: `pad_${level.buildingPads.length + 1}`, x: 0, y: 0, allowedTypes: ['barracks'] }
-                      ]
-                    }))
+                    patchSelectedLevel((level) => {
+                      const nextId = `pad_${level.buildingPads.length + 1}`
+                      const nextPadUnlockLevels = { ...level.stronghold.padUnlockLevels, [nextId]: 1 }
+                      return {
+                        ...level,
+                        buildingPads: [
+                          ...level.buildingPads,
+                          {
+                            id: nextId,
+                            x: 0,
+                            y: 0,
+                            padType: 'TOWER_ONLY',
+                            allowedTypes: getAllowedBuildingTypesForPadType('TOWER_ONLY')
+                          }
+                        ],
+                        stronghold: {
+                          ...level.stronghold,
+                          padUnlockLevels: nextPadUnlockLevels,
+                          padUnlocksByLevel: buildPadUnlocksByLevelFromLevels(nextPadUnlockLevels)
+                        }
+                      }
+                    })
                   }
                 >
                   Add Pad
@@ -726,8 +953,23 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
                         onChange={(event) =>
                           patchSelectedLevel((level) => {
                             const nextPads = level.buildingPads.slice()
-                            nextPads[index] = { ...nextPads[index], id: event.target.value }
-                            return { ...level, buildingPads: nextPads }
+                            const previousId = nextPads[index].id
+                            const nextId = event.target.value
+                            nextPads[index] = { ...nextPads[index], id: nextId }
+                            const nextPadUnlockLevels = { ...level.stronghold.padUnlockLevels }
+                            if (previousId !== nextId && nextPadUnlockLevels[previousId] !== undefined) {
+                              nextPadUnlockLevels[nextId] = nextPadUnlockLevels[previousId]
+                              delete nextPadUnlockLevels[previousId]
+                            }
+                            return {
+                              ...level,
+                              buildingPads: nextPads,
+                              stronghold: {
+                                ...level.stronghold,
+                                padUnlockLevels: nextPadUnlockLevels,
+                                padUnlocksByLevel: buildPadUnlocksByLevelFromLevels(nextPadUnlockLevels)
+                              }
+                            }
                           })
                         }
                       />
@@ -758,6 +1000,48 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
                         }
                       />
                     </label>
+                    <label>
+                      <span className="muted">Pad Type</span>
+                      <select
+                        value={pad.padType}
+                        onChange={(event) =>
+                          patchSelectedLevel((level) => {
+                            const nextPads = level.buildingPads.slice()
+                            const nextPadType = event.target.value as PadType
+                            nextPads[index] = {
+                              ...nextPads[index],
+                              padType: nextPadType,
+                              allowedTypes: getAllowedBuildingTypesForPadType(nextPadType)
+                            }
+                            return { ...level, buildingPads: nextPads }
+                          })
+                        }
+                      >
+                        {PAD_TYPES.map((type) => (
+                          <option key={type} value={type}>{type}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span className="muted">Unlock at Stronghold Lv</span>
+                      <input
+                        value={selectedLevel.stronghold.padUnlockLevels[pad.id] ?? 1}
+                        onChange={(event) =>
+                          patchSelectedLevel((level) => {
+                            const unlockLevel = Math.max(1, parseNumberInput(event.target.value, 1))
+                            const nextPadUnlockLevels = { ...level.stronghold.padUnlockLevels, [pad.id]: unlockLevel }
+                            return {
+                              ...level,
+                              stronghold: {
+                                ...level.stronghold,
+                                padUnlockLevels: nextPadUnlockLevels,
+                                padUnlocksByLevel: buildPadUnlocksByLevelFromLevels(nextPadUnlockLevels)
+                              }
+                            }
+                          })
+                        }
+                      />
+                    </label>
                     <label className="dashboard-full-width">
                       <span className="muted">Allowed Building Types (comma separated)</span>
                       <input
@@ -769,6 +1053,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
                               .split(',')
                               .map((value) => value.trim())
                               .filter((value): value is keyof typeof BUILDING_DEFS => Boolean(BUILDING_DEFS[value as keyof typeof BUILDING_DEFS]))
+                              .filter((value) =>
+                                getAllowedBuildingTypesForPadType(nextPads[index].padType).includes(value as keyof typeof BUILDING_DEFS)
+                              )
                             nextPads[index] = { ...nextPads[index], allowedTypes }
                             return { ...level, buildingPads: nextPads }
                           })
@@ -779,10 +1066,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
                   <button
                     className="btn ghost"
                     onClick={() =>
-                      patchSelectedLevel((level) => ({
-                        ...level,
-                        buildingPads: level.buildingPads.filter((_, padIndex) => padIndex !== index)
-                      }))
+                      patchSelectedLevel((level) => {
+                        const nextPads = level.buildingPads.filter((_, padIndex) => padIndex !== index)
+                        const removedPadId = level.buildingPads[index]?.id
+                        const nextPadUnlockLevels = { ...level.stronghold.padUnlockLevels }
+                        if (removedPadId) delete nextPadUnlockLevels[removedPadId]
+                        return {
+                          ...level,
+                          buildingPads: nextPads,
+                          stronghold: {
+                            ...level.stronghold,
+                            padUnlockLevels: nextPadUnlockLevels,
+                            padUnlocksByLevel: buildPadUnlocksByLevelFromLevels(nextPadUnlockLevels)
+                          }
+                        }
+                      })
                     }
                   >
                     Remove Pad
@@ -861,7 +1159,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
                     <label>
                       <span className="muted">Mini-boss After Wave</span>
                       <input
-                        value={currentDay.miniBossAfterWave ?? 2}
+                        value={currentDay.day === 1 ? 'disabled (day 1 override)' : (currentDay.miniBossAfterWave ?? 2)}
+                        disabled={currentDay.day === 1}
                         onChange={(event) =>
                           patchSelectedLevel((level) => {
                             const days = level.days.slice()
@@ -1151,6 +1450,30 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
                   <option value="false">false</option>
                 </select>
               </label>
+              <div className="dashboard-full-width dashboard-row-card">
+                <h3>Miniboss Override</h3>
+                <div className="muted">Day 1 miniboss is forced off by runtime rule.</div>
+                <label>
+                  <span className="muted">suppressDay1MiniBoss (locked)</span>
+                  <select value={selectedLevel.minibossRules.suppressDay1MiniBoss ? 'true' : 'false'} disabled>
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                  </select>
+                </label>
+                {!selectedLevel.minibossRules.suppressDay1MiniBoss && (
+                  <button
+                    className="btn"
+                    onClick={() =>
+                      patchSelectedLevel((level) => ({
+                        ...level,
+                        minibossRules: { ...level.minibossRules, suppressDay1MiniBoss: true }
+                      }))
+                    }
+                  >
+                    Enforce Rule
+                  </button>
+                )}
+              </div>
             </div>
           )}
 

@@ -35,37 +35,43 @@ const DEFAULT_PADS: BuildingPad[] = [
     id: 'pad_a',
     x: 220,
     y: 180,
-    allowedTypes: ['barracks', 'range', 'stable']
+    padType: 'UNIT_PRODUCER',
+    allowedTypes: ['barracks', 'range']
   },
   {
     id: 'pad_b',
     x: 360,
     y: 320,
-    allowedTypes: ['gold_mine', 'house', 'watchtower']
+    padType: 'TOWER_ONLY',
+    allowedTypes: ['gold_mine', 'house', 'watchtower', 'stable']
   },
   {
     id: 'pad_c',
     x: 520,
     y: 140,
-    allowedTypes: ['gold_mine', 'house', 'blacksmith']
+    padType: 'TOWER_ONLY',
+    allowedTypes: ['gold_mine', 'house', 'blacksmith', 'stable']
   },
   {
     id: 'pad_d',
     x: 320,
     y: 620,
-    allowedTypes: ['barracks', 'range', 'stable']
+    padType: 'TOWER_ONLY',
+    allowedTypes: ['gold_mine', 'house', 'watchtower', 'stable']
   },
   {
     id: 'pad_e',
     x: 620,
     y: 340,
-    allowedTypes: ['house', 'watchtower', 'blacksmith', 'hero_recruiter']
+    padType: 'HERO',
+    allowedTypes: ['hero_recruiter']
   },
   {
     id: 'pad_f',
     x: 840,
     y: 220,
-    allowedTypes: ['gold_mine', 'blacksmith', 'stable']
+    padType: 'TOWER_ONLY',
+    allowedTypes: ['gold_mine', 'house', 'watchtower', 'blacksmith', 'stable']
   }
 ]
 
@@ -111,11 +117,7 @@ const RAW_LEVELS = [
     heroLoadout: DEFAULT_HERO,
     bossId: 'boss',
     buildingPads: DEFAULT_PADS,
-    startingBuildings: [
-      { id: 'gold_mine', level: 1, padId: 'pad_c' },
-      { id: 'house', level: 1, padId: 'pad_b' },
-      { id: 'barracks', level: 1, padId: 'pad_a' }
-    ],
+    startingBuildings: [],
     goals: [
       { id: 'goal_survive_3', type: 'survive_days', label: 'Survive until Day 3', target: 3 },
       { id: 'goal_gold_120', type: 'total_gold_earned', label: 'Earn 120 total gold', target: 120 }
@@ -126,7 +128,6 @@ const RAW_LEVELS = [
         waveMode: 'sequential',
         waveDelaySec: 6,
         enemyModifiers: { hpMultiplier: 1, attackMultiplier: 1 },
-        miniBossAfterWave: 2,
         waves: [
           {
             id: 'd1_w1',
@@ -229,12 +230,7 @@ const RAW_LEVELS = [
     heroLoadout: DEFAULT_HERO,
     bossId: 'boss',
     buildingPads: DEFAULT_PADS,
-    startingBuildings: [
-      { id: 'gold_mine', level: 1, padId: 'pad_c' },
-      { id: 'house', level: 1, padId: 'pad_b' },
-      { id: 'barracks', level: 1, padId: 'pad_a' },
-      { id: 'range', level: 1, padId: 'pad_d' }
-    ],
+    startingBuildings: [],
     goals: [
       { id: 'goal_survive_4', type: 'survive_days', label: 'Survive until Day 4', target: 4 },
       { id: 'goal_boss_4', type: 'defeat_boss_day', label: 'Defeat the Boss on Day 4', target: 1, day: 4 }
@@ -245,7 +241,6 @@ const RAW_LEVELS = [
         waveMode: 'sequential',
         waveDelaySec: 6,
         enemyModifiers: { hpMultiplier: 1.05, attackMultiplier: 1.05 },
-        miniBossAfterWave: 2,
         waves: [
           { id: 'l2_d1_w1', units: [{ type: 'infantry', squads: 3 }, { type: 'archer', squads: 2 }] },
           { id: 'l2_d1_w2', units: [{ type: 'infantry', squads: 2 }, { type: 'cavalry', squads: 1 }] }
@@ -318,13 +313,7 @@ const RAW_LEVELS = [
     heroLoadout: DEFAULT_HERO,
     bossId: 'boss',
     buildingPads: DEFAULT_PADS,
-    startingBuildings: [
-      { id: 'gold_mine', level: 1, padId: 'pad_c' },
-      { id: 'house', level: 1, padId: 'pad_b' },
-      { id: 'barracks', level: 1, padId: 'pad_a' },
-      { id: 'range', level: 1, padId: 'pad_d' },
-      { id: 'stable', level: 1, padId: 'pad_f' }
-    ],
+    startingBuildings: [],
     goals: [
       { id: 'goal_survive_5', type: 'survive_days', label: 'Survive until Day 5', target: 5 },
       { id: 'goal_gold_400', type: 'total_gold_earned', label: 'Earn 400 total gold', target: 400 }
@@ -335,7 +324,6 @@ const RAW_LEVELS = [
         waveMode: 'sequential',
         waveDelaySec: 6,
         enemyModifiers: { hpMultiplier: 1.1, attackMultiplier: 1.05 },
-        miniBossAfterWave: 2,
         waves: [
           { id: 'l3_d1_w1', units: [{ type: 'infantry', squads: 3 }, { type: 'archer', squads: 2 }] },
           { id: 'l3_d1_w2', units: [{ type: 'infantry', squads: 3 }, { type: 'cavalry', squads: 1 }] }

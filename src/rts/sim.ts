@@ -1,7 +1,9 @@
 import { ELITE_DEFS } from '../config/elites'
 import { HERO_RECRUIT_DEFS } from '../config/heroes'
 import { UNIT_DEFS, UnitType } from '../config/units'
+import { getProducerLevelStatMultipliers, isUnitProducerBuilding } from '../game/rules/progression'
 import { getHQBonusHp, getUnitStatMultipliers } from '../run/economy'
+import { getRunLevel } from '../run/runState'
 import { RunState } from '../run/types'
 import { buildGrid, findPath, Grid } from './pathfinding'
 import {
@@ -78,13 +80,14 @@ const createTroopEntity = (
   team: 'player' | 'enemy',
   pos: Vec2,
   squadSize: number,
-  multipliers: { hp: number; attack: number },
+  multipliers: { hp: number; attack: number; attackSpeed?: number },
   squadId?: string,
   tier: EntityState['tier'] = 'normal'
 ): EntityState => {
   const troop = UNIT_DEFS[type]
   const hp = troop.stats.hp * squadSize * multipliers.hp
   const attack = troop.stats.attack * squadSize * multipliers.attack
+  const attackSpeed = Math.max(0.2, multipliers.attackSpeed ?? 1)
   return {
     id: ENTITY_ID(),
     team,
@@ -98,7 +101,7 @@ const createTroopEntity = (
     attack,
     range: troop.stats.range,
     speed: troop.stats.speed,
-    cooldown: troop.stats.cooldown,
+    cooldown: troop.stats.cooldown / attackSpeed,
     cooldownLeft: 0,
     order: { type: 'stop' },
     targetId: undefined,
@@ -329,8 +332,17 @@ export const createSimState = (
   })
 
   const statMultipliers = getUnitStatMultipliers(run)
+  const level = getRunLevel(run)
   run.unitRoster.forEach((squad) => {
     const mult = statMultipliers[squad.type]
+    const ownerBuilding =
+      (squad.ownerBuildingPadId && run.buildings.find((building) => building.padId === squad.ownerBuildingPadId)) ?? null
+    const ownerBuildingId = squad.ownerBuildingId ?? ownerBuilding?.id
+    const ownerBuildingLevel = squad.ownerBuildingLevel ?? ownerBuilding?.level ?? 1
+    const producerMult =
+      ownerBuildingId && isUnitProducerBuilding(ownerBuildingId)
+        ? getProducerLevelStatMultipliers(level.producerDefaults, ownerBuildingLevel)
+        : { hp: 1, attack: 1, attackSpeed: 1 }
     const basePos = squad.spawnPos ?? combat.map.playerSpawn
     const spawnPos = squad.spawnPos ? { ...basePos } : jitter(basePos)
     entities.push(
@@ -339,7 +351,11 @@ export const createSimState = (
         'player',
         spawnPos,
         squad.size,
-        { hp: 1 + mult.hp, attack: 1 + mult.attack },
+        {
+          hp: (1 + mult.hp) * producerMult.hp,
+          attack: (1 + mult.attack) * producerMult.attack,
+          attackSpeed: producerMult.attackSpeed
+        },
         squad.id
       )
     )

@@ -2,6 +2,20 @@ import { BUILDING_CAPS_BY_LEVEL, STRONGHOLD_LEVELS } from '../../config/strongho
 import { BuildingId, BUILDING_DEFS } from '../../config/buildings'
 import { EliteId, ELITE_DEFS } from '../../config/elites'
 import { UnitType, UNIT_DEFS } from '../../config/units'
+import {
+  DEFAULT_PAD_CONSTRAINTS,
+  DEFAULT_PRODUCER_DEFAULTS,
+  PadConstraintRules,
+  PadType,
+  ProducerDefaults,
+  buildPadUnlockLevelsFromByLevel,
+  buildPadUnlocksByLevelFromLevels,
+  countPadsByType,
+  getAllowedBuildingTypesForPadType,
+  inferPadType,
+  isBuildingAllowedOnPad,
+  isBuildingAllowedOnPadType
+} from '../rules/progression'
 
 export interface WaveUnitGroup {
   type: UnitType
@@ -76,6 +90,7 @@ export interface BuildingPad {
   id: string
   x: number
   y: number
+  padType: PadType
   allowedTypes: BuildingId[]
 }
 
@@ -118,6 +133,7 @@ export interface LevelStrongholdTuning {
   globalMaxBuildingLevelCap: number
   upgradeCostsByLevel: number[]
   padUnlockLevels: Record<string, number>
+  padUnlocksByLevel: Record<string, string[]>
   buildingUnlockLevels: Record<BuildingId, number>
   perBuildingLevelCaps: Record<BuildingId, number[]>
   producerUnitCapPerStrongholdLevel: number
@@ -169,6 +185,11 @@ export interface LevelDefinition {
   version: number
   metadata: LevelMetadata
   economy: LevelEconomy
+  padConstraints: PadConstraintRules
+  producerDefaults: ProducerDefaults
+  minibossRules: {
+    suppressDay1MiniBoss: boolean
+  }
   stronghold: LevelStrongholdTuning
   buildings: Record<BuildingId, LevelBuildingTuning>
   units: Record<UnitType, LevelUnitTuning>
@@ -200,7 +221,7 @@ export interface LevelDefinition {
   }
 }
 
-export const LEVEL_DEFINITION_VERSION = 2
+export const LEVEL_DEFINITION_VERSION = 3
 
 type JsonSchema = Record<string, unknown>
 
@@ -208,7 +229,23 @@ type JsonSchema = Record<string, unknown>
 export const LEVEL_DEFINITION_SCHEMA: JsonSchema = {
   $id: 'LevelDefinition',
   type: 'object',
-  required: ['version', 'metadata', 'economy', 'stronghold', 'buildings', 'units', 'enemies', 'hero', 'id', 'name', 'days', 'map'],
+  required: [
+    'version',
+    'metadata',
+    'economy',
+    'padConstraints',
+    'producerDefaults',
+    'minibossRules',
+    'stronghold',
+    'buildings',
+    'units',
+    'enemies',
+    'hero',
+    'id',
+    'name',
+    'days',
+    'map'
+  ],
   properties: {
     version: { type: 'number' },
     metadata: {
@@ -233,6 +270,27 @@ export const LEVEL_DEFINITION_SCHEMA: JsonSchema = {
         endOfDayGoldBonus: { type: 'number', minimum: 0 },
         endOfDayGoldScale: { type: 'number', minimum: 0 },
         buildPhaseDurationSec: { type: 'number', minimum: 0 }
+      }
+    },
+    padConstraints: {
+      type: 'object',
+      properties: {
+        minTowerPads: { type: 'number', minimum: 0 },
+        maxUnitProducerPads: { type: 'number', minimum: 0 },
+        maxHeroPads: { type: 'number', minimum: 0 }
+      }
+    },
+    producerDefaults: {
+      type: 'object',
+      properties: {
+        unitsOnBuild: { type: 'number', minimum: 0 },
+        unitsPerUpgradeLevel: { type: 'number', minimum: 0 }
+      }
+    },
+    minibossRules: {
+      type: 'object',
+      properties: {
+        suppressDay1MiniBoss: { type: 'boolean' }
       }
     },
     buildingPads: { type: 'array' },
@@ -301,14 +359,18 @@ const asArray = <T>(value: unknown, fallback: T[]): T[] => (Array.isArray(value)
 
 const defaultStronghold = (): LevelStrongholdTuning => {
   const padUnlockLevels: Record<string, number> = {}
+  const padUnlocksByLevel: Record<string, string[]> = {}
   const buildingUnlockLevels: Record<BuildingId, number> = Object.keys(BUILDING_DEFS).reduce((acc, id) => {
     acc[id as BuildingId] = 1
     return acc
   }, {} as Record<BuildingId, number>)
 
   STRONGHOLD_LEVELS.forEach((entry) => {
+    const levelKey = String(entry.level)
+    if (!padUnlocksByLevel[levelKey]) padUnlocksByLevel[levelKey] = []
     entry.unlockPads?.forEach((padId) => {
       padUnlockLevels[padId] = Math.min(padUnlockLevels[padId] ?? entry.level, entry.level)
+      padUnlocksByLevel[levelKey].push(padId)
     })
     entry.unlockBuildingTypes.forEach((id) => {
       buildingUnlockLevels[id] = Math.min(buildingUnlockLevels[id] ?? entry.level, entry.level)
@@ -321,6 +383,7 @@ const defaultStronghold = (): LevelStrongholdTuning => {
     globalMaxBuildingLevelCap: 3,
     upgradeCostsByLevel: STRONGHOLD_LEVELS.map((entry) => entry.upgradeCost),
     padUnlockLevels,
+    padUnlocksByLevel,
     buildingUnlockLevels,
     perBuildingLevelCaps: Object.keys(BUILDING_DEFS).reduce((acc, id) => {
       const key = id as BuildingId
@@ -403,6 +466,11 @@ export const createDefaultLevelDefinition = (id = DEFAULT_LEVEL_ID): LevelDefini
       endOfDayGoldScale: 5,
       buildPhaseDurationSec: 0
     },
+    padConstraints: { ...DEFAULT_PAD_CONSTRAINTS },
+    producerDefaults: { ...DEFAULT_PRODUCER_DEFAULTS, unitStatScalingPerLevel: { ...DEFAULT_PRODUCER_DEFAULTS.unitStatScalingPerLevel } },
+    minibossRules: {
+      suppressDay1MiniBoss: true
+    },
     stronghold,
     buildings: defaultBuildings(),
     units: defaultUnits(),
@@ -443,7 +511,6 @@ export const createDefaultLevelDefinition = (id = DEFAULT_LEVEL_ID): LevelDefini
         waveMode: 'sequential',
         waveDelaySec: 6,
         enemyModifiers: { hpMultiplier: 1, attackMultiplier: 1 },
-        miniBossAfterWave: 2,
         waves: [
           {
             id: 'd1_w1',
@@ -480,6 +547,54 @@ const migrateEconomy = (legacy: Record<string, unknown>, fallback: LevelDefiniti
   }
 }
 
+const migratePadConstraints = (legacy: Record<string, unknown>, fallback: LevelDefinition): PadConstraintRules => {
+  const padConstraints = asObject(legacy.padConstraints)
+  return {
+    minTowerPads: clampNonNegative(asNumber(padConstraints.minTowerPads, fallback.padConstraints.minTowerPads), fallback.padConstraints.minTowerPads),
+    maxUnitProducerPads: clampNonNegative(
+      asNumber(padConstraints.maxUnitProducerPads, fallback.padConstraints.maxUnitProducerPads),
+      fallback.padConstraints.maxUnitProducerPads
+    ),
+    maxHeroPads: clampNonNegative(asNumber(padConstraints.maxHeroPads, fallback.padConstraints.maxHeroPads), fallback.padConstraints.maxHeroPads)
+  }
+}
+
+const migrateProducerDefaults = (legacy: Record<string, unknown>, fallback: LevelDefinition): ProducerDefaults => {
+  const producerDefaults = asObject(legacy.producerDefaults)
+  const scaling = asObject(producerDefaults.unitStatScalingPerLevel)
+  return {
+    unitsOnBuild: clampNonNegative(asNumber(producerDefaults.unitsOnBuild, fallback.producerDefaults.unitsOnBuild), fallback.producerDefaults.unitsOnBuild),
+    unitsPerUpgradeLevel: clampNonNegative(
+      asNumber(producerDefaults.unitsPerUpgradeLevel, fallback.producerDefaults.unitsPerUpgradeLevel),
+      fallback.producerDefaults.unitsPerUpgradeLevel
+    ),
+    unitStatScalingPerLevel: {
+      healthMultPerLevel: clampNonNegative(
+        asNumber(scaling.healthMultPerLevel, fallback.producerDefaults.unitStatScalingPerLevel.healthMultPerLevel),
+        fallback.producerDefaults.unitStatScalingPerLevel.healthMultPerLevel
+      ),
+      damageMultPerLevel: clampNonNegative(
+        asNumber(scaling.damageMultPerLevel, fallback.producerDefaults.unitStatScalingPerLevel.damageMultPerLevel),
+        fallback.producerDefaults.unitStatScalingPerLevel.damageMultPerLevel
+      ),
+      attackSpeedMultPerLevel: clampNonNegative(
+        asNumber(scaling.attackSpeedMultPerLevel, fallback.producerDefaults.unitStatScalingPerLevel.attackSpeedMultPerLevel),
+        fallback.producerDefaults.unitStatScalingPerLevel.attackSpeedMultPerLevel
+      )
+    }
+  }
+}
+
+const migrateMinibossRules = (legacy: Record<string, unknown>, fallback: LevelDefinition) => {
+  const minibossRules = asObject(legacy.minibossRules)
+  return {
+    suppressDay1MiniBoss:
+      typeof minibossRules.suppressDay1MiniBoss === 'boolean'
+        ? minibossRules.suppressDay1MiniBoss
+        : fallback.minibossRules.suppressDay1MiniBoss
+  }
+}
+
 const migrateStronghold = (legacy: Record<string, unknown>, fallback: LevelDefinition): LevelStrongholdTuning => {
   const stronghold = asObject(legacy.stronghold)
   const defaults = fallback.stronghold
@@ -490,7 +605,30 @@ const migrateStronghold = (legacy: Record<string, unknown>, fallback: LevelDefin
     nextPerBuildingCaps[id] = raw.map((value, index) => clampNonNegative(asNumber(value, defaults.perBuildingLevelCaps[id][index] ?? 0)))
   })
 
-  const nextPadUnlockLevels = { ...defaults.padUnlockLevels, ...(asObject(stronghold.padUnlockLevels) as Record<string, number>) }
+  const rawPadUnlockLevels = asObject(stronghold.padUnlockLevels)
+  const rawPadUnlocksByLevel = asObject(stronghold.padUnlocksByLevel) as Record<string, unknown>
+
+  const nextPadUnlocksByLevel: Record<string, string[]> = {}
+  Object.keys(defaults.padUnlocksByLevel).forEach((key) => {
+    nextPadUnlocksByLevel[key] = defaults.padUnlocksByLevel[key].slice()
+  })
+  Object.keys(rawPadUnlocksByLevel).forEach((key) => {
+    const ids = asArray<string>(rawPadUnlocksByLevel[key], [])
+    nextPadUnlocksByLevel[key] = Array.from(new Set(ids.filter((id) => id.trim().length > 0)))
+  })
+
+  const normalizedRawPadUnlockLevels: Record<string, number> = {}
+  Object.keys(rawPadUnlockLevels).forEach((padId) => {
+    normalizedRawPadUnlockLevels[padId] = Math.max(1, Math.floor(asNumber(rawPadUnlockLevels[padId], 1)))
+  })
+
+  const byLevelDerivedUnlocks = buildPadUnlockLevelsFromByLevel(nextPadUnlocksByLevel)
+  const nextPadUnlockLevels = {
+    ...defaults.padUnlockLevels,
+    ...normalizedRawPadUnlockLevels,
+    ...byLevelDerivedUnlocks
+  }
+  const normalizedPadUnlocksByLevel = buildPadUnlocksByLevelFromLevels(nextPadUnlockLevels)
   const nextBuildingUnlockLevels = { ...defaults.buildingUnlockLevels }
   const rawBuildingUnlockLevels = asObject(stronghold.buildingUnlockLevels)
   ;(Object.keys(BUILDING_DEFS) as BuildingId[]).forEach((id) => {
@@ -511,6 +649,7 @@ const migrateStronghold = (legacy: Record<string, unknown>, fallback: LevelDefin
       clampNonNegative(asNumber(value, defaults.upgradeCostsByLevel[index] ?? 0))
     ),
     padUnlockLevels: nextPadUnlockLevels,
+    padUnlocksByLevel: normalizedPadUnlocksByLevel,
     buildingUnlockLevels: nextBuildingUnlockLevels,
     perBuildingLevelCaps: nextPerBuildingCaps,
     producerUnitCapPerStrongholdLevel: clampNonNegative(
@@ -665,11 +804,26 @@ const migrateBuildingPads = (legacy: Record<string, unknown>, fallback: LevelDef
   const raw = asArray<unknown>(legacy.buildingPads, fallback.buildingPads as unknown[])
   return raw.map((rawPad, index) => {
     const pad = asObject(rawPad)
+    const rawAllowedTypes = asArray<BuildingId>(pad.allowedTypes, []).filter((id): id is BuildingId => Boolean(BUILDING_DEFS[id]))
+    const rawPadType = asString(pad.padType, '')
+    const inferredPadType = inferPadType(rawAllowedTypes)
+    const padType: PadType =
+      rawPadType === 'UNIT_PRODUCER' || rawPadType === 'HERO' || rawPadType === 'TOWER_ONLY'
+        ? (rawPadType as PadType)
+        : inferredPadType
+    const normalizedAllowedTypes = Array.from(
+      new Set(
+        (rawAllowedTypes.length > 0 ? rawAllowedTypes : getAllowedBuildingTypesForPadType(padType)).filter((buildingId) =>
+          isBuildingAllowedOnPadType(padType, buildingId)
+        )
+      )
+    )
     return {
-    id: asString(pad.id, `pad_${index}`),
-    x: asNumber(pad.x, 0),
-    y: asNumber(pad.y, 0),
-    allowedTypes: asArray<BuildingId>(pad.allowedTypes, []).filter((id): id is BuildingId => Boolean(BUILDING_DEFS[id]))
+      id: asString(pad.id, `pad_${index}`),
+      x: asNumber(pad.x, 0),
+      y: asNumber(pad.y, 0),
+      padType,
+      allowedTypes: normalizedAllowedTypes.length > 0 ? normalizedAllowedTypes : getAllowedBuildingTypesForPadType(padType)
     }
   })
 }
@@ -782,6 +936,9 @@ export const migrateLevelDefinition = (input: unknown): LevelDefinition => {
   const legacy = asObject(input)
   const metadata = migrateMetadata(legacy, fallback)
   const economy = migrateEconomy(legacy, fallback)
+  const padConstraints = migratePadConstraints(legacy, fallback)
+  const producerDefaults = migrateProducerDefaults(legacy, fallback)
+  const minibossRules = migrateMinibossRules(legacy, fallback)
   const stronghold = migrateStronghold(legacy, fallback)
   const hero = migrateHero(legacy, fallback)
   const heroLoadout = migrateHeroLoadout(legacy, fallback, hero)
@@ -789,6 +946,9 @@ export const migrateLevelDefinition = (input: unknown): LevelDefinition => {
     version: LEVEL_DEFINITION_VERSION,
     metadata,
     economy,
+    padConstraints,
+    producerDefaults,
+    minibossRules,
     stronghold,
     buildings: migrateBuildings(legacy, fallback),
     units: migrateUnits(legacy, fallback),
@@ -852,8 +1012,111 @@ export const validateLevelDefinition = (level: LevelDefinition): LevelValidation
     pad.allowedTypes.forEach((id, allowedIndex) => {
       if (!buildingIds.has(id)) {
         pushIssue(issues, 'error', `buildingPads.${index}.allowedTypes.${allowedIndex}`, `Unknown building type "${id}".`)
+        return
+      }
+      if (!isBuildingAllowedOnPad(pad, id)) {
+        pushIssue(
+          issues,
+          'warning',
+          `buildingPads.${index}.allowedTypes.${allowedIndex}`,
+          `Building "${id}" does not match pad type "${pad.padType}".`
+        )
       }
     })
+  })
+
+  const padCounts = countPadsByType(level)
+  if (padCounts.tower < level.padConstraints.minTowerPads) {
+    pushIssue(
+      issues,
+      'error',
+      'padConstraints.minTowerPads',
+      `Tower-only pads are below minimum (${padCounts.tower}/${level.padConstraints.minTowerPads}).`
+    )
+  }
+  if (padCounts.producer > level.padConstraints.maxUnitProducerPads) {
+    pushIssue(
+      issues,
+      'error',
+      'padConstraints.maxUnitProducerPads',
+      `Unit producer pads exceed max (${padCounts.producer}/${level.padConstraints.maxUnitProducerPads}).`
+    )
+  }
+  if (padCounts.hero > level.padConstraints.maxHeroPads) {
+    pushIssue(
+      issues,
+      'error',
+      'padConstraints.maxHeroPads',
+      `Hero pads exceed max (${padCounts.hero}/${level.padConstraints.maxHeroPads}).`
+    )
+  }
+
+  const unlockLevels = level.stronghold.padUnlockLevels
+  Object.keys(unlockLevels).forEach((padId) => {
+    const unlockLevel = unlockLevels[padId]
+    if (!padIds.has(padId)) {
+      pushIssue(issues, 'error', `stronghold.padUnlockLevels.${padId}`, `Pad "${padId}" does not exist in buildingPads.`)
+    }
+    if (unlockLevel < 1) {
+      pushIssue(issues, 'error', `stronghold.padUnlockLevels.${padId}`, 'Pad unlock level must be >= 1.')
+    }
+    if (unlockLevel > level.stronghold.maxLevel) {
+      pushIssue(
+        issues,
+        'warning',
+        `stronghold.padUnlockLevels.${padId}`,
+        `Pad unlock level (${unlockLevel}) is above stronghold max level (${level.stronghold.maxLevel}).`
+      )
+    }
+  })
+
+  const padLevelAssignments = new Map<string, number>()
+  Object.keys(level.stronghold.padUnlocksByLevel).forEach((levelKey) => {
+    const unlockLevel = Number(levelKey)
+    if (!Number.isFinite(unlockLevel) || unlockLevel < 1) {
+      pushIssue(issues, 'error', `stronghold.padUnlocksByLevel.${levelKey}`, 'Stronghold level key must be a number >= 1.')
+      return
+    }
+    const entries = level.stronghold.padUnlocksByLevel[levelKey] ?? []
+    const seenAtLevel = new Set<string>()
+    entries.forEach((padId, index) => {
+      if (!padIds.has(padId)) {
+        pushIssue(issues, 'error', `stronghold.padUnlocksByLevel.${levelKey}.${index}`, `Pad "${padId}" does not exist in buildingPads.`)
+      }
+      if (seenAtLevel.has(padId)) {
+        pushIssue(
+          issues,
+          'error',
+          `stronghold.padUnlocksByLevel.${levelKey}.${index}`,
+          `Pad "${padId}" is duplicated at stronghold level ${unlockLevel}.`
+        )
+      }
+      seenAtLevel.add(padId)
+      if (padLevelAssignments.has(padId)) {
+        pushIssue(
+          issues,
+          'warning',
+          `stronghold.padUnlocksByLevel.${levelKey}.${index}`,
+          `Pad "${padId}" appears in multiple unlock levels (${padLevelAssignments.get(padId)} and ${unlockLevel}).`
+        )
+      } else {
+        padLevelAssignments.set(padId, unlockLevel)
+      }
+    })
+  })
+
+  const derivedPadUnlockLevels = buildPadUnlockLevelsFromByLevel(level.stronghold.padUnlocksByLevel)
+  Object.keys(derivedPadUnlockLevels).forEach((padId) => {
+    const byLevelUnlock = derivedPadUnlockLevels[padId]
+    const directUnlock = unlockLevels[padId]
+    if (typeof directUnlock === 'number' && directUnlock !== byLevelUnlock) {
+      pushIssue(
+        issues,
+        'warning',
+        `stronghold.padUnlockLevels.${padId}`,
+        `padUnlockLevels (${directUnlock}) does not match padUnlocksByLevel (${byLevelUnlock}); runtime will normalize it.`
+      )
+    }
   })
 
   level.startingBuildings.forEach((building, index) => {
@@ -906,6 +1169,25 @@ export const validateLevelDefinition = (level: LevelDefinition): LevelValidation
       })
     })
   })
+
+  if (!level.minibossRules.suppressDay1MiniBoss) {
+    pushIssue(
+      issues,
+      'warning',
+      'minibossRules.suppressDay1MiniBoss',
+      'Day 1 miniboss suppression is disabled. Runtime design expects this rule to stay enabled.'
+    )
+  }
+
+  const dayOne = level.days.find((day) => day.day === 1)
+  if (dayOne && (dayOne.miniBossAfterWave ?? 0) > 0) {
+    pushIssue(
+      issues,
+      'warning',
+      'days',
+      'Day 1 has a miniboss configured, but runtime suppresses miniboss spawns on day 1.'
+    )
+  }
 
   if (level.stronghold.globalMaxBuildingLevelCap > 3) {
     pushIssue(

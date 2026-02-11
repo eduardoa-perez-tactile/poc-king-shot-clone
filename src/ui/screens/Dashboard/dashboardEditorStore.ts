@@ -170,10 +170,12 @@ export const subscribeDashboardEditor = (listener: () => void) => {
 }
 
 export const useDashboardEditorState = <T>(selector: (snapshot: DashboardEditorState) => T): T =>
-  useSyncExternalStore(
-    subscribeDashboardEditor,
-    () => selector(state),
-    () => selector(state)
+  selector(
+    useSyncExternalStore(
+      subscribeDashboardEditor,
+      () => state,
+      () => state
+    )
   )
 
 export const getDashboardEditorState = () => state
