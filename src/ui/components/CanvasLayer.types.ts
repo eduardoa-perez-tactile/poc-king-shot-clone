@@ -28,6 +28,7 @@ export interface CanvasTelemetry {
 export interface CanvasHandle {
   panTo: (x: number, y: number) => void
   castAbility: (key: 'q' | 'e') => void
+  rallyUnits: () => void
   resetDay: () => void
 }
 

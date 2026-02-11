@@ -825,6 +825,15 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
               disabled={runPhase !== 'combat'}
               onClick={() => canvasRef.current?.castAbility('e')}
             />
+            <AbilityButton
+              name="Rally"
+              description="Call all friendly squads to ring slots around your hero."
+              keyHint="T"
+              cooldown={0}
+              readyIn={0}
+              disabled={runPhase !== 'build' && runPhase !== 'combat'}
+              onClick={() => canvasRef.current?.rallyUnits()}
+            />
           </div>
         </div>
 

@@ -208,6 +208,11 @@ export const CanvasLayer2D = React.memo(
       }
     }, [phase, combat, resetOnBuild, run])
 
+    const rallyToHero = () => {
+      const rallied = rallyFriendlyToHero(simRef.current, gridRef.current)
+      simRef.current = rallied.state
+    }
+
     useImperativeHandle(ref, () => ({
       panTo: (x: number, y: number) => {
         const canvas = canvasRef.current
@@ -220,6 +225,10 @@ export const CanvasLayer2D = React.memo(
         if (phaseRef.current !== 'combat' || pausedRef.current) return
         const next = useHeroAbility(simRef.current, key)
         simRef.current = next
+      },
+      rallyUnits: () => {
+        if (pausedRef.current) return
+        rallyToHero()
       },
       resetDay: () => {
         simRef.current = createSimState(combatRef.current, runRef.current)
@@ -375,8 +384,7 @@ export const CanvasLayer2D = React.memo(
           return
         }
         if (event.code === 'KeyT' && !pausedRef.current) {
-          const rallied = rallyFriendlyToHero(simRef.current, gridRef.current)
-          simRef.current = rallied.state
+          rallyToHero()
           return
         }
         if (event.key === 'Escape') {
