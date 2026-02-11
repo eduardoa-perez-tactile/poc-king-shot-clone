@@ -507,12 +507,26 @@ body,
 }
 
 input,
-select {
+select,
+textarea {
   background: #0b1220;
   border: 1px solid var(--border);
   color: var(--text);
   padding: 6px 8px;
   border-radius: 6px;
+}
+
+textarea::placeholder,
+input::placeholder {
+  color: rgba(145, 162, 184, 0.7);
+}
+
+textarea:focus,
+input:focus,
+select:focus {
+  outline: none;
+  border-color: rgba(76, 201, 240, 0.65);
+  box-shadow: 0 0 0 1px rgba(76, 201, 240, 0.2);
 }
 
 .quest-row {
