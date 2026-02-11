@@ -40,6 +40,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Activity, AlertTriangle, ArrowUp, Building2, Crosshair, Grid3x3, Swords } from 'lucide-react'
 import { getStrongholdHqBaseHp } from '../../config/stronghold'
 import { isBuildingAllowedOnPad, isUnitProducerBuilding } from '../../game/rules/progression'
+import type { CombatResult } from '../../rts/types'
 
 const SQUAD_SPAWN_OFFSETS = [
   { x: -90, y: -70 },
@@ -674,13 +675,14 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
     upgradeStronghold()
   }
 
-  const handleComplete = useCallback((result: { victory: boolean; lostSquadIds: string[]; lostHeroIds: string[]; bossDefeated: boolean; hqHpPercent: number }) => {
+  const handleComplete = useCallback((result: CombatResult) => {
     resolveCombat({
       victory: result.victory,
       lostSquadIds: result.lostSquadIds,
       lostHeroIds: result.lostHeroIds,
       bossDefeated: result.bossDefeated,
-      hqHpPercent: result.hqHpPercent
+      hqHpPercent: result.hqHpPercent,
+      playerPositions: result.playerPositions
     })
   }, [resolveCombat])
 

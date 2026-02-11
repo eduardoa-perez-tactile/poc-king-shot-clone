@@ -32,6 +32,7 @@ import {
 import { getBuildingMaxHp } from './economy'
 import { MetaState, RunPhase, RunState } from './types'
 import { BuildingId } from '../config/buildings'
+import type { PlayerPositionSnapshot } from '../rts/types'
 
 export interface CombatOutcome {
   victory: boolean
@@ -39,6 +40,7 @@ export interface CombatOutcome {
   lostHeroIds: string[]
   bossDefeated: boolean
   hqHpPercent: number
+  playerPositions?: PlayerPositionSnapshot
 }
 
 interface RunStore {
@@ -205,8 +207,21 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updated = activeRun
     const withBoss = outcome.bossDefeated ? markBossDefeated(updated, updated.dayNumber) : updated
     const withHp = markHqHp(withBoss, withBoss.dayNumber, outcome.hqHpPercent)
-    const daysSurvived = outcome.victory ? Math.max(withHp.daysSurvived, withHp.dayNumber) : withHp.daysSurvived
-    const runWithDays = { ...withHp, daysSurvived }
+    const withPositions = outcome.playerPositions
+      ? {
+          ...withHp,
+          unitRoster: withHp.unitRoster.map((squad) => {
+            const nextPos = outcome.playerPositions?.squads[squad.id]
+            return nextPos ? { ...squad, spawnPos: { ...nextPos } } : squad
+          }),
+          heroRoster: withHp.heroRoster.map((hero) => {
+            const nextPos = outcome.playerPositions?.heroes[hero.id]
+            return nextPos ? { ...hero, spawnPos: { ...nextPos } } : hero
+          })
+        }
+      : withHp
+    const daysSurvived = outcome.victory ? Math.max(withPositions.daysSurvived, withPositions.dayNumber) : withPositions.daysSurvived
+    const runWithDays = { ...withPositions, daysSurvived }
     const healedBuildings = outcome.victory ? resetBuildingHp(runWithDays) : runWithDays
     const paid = outcome.victory ? applyDayEndRewards(healedBuildings, level) : { run: healedBuildings, breakdown: undefined }
     const next = recomputeGoalsProgress(paid.run, level)

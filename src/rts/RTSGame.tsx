@@ -1,12 +1,23 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { BuildingPad } from '../config/levels'
 import { RunBuilding, RunState } from '../run/types'
-import { createGridForCombat, createSimState, buildCombatResult, issueOrder, stepSim, useHeroAbility } from './sim'
+import {
+  createGridForCombat,
+  createSimState,
+  buildCombatResult,
+  getPlayerPositionSnapshot,
+  issueOrder,
+  rallyFriendlyToHero,
+  stepSim,
+  type PlayerInputState,
+  useHeroAbility
+} from './sim'
 import { renderScene, screenToWorld, clampCamera, Camera } from './render'
 import { hitTestPad } from './pads'
 import { CombatDefinition, CombatResult, EntityState, Order, SimState, Vec2 } from './types'
 import { UNIT_DEFS } from '../config/units'
 import { Grid } from './pathfinding'
+import { isGameplayKeyboardBlockedByFocus } from './input/focusGuard'
 
 const FIXED_DT = 1 / 30
 
@@ -50,6 +61,7 @@ export const RTSGame: React.FC<{
   const rafRef = useRef<number | null>(null)
   const dragMovedRef = useRef(false)
   const controlGroups = useRef<Record<number, string[]>>({})
+  const playerInputRef = useRef<PlayerInputState>({ up: false, down: false, left: false, right: false })
   const endedRef = useRef(false)
   const phaseRef = useRef(phase)
   const dayRef = useRef(combat.dayNumber)
@@ -60,10 +72,12 @@ export const RTSGame: React.FC<{
 
   useEffect(() => {
     if (combat.dayNumber !== dayRef.current) {
+      const playerPositions = getPlayerPositionSnapshot(simRef.current)
       const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
       const next = createSimState(combat, run, {
         heroPos: hero ? { ...hero.pos } : combat.map.playerSpawn,
-        heroHp: hero?.hp
+        heroHp: hero?.hp,
+        playerPositions
       })
       simRef.current = next
       setSim(next)
@@ -80,10 +94,12 @@ export const RTSGame: React.FC<{
     const prev = phaseRef.current
     phaseRef.current = phase
     if (prev === 'build' && phase === 'combat') {
+      const playerPositions = getPlayerPositionSnapshot(simRef.current)
       const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
       const next = createSimState(combat, run, {
         heroPos: hero ? { ...hero.pos } : combat.map.playerSpawn,
-        heroHp: hero?.hp
+        heroHp: hero?.hp,
+        playerPositions
       })
       simRef.current = next
       setSim(next)
@@ -92,10 +108,12 @@ export const RTSGame: React.FC<{
       endedRef.current = false
     }
     if (prev === 'combat' && phase === 'build') {
+      const playerPositions = getPlayerPositionSnapshot(simRef.current)
       const hero = simRef.current.entities.find((entity) => entity.kind === 'hero')
       const next = createSimState(combat, run, {
         heroPos: hero ? { ...hero.pos } : combat.map.playerSpawn,
-        heroHp: resetOnBuild ? undefined : hero?.hp
+        heroHp: resetOnBuild ? undefined : hero?.hp,
+        playerPositions
       })
       simRef.current = next
       setSim(next)
@@ -110,6 +128,33 @@ export const RTSGame: React.FC<{
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
+      if (isGameplayKeyboardBlockedByFocus()) return
+      if (event.key === 'ArrowUp') {
+        playerInputRef.current.up = true
+        event.preventDefault()
+        return
+      }
+      if (event.key === 'ArrowDown') {
+        playerInputRef.current.down = true
+        event.preventDefault()
+        return
+      }
+      if (event.key === 'ArrowLeft') {
+        playerInputRef.current.left = true
+        event.preventDefault()
+        return
+      }
+      if (event.key === 'ArrowRight') {
+        playerInputRef.current.right = true
+        event.preventDefault()
+        return
+      }
+      if (event.code === 'KeyT' && !paused) {
+        const rallied = rallyFriendlyToHero(simRef.current, gridRef.current)
+        simRef.current = rallied.state
+        setSim(rallied.state)
+        return
+      }
       if (event.key === 'Escape') {
         if (phase === 'combat') {
           setPaused((prev) => !prev)
@@ -139,21 +184,30 @@ export const RTSGame: React.FC<{
         const group = controlGroups.current[Number(event.key)]
         if (group) setSelectedIds(group)
       }
+    }
+    const handleKeyUp = (event: KeyboardEvent) => {
       if (event.key === 'ArrowUp') {
-        setCamera((prev) => ({ ...prev, y: prev.y - 40 }))
+        playerInputRef.current.up = false
+        return
       }
       if (event.key === 'ArrowDown') {
-        setCamera((prev) => ({ ...prev, y: prev.y + 40 }))
+        playerInputRef.current.down = false
+        return
       }
       if (event.key === 'ArrowLeft') {
-        setCamera((prev) => ({ ...prev, x: prev.x - 40 }))
+        playerInputRef.current.left = false
+        return
       }
       if (event.key === 'ArrowRight') {
-        setCamera((prev) => ({ ...prev, x: prev.x + 40 }))
+        playerInputRef.current.right = false
       }
     }
     window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
+    window.addEventListener('keyup', handleKeyUp)
+    return () => {
+      window.removeEventListener('keydown', handleKey)
+      window.removeEventListener('keyup', handleKeyUp)
+    }
   }, [selectedIds, phase, paused])
 
   const issueToSelected = (order: Order) => {
@@ -179,7 +233,13 @@ export const RTSGame: React.FC<{
 
       if (!paused) {
         while (acc >= FIXED_DT) {
-          const next = stepSim(simRef.current, FIXED_DT, gridRef.current, phase === 'combat' ? 'combat' : 'build')
+          const next = stepSim(
+            simRef.current,
+            FIXED_DT,
+            gridRef.current,
+            phase === 'combat' ? 'combat' : 'build',
+            playerInputRef.current
+          )
           simRef.current = next
           acc -= FIXED_DT
           if (next.status !== 'running' && !endedRef.current) {
@@ -444,7 +504,7 @@ export const RTSGame: React.FC<{
           )}
           <div className="rts-help">
             <div className="muted">Left-click units to select. Left-click ground to move. Right-click to attack or move.</div>
-            <div className="muted">Hover an enemy to inspect. Hotkeys: A attack-move, S stop, Q/E hero abilities, Ctrl+1/2/3 assign group, 1/2/3 recall.</div>
+            <div className="muted">Hover an enemy to inspect. Hotkeys: Arrows move hero, T rally, A attack-move, S stop, Q/E hero abilities, Ctrl+1/2/3 assign group, 1/2/3 recall.</div>
           </div>
           {phase === 'combat' && <button className="btn" onClick={() => setPaused(true)}>Pause</button>}
         </div>
