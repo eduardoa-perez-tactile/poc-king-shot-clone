@@ -1,5 +1,5 @@
 import React from 'react'
-import { LEVELS } from '../../config/levels'
+import { getLevels } from '../../config/levels'
 import { useRunStore } from '../../run/store'
 
 export const LevelSelect: React.FC<{
@@ -7,6 +7,7 @@ export const LevelSelect: React.FC<{
   onStart: (levelId: string) => void
 }> = ({ onBack, onStart }) => {
   const { meta } = useRunStore()
+  const levels = getLevels()
   return (
     <div className="screen">
       <div className="top-bar">
@@ -17,7 +18,7 @@ export const LevelSelect: React.FC<{
         <button className="btn" onClick={onBack}>Back</button>
       </div>
       <div className="card-grid">
-        {LEVELS.map((level) => {
+        {levels.map((level) => {
           const unlocked = meta.unlockedLevels.includes(level.id)
           const best = meta.bestCompletion[level.id]
           return (

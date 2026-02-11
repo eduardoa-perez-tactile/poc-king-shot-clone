@@ -1,120 +1,34 @@
-import { BuildingId } from './buildings'
-import { EliteId } from './elites'
-import { UnitType } from './units'
+import { getPlaytestLevel } from '../game/runtime/playtest'
+import { getTuningOverrideById, getTuningOverrides } from '../game/tuning/tuningStore'
+import {
+  BuildingPad,
+  DayPlan,
+  HeroLoadout,
+  LevelDefinition,
+  migrateLevelDefinition
+} from '../game/types/LevelDefinition'
 
-export interface WaveUnitGroup {
-  type: UnitType
-  squads: number
-  squadSize?: number
-}
-
-export interface DayWave {
-  id: string
-  units: WaveUnitGroup[]
-  spawnTimeSec?: number
-  elite?: EliteId
-  eliteCount?: number
-}
-
-export interface DayPlan {
-  day: number
-  waveMode?: 'sequential' | 'timed'
-  waveDelaySec?: number
-  enemyModifiers?: {
-    hpMultiplier: number
-    attackMultiplier: number
-  }
-  miniBossAfterWave?: number
-  miniBossId?: EliteId
-  waves: DayWave[]
-}
-
-export interface HeroAbilityDef {
-  id: 'q' | 'e'
-  name: string
-  description: string
-  cooldown: number
-  damage?: number
-  radius?: number
-  heal?: number
-  dash?: number
-}
-
-export interface HeroStats {
-  hp: number
-  attack: number
-  range: number
-  speed: number
-  cooldown: number
-}
-
-export interface HeroLoadout {
-  id: string
-  name: string
-  description: string
-  baseStats: HeroStats
-  growthPerDay?: { hp: number; attack: number }
-  abilities: {
-    q: HeroAbilityDef
-    e: HeroAbilityDef
-  }
-}
-
-export interface HeroRuntime {
-  id: string
-  name: string
-  description: string
-  stats: HeroStats
-  abilities: {
-    q: HeroAbilityDef
-    e: HeroAbilityDef
-  }
-}
-
-export interface BuildingPad {
-  id: string
-  x: number
-  y: number
-  allowedTypes: BuildingId[]
-}
-
-export type GoalType =
-  | 'survive_days'
-  | 'defeat_boss_day'
-  | 'total_gold_earned'
-  | 'hq_hp_threshold'
-  | 'stronghold_level'
-
-export interface LevelGoal {
-  id: string
-  type: GoalType
-  label: string
-  target: number
-  day?: number
-}
-
-export interface LevelDefinition {
-  id: string
-  name: string
-  description: string
-  startGold: number
-  dayRewardGold: number
-  dayRewardScale?: number
-  heroLoadout: HeroLoadout
-  bossId?: EliteId
-  buildingPads: BuildingPad[]
-  startingBuildings: { id: BuildingId; level: number; padId: string }[]
-  goals: LevelGoal[]
-  days: DayPlan[]
-  map: {
-    width: number
-    height: number
-    obstacles: { x: number; y: number; w: number; h: number }[]
-    playerSpawn: { x: number; y: number }
-    enemySpawn: { x: number; y: number }
-    playerHQ: { x: number; y: number }
-  }
-}
+export type {
+  BuildingPad,
+  DayPlan,
+  DayWave,
+  EnemyCatalogEntry,
+  GoalType,
+  HeroAbilityDef,
+  HeroLoadout,
+  HeroRuntime,
+  HeroStats,
+  LevelEconomy,
+  LevelDefinition,
+  LevelGoal,
+  LevelMetadata,
+  LevelModifiers,
+  LevelStrongholdTuning,
+  LevelValidationIssue,
+  LevelValidationResult,
+  LevelWaveRules,
+  WaveUnitGroup
+} from '../game/types/LevelDefinition'
 
 const DEFAULT_PADS: BuildingPad[] = [
   {
@@ -186,7 +100,7 @@ const DEFAULT_HERO: HeroLoadout = {
   }
 }
 
-export const LEVELS: LevelDefinition[] = [
+const RAW_LEVELS = [
   {
     id: 'level_1',
     name: 'Frontier Dawn',
@@ -490,7 +404,31 @@ export const LEVELS: LevelDefinition[] = [
   }
 ]
 
-export const getLevelById = (levelId: string) => LEVELS.find((level) => level.id === levelId)
+export const BASE_LEVELS: LevelDefinition[] = RAW_LEVELS.map((raw) => migrateLevelDefinition(raw))
+
+export const getBaseLevels = () => BASE_LEVELS.slice()
+
+export const getLevels = (): LevelDefinition[] => {
+  const overrides = getTuningOverrides()
+  const baseResolved = BASE_LEVELS.map((base) => overrides[base.id] ?? base)
+  const extraOverrides = Object.keys(overrides)
+    .filter((id) => !BASE_LEVELS.some((level) => level.id === id))
+    .map((id) => overrides[id])
+  return [...baseResolved, ...extraOverrides]
+}
+
+// Legacy export kept for compatibility. Prefer getLevels() for runtime-aware lookup.
+export const LEVELS: LevelDefinition[] = getLevels()
+
+export const getBaseLevelById = (levelId: string) => BASE_LEVELS.find((level) => level.id === levelId)
+
+export const getLevelById = (levelId: string) => {
+  const playtest = getPlaytestLevel()
+  if (playtest && playtest.id === levelId) return playtest
+  const override = getTuningOverrideById(levelId)
+  if (override) return override
+  return getBaseLevelById(levelId)
+}
 
 export const getDayPlan = (level: LevelDefinition, dayNumber: number): DayPlan => {
   const exact = level.days.find((day) => day.day === dayNumber)
