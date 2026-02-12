@@ -26,6 +26,7 @@ const getEntityAt = (entities: EntityState[], pos: Vec2, team: 'player' | 'enemy
   let bestDist = Infinity
   entities.forEach((entity) => {
     if (entity.team !== team) return
+    if (entity.isStructure) return
     const dist = Math.hypot(entity.pos.x - pos.x, entity.pos.y - pos.y)
     if (dist < entity.radius + 6 && dist < bestDist) {
       best = entity
@@ -404,13 +405,17 @@ export const RTSGame: React.FC<{
         ? { name: selectedEntity.heroName ?? heroRuntime.name, description: selectedEntity.heroDescription ?? heroRuntime.description }
         : selectedEntity.kind === 'elite'
           ? { name: selectedEntity.tier === 'boss' ? 'Boss' : 'Mini Boss', description: 'Elite enemy unit.' }
-          : UNIT_DEFS[selectedEntity.kind]
+          : selectedEntity.kind === 'infantry' || selectedEntity.kind === 'archer' || selectedEntity.kind === 'cavalry'
+            ? UNIT_DEFS[selectedEntity.kind]
+            : null
       : null
   const hoveredInfo =
     hoveredEnemy && hoveredEnemy.kind !== 'hq'
       ? hoveredEnemy.kind === 'elite'
         ? { name: hoveredEnemy.tier === 'boss' ? 'Boss' : 'Mini Boss', description: 'Elite enemy unit.' }
-        : UNIT_DEFS[hoveredEnemy.kind]
+        : hoveredEnemy.kind === 'infantry' || hoveredEnemy.kind === 'archer' || hoveredEnemy.kind === 'cavalry'
+          ? UNIT_DEFS[hoveredEnemy.kind]
+          : null
       : null
   const heroCooldowns = sim.heroAbilityCooldowns
   const qReadyIn = Math.max(0, heroCooldowns.q - sim.time)

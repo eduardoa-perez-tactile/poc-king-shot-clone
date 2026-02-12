@@ -423,6 +423,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     if (padMeshes.has(pad.id)) return padMeshes.get(pad.id)!
     const mesh = MeshBuilder.CreateBox(`pad_${pad.id}`, { width: PAD_SIZE.w, depth: PAD_SIZE.h, height: 2 }, scene)
     mesh.position = new Vector3(pad.x, 1, pad.y)
+    mesh.rotation.y = pad.rotation ?? 0
     mesh.material = padMaterial
     mesh.isPickable = true
     mesh.metadata = { kind: 'pad', padId: pad.id } as PickMeta
@@ -580,7 +581,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   }
 
   const updateHealthBars = (sim: SimState) => {
-    const all = sim.entities
+    const all = sim.entities.filter((entity) => entity.kind !== 'tower')
     const bgEntries = all.map((entity) => ({
       pos: entity.pos,
       width: Math.max(16, entity.radius * 2.8),
@@ -748,7 +749,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
       } else if (source?.tier === 'boss' || source?.tier === 'miniBoss') {
         vfx.playHeroAttack('boss', from, to, 'ranged')
       } else {
-        vfx.playRangedShot(from, to, source?.kind === 'archer' ? 'arrow' : 'bolt')
+        vfx.playRangedShot(from, to, proj.projectileType ?? (source?.kind === 'archer' ? 'arrow' : 'bolt'))
       }
     })
     prevProjectileIds = nextProjectileIds
@@ -865,14 +866,21 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     })
   }
 
-  const updateBuildings = (pads: BuildingPad[], buildings: RunBuilding[]) => {
+  const updateBuildings = (sim: SimState, pads: BuildingPad[], buildings: RunBuilding[]) => {
     const buildingByPad = new Map(buildings.map((entry) => [entry.padId, entry]))
     const activeBuildingPads = new Set(buildings.map((entry) => entry.padId))
+    const activeWallPads = new Set(
+      sim.entities
+        .filter((entry) => entry.kind === 'wall' && entry.hp > 0 && entry.structurePadId)
+        .map((entry) => entry.structurePadId as string)
+    )
     pads.forEach((pad) => {
       const building = buildingByPad.get(pad.id)
-      if (building) {
+      const wallDisabled = building?.id === 'wall' && !activeWallPads.has(pad.id)
+      if (building && !wallDisabled) {
         const instance = ensureBuildingMesh(pad.id, building.id, building.level)
         instance.root.position = new Vector3(pad.x, 0, pad.y)
+        instance.root.rotation.y = pad.rotation ?? 0
         instance.setLevel(building.level)
         instance.setEnabled(true)
         const label = ensureBuildingLabel(pad.id)
@@ -918,10 +926,16 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
 
   const updatePads = (overlays: Render3DOverlays) => {
     const { pads, hoveredPadId, selectedPadId, padUnlockLevels, strongholdLevel } = overlays
-    const buildingByPad = new Map(overlays.buildings.map((building) => [building.padId, building]))
+    const buildingByPad = new Map(
+      overlays.buildings
+        .filter((building) => !(building.id === 'wall' && building.hp <= 0))
+        .map((building) => [building.padId, building])
+    )
     const padIds = new Set(pads.map((pad) => pad.id))
     pads.forEach((pad) => {
       const mesh = ensurePadMesh(pad)
+      mesh.position.set(pad.x, 1, pad.y)
+      mesh.rotation.y = pad.rotation ?? 0
       const building = buildingByPad.get(pad.id)
       const unlockLevel = padUnlockLevels?.[pad.id] ?? 1
       const locked = typeof strongholdLevel === 'number' ? strongholdLevel < unlockLevel : false
@@ -950,11 +964,19 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
 
   const update = (input: Render3DUpdateInput) => {
     updatePads(input.overlays)
-    updateBuildings(input.overlays.pads, input.overlays.buildings)
+    updateBuildings(input.sim, input.overlays.pads, input.overlays.buildings)
     updateSpecialMeshes(input.sim)
     const unitBuckets = new Map<UnitGroupKey, EntityState[]>()
     input.sim.entities.forEach((entity) => {
-      if (entity.kind === 'hq' || entity.kind === 'hero' || entity.kind === 'elite') return
+      if (
+        entity.kind === 'hq' ||
+        entity.kind === 'hero' ||
+        entity.kind === 'elite' ||
+        entity.kind === 'tower' ||
+        entity.kind === 'wall'
+      ) {
+        return
+      }
       const key = `${entity.team}_${entity.kind}`
       if (!unitBuckets.has(key)) unitBuckets.set(key, [])
       unitBuckets.get(key)!.push(entity)

@@ -16,16 +16,16 @@ export const STRONGHOLD_LEVELS: StrongholdLevelDef[] = [
     level: 1,
     upgradeCost: 120,
     maxBuildingLevelCap: 1,
-    unlockBuildingTypes: ['gold_mine', 'house', 'barracks'],
-    unlockPads: ['pad_a', 'pad_b', 'pad_c'],
+    unlockBuildingTypes: ['gold_mine', 'house', 'barracks', 'watchtower', 'wall'],
+    unlockPads: ['pad_barracks', 'pad_tower_nw', 'pad_tower_ne'],
     hqBaseHp: 1500
   },
   {
     level: 2,
     upgradeCost: 260,
     maxBuildingLevelCap: 2,
-    unlockBuildingTypes: ['range', 'watchtower'],
-    unlockPads: ['pad_d', 'pad_e'],
+    unlockBuildingTypes: ['range'],
+    unlockPads: ['pad_archer', 'pad_tower_sw', 'pad_wall_gate'],
     hqBaseHp: 1750
   },
   {
@@ -33,7 +33,7 @@ export const STRONGHOLD_LEVELS: StrongholdLevelDef[] = [
     upgradeCost: 0,
     maxBuildingLevelCap: 3,
     unlockBuildingTypes: ['stable', 'blacksmith', 'hero_recruiter'],
-    unlockPads: ['pad_f'],
+    unlockPads: ['pad_hero', 'pad_tower_se'],
     hqBaseHp: 2000
   }
 ]
@@ -43,7 +43,8 @@ export const BUILDING_CAPS_BY_LEVEL: Partial<Record<BuildingId, number[]>> = {
   house: [1, 2, 3],
   barracks: [1, 2, 3],
   range: [0, 1, 3],
-  watchtower: [0, 1, 3],
+  watchtower: [1, 2, 3],
+  wall: [1, 2, 3],
   stable: [0, 0, 3],
   blacksmith: [0, 0, 3],
   hero_recruiter: [0, 0, 3]

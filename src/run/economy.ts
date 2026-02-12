@@ -10,9 +10,14 @@ export const hasBuilding = (run: RunState, id: BuildingId) => getBuildingLevel(r
 export const getBuildingPurchaseCost = (id: BuildingId) => BUILDING_DEFS[id].baseCost
 
 export const getBuildingMaxHp = (id: BuildingId, level: number) => {
-  const base = 800
-  const perLevel = 200
-  const scaled = base + perLevel * Math.max(1, level)
+  const clampedLevel = Math.max(1, level)
+  const tuning =
+    id === 'wall'
+      ? { base: 1400, perLevel: 420 }
+      : id === 'watchtower'
+        ? { base: 950, perLevel: 250 }
+        : { base: 800, perLevel: 200 }
+  const scaled = tuning.base + tuning.perLevel * clampedLevel
   return Math.max(300, Math.floor(scaled))
 }
 

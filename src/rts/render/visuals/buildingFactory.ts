@@ -209,6 +209,34 @@ const buildBlacksmith = (ctx: BuildContext) => {
   return h * 0.9
 }
 
+const buildWall = (ctx: BuildContext) => {
+  const { w, d, h } = ctx.footprint
+  const wallWidth = w * 1.15
+  const wallDepth = d * 0.34
+  const wallHeight = h * 0.95
+  addBox(ctx, { w: wallWidth, d: wallDepth, h: wallHeight }, new Vector3(0, wallHeight * 0.5, 0), ctx.materials.stone)
+  addBox(
+    ctx,
+    { w: wallWidth * 0.98, d: wallDepth * 0.72, h: wallHeight * 0.18 },
+    new Vector3(0, wallHeight * 0.92, 0),
+    ctx.materials.accent
+  )
+  const buttressDepth = wallDepth * 0.82
+  addBox(
+    ctx,
+    { w: wallWidth * 0.12, d: buttressDepth, h: wallHeight * 0.35 },
+    new Vector3(-wallWidth * 0.38, wallHeight * 0.18, 0),
+    ctx.materials.stone
+  )
+  addBox(
+    ctx,
+    { w: wallWidth * 0.12, d: buttressDepth, h: wallHeight * 0.35 },
+    new Vector3(wallWidth * 0.38, wallHeight * 0.18, 0),
+    ctx.materials.stone
+  )
+  return wallHeight
+}
+
 const buildHeroRecruiter = (ctx: BuildContext) => {
   const { w, d, h } = ctx.footprint
   addCylinder(ctx, { d: w * 0.5, h: h * 0.2 }, new Vector3(0, h * 0.1, 0), ctx.materials.hero)
@@ -234,6 +262,7 @@ export const buildingVisuals: Record<BuildingId, BuildingVisualDef> = {
   range: { category: 'military', build: buildRange },
   stable: { category: 'utility', build: buildStable },
   watchtower: { category: 'military', build: buildWatchtower },
+  wall: { category: 'utility', build: buildWall },
   blacksmith: { category: 'utility', build: buildBlacksmith },
   hero_recruiter: { category: 'hero', build: buildHeroRecruiter }
 }

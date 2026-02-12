@@ -7,6 +7,7 @@ export type BuildingId =
   | 'range'
   | 'stable'
   | 'watchtower'
+  | 'wall'
   | 'blacksmith'
   | 'hero_recruiter'
 
@@ -18,6 +19,13 @@ export interface BuildingDef {
   upgradeBase: number
   upgradeScale: number
   maxLevel: number
+  combat?: {
+    damage: number
+    range: number
+    cooldown: number
+    projectileSpeed?: number
+    projectileType?: 'arrow' | 'bolt' | 'fire' | 'arcane' | string
+  }
   income?: {
     base: number
     perLevel: number
@@ -110,9 +118,25 @@ export const BUILDING_DEFS: Record<BuildingId, BuildingDef> = {
     upgradeBase: 100,
     upgradeScale: 1.6,
     maxLevel: 3,
+    combat: {
+      damage: 85,
+      range: 220,
+      cooldown: 1.05,
+      projectileSpeed: 320,
+      projectileType: 'bolt'
+    },
     bonuses: {
       hqHpPerLevel: 200
     }
+  },
+  wall: {
+    id: 'wall',
+    name: 'Wall',
+    description: 'A heavy barrier that blocks enemy movement.',
+    baseCost: 90,
+    upgradeBase: 75,
+    upgradeScale: 1.5,
+    maxLevel: 3
   },
   blacksmith: {
     id: 'blacksmith',

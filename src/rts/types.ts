@@ -17,7 +17,7 @@ export interface Rect {
   h: number
 }
 
-export type EntityKind = UnitType | 'hq' | 'hero' | 'elite'
+export type EntityKind = UnitType | 'hq' | 'hero' | 'elite' | 'tower' | 'wall'
 
 export type EntityTier = 'normal' | 'miniBoss' | 'boss' | 'hero'
 
@@ -68,6 +68,11 @@ export interface EntityState {
   canFly?: boolean
   lastHitTime?: number
   lastDamageNumberAt?: number
+  isStructure?: boolean
+  structurePadId?: string
+  structureSize?: { w: number; h: number }
+  projectileSpeed?: number
+  projectileType?: string
 }
 
 export interface PlayerPositionSnapshot {
@@ -84,6 +89,7 @@ export interface Projectile {
   damage: number
   team: Team
   sourceId?: string
+  projectileType?: string
   special?: EntityState['heroSpecial']
 }
 
@@ -174,6 +180,7 @@ export interface CombatResult {
   stats: CombatStats
   lostSquadIds: string[]
   lostHeroIds: string[]
+  destroyedWallPadIds: string[]
   bossDefeated: boolean
   hqHpPercent: number
   playerPositions: PlayerPositionSnapshot
@@ -191,6 +198,7 @@ export interface SimState {
   waveIndex: number
   nextWaveAt: number
   bossDefeated: boolean
+  destroyedWallPadIds: string[]
   heroEntityId?: string
   heroAbilityCooldowns: { q: number; e: number }
 }

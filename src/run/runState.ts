@@ -524,3 +524,33 @@ export const resetBuildingPurchaseCounts = (run: RunState): RunState => ({
     purchasedUnitsCount: 0
   }))
 })
+
+// Walls are battle-persistent: if destroyed in combat, they stay disabled for the
+// rest of that day and respawn at the beginning of the next build phase.
+export const markDestroyedWallsForDay = (run: RunState, destroyedPadIds: string[]): RunState => {
+  if (destroyedPadIds.length === 0) return run
+  const destroyed = new Set(destroyedPadIds)
+  return {
+    ...run,
+    buildings: run.buildings.map((building) =>
+      building.id === 'wall' && destroyed.has(building.padId)
+        ? {
+            ...building,
+            hp: 0
+          }
+        : building
+    )
+  }
+}
+
+export const respawnDestroyedWallsAtDayStart = (run: RunState): RunState => ({
+  ...run,
+  buildings: run.buildings.map((building) =>
+    building.id === 'wall' && building.hp <= 0
+      ? {
+          ...building,
+          hp: building.maxHp
+        }
+      : building
+  )
+})

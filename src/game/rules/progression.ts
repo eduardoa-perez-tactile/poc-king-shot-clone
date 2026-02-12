@@ -37,7 +37,7 @@ export const DEFAULT_PRODUCER_DEFAULTS: ProducerDefaults = {
   }
 }
 
-const TOWER_BUILDINGS = new Set<BuildingId>(['gold_mine', 'house', 'watchtower', 'blacksmith', 'stable'])
+const TOWER_BUILDINGS = new Set<BuildingId>(['gold_mine', 'house', 'watchtower', 'wall', 'blacksmith', 'stable'])
 const UNIT_PRODUCER_BUILDINGS = new Set<BuildingId>(['barracks', 'range'])
 const HERO_BUILDINGS = new Set<BuildingId>(['hero_recruiter'])
 
@@ -51,7 +51,7 @@ export const isTowerBuilding = (buildingId: BuildingId) =>
 export const getAllowedBuildingTypesForPadType = (padType: PadType): BuildingId[] => {
   if (padType === 'UNIT_PRODUCER') return ['barracks', 'range']
   if (padType === 'HERO') return ['hero_recruiter']
-  return ['gold_mine', 'house', 'watchtower', 'blacksmith', 'stable']
+  return ['gold_mine', 'house', 'watchtower', 'wall', 'blacksmith', 'stable']
 }
 
 export const inferPadType = (allowedTypes: BuildingId[]): PadType => {
@@ -66,10 +66,21 @@ export const isBuildingAllowedOnPadType = (padType: PadType, buildingId: Buildin
   return isTowerBuilding(buildingId)
 }
 
+export const getPadAllowedBuildingType = (
+  pad: { allowedTypes: BuildingId[]; allowedBuildingType?: BuildingId }
+): BuildingId | null => {
+  const explicit = pad.allowedBuildingType
+  if (explicit && pad.allowedTypes.includes(explicit)) return explicit
+  return pad.allowedTypes[0] ?? null
+}
+
 export const isBuildingAllowedOnPad = (
-  pad: { padType: PadType; allowedTypes: BuildingId[] },
+  pad: { padType: PadType; allowedTypes: BuildingId[]; allowedBuildingType?: BuildingId },
   buildingId: BuildingId
-) => isBuildingAllowedOnPadType(pad.padType, buildingId) && pad.allowedTypes.includes(buildingId)
+) => {
+  const fixedAllowed = getPadAllowedBuildingType(pad)
+  return Boolean(fixedAllowed) && isBuildingAllowedOnPadType(pad.padType, buildingId) && fixedAllowed === buildingId
+}
 
 export const buildPadUnlockLevelsFromByLevel = (padUnlocksByLevel: Record<string, string[]>) => {
   const unlockLevels: Record<string, number> = {}
@@ -100,7 +111,11 @@ export const buildPadUnlocksByLevelFromLevels = (padUnlockLevels: Record<string,
 }
 
 export const getPadUnlockLevelForLevel = (level: LevelDefinition, padId: string) =>
-  level.stronghold.padUnlockLevels[padId] ?? 1
+  (() => {
+    const pad = level.buildingPads.find((entry) => entry.id === padId)
+    if (typeof pad?.unlockLevel === 'number') return Math.max(1, Math.floor(pad.unlockLevel))
+    return level.stronghold.padUnlockLevels[padId] ?? 1
+  })()
 
 export const getPadUnlocksForStrongholdLevel = (level: LevelDefinition, strongholdLevel: number) =>
   (level.stronghold.padUnlocksByLevel[String(strongholdLevel)] ?? []).slice()

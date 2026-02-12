@@ -2,6 +2,7 @@ import React, { useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import {
   buildCombatResult,
   createGridForCombat,
+  createGridForState,
   createSimState,
   getPlayerPositionSnapshot,
   issueOrder,
@@ -26,6 +27,7 @@ const getEntityAt = (entities: EntityState[], pos: Vec2, team: 'player' | 'enemy
   entities.forEach((entity) => {
     if (entity.team !== team) return
     if (entity.kind === 'hq') return
+    if (entity.isStructure) return
     const dist = Math.hypot(entity.pos.x - pos.x, entity.pos.y - pos.y)
     if (dist < entity.radius + 6 && dist < bestDist) {
       best = entity
@@ -209,7 +211,7 @@ export const CanvasLayer2D = React.memo(
     }, [phase, combat, resetOnBuild, run])
 
     const rallyToHero = () => {
-      const rallied = rallyFriendlyToHero(simRef.current, gridRef.current)
+      const rallied = rallyFriendlyToHero(simRef.current, createGridForState(simRef.current))
       simRef.current = rallied.state
     }
 
@@ -267,7 +269,7 @@ export const CanvasLayer2D = React.memo(
       const qReadyIn = Math.max(0, sim.heroAbilityCooldowns.q - sim.time)
       const eReadyIn = Math.max(0, sim.heroAbilityCooldowns.e - sim.time)
       const playerUnits = sim.entities
-        .filter((entity) => entity.team === 'player' && entity.kind !== 'hq')
+        .filter((entity) => entity.team === 'player' && entity.kind !== 'hq' && !entity.isStructure)
         .map((entity) => ({
           x: entity.pos.x,
           y: entity.pos.y,
@@ -321,7 +323,10 @@ export const CanvasLayer2D = React.memo(
             const def =
               entity.kind === 'hero'
                 ? { name: entity.heroName ?? combatRef.current.hero.name }
-                : UNIT_DEFS[entity.kind]
+                : entity.kind === 'infantry' || entity.kind === 'archer' || entity.kind === 'cavalry'
+                  ? UNIT_DEFS[entity.kind]
+                  : null
+            if (!def) return null
             return { id, name: def.name, hp: entity.hp, maxHp: entity.maxHp }
           })
           .filter(Boolean) as Array<{ id: string; name: string; hp: number; maxHp: number }>
@@ -347,6 +352,10 @@ export const CanvasLayer2D = React.memo(
           cooldown: entity.cooldown
         })
       } else {
+        if (entity.kind !== 'infantry' && entity.kind !== 'archer' && entity.kind !== 'cavalry') {
+          onSelectionRef.current({ kind: 'none' })
+          return
+        }
         const def = UNIT_DEFS[entity.kind]
         onSelectionRef.current({
           kind: 'unit',
@@ -446,7 +455,7 @@ export const CanvasLayer2D = React.memo(
 
     const issueToSelected = (order: Order) => {
       if (selectedIdsRef.current.length === 0) return
-      const updated = issueOrder(simRef.current, selectedIdsRef.current, order, gridRef.current)
+      const updated = issueOrder(simRef.current, selectedIdsRef.current, order, createGridForState(simRef.current))
       simRef.current = updated
     }
 
@@ -572,10 +581,9 @@ export const CanvasLayer2D = React.memo(
             const unlockLevel = padUnlockLevelsRef.current?.[pad.id] ?? 1
             if (runRef.current.strongholdLevel < unlockLevel) {
               onPadLockedRef.current?.(pad.id)
-            } else {
-              strongholdSelectedRef.current = false
-              onPadClickRef.current(pad.id)
             }
+            strongholdSelectedRef.current = false
+            onPadClickRef.current(pad.id)
           } else {
             onPadBlockedRef.current()
           }
@@ -617,7 +625,7 @@ export const CanvasLayer2D = React.memo(
         const minY = Math.min(start.y, end.y)
         const maxY = Math.max(start.y, end.y)
         const selected = simRef.current.entities.filter((entity) => {
-          if (entity.team !== 'player' || entity.kind === 'hq') return false
+          if (entity.team !== 'player' || entity.kind === 'hq' || entity.isStructure) return false
           const screen = {
             x: (entity.pos.x - cameraRef.current.x) * cameraRef.current.zoom,
             y: (entity.pos.y - cameraRef.current.y) * cameraRef.current.zoom

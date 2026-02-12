@@ -2,6 +2,7 @@ import React from 'react'
 import { BuildingId, BUILDING_DEFS } from '../../config/buildings'
 import { BuildingPad } from '../../config/levels'
 import { UNIT_DEFS } from '../../config/units'
+import { getPadAllowedBuildingType } from '../../game/rules/progression'
 
 const describeEffects = (id: BuildingId) => {
   const def = BUILDING_DEFS[id]
@@ -30,6 +31,8 @@ export const BuildPanel: React.FC<{
   onBuild: (buildingId: BuildingId) => void
   onClose: () => void
 }> = ({ pad, gold, onBuild, onClose }) => {
+  const fixedType = getPadAllowedBuildingType(pad)
+  const options = fixedType ? [fixedType] : []
   return (
     <div className="overlay">
       <div className="overlay-card build-panel">
@@ -41,7 +44,7 @@ export const BuildPanel: React.FC<{
           <button className="btn ghost" onClick={onClose}>Close</button>
         </div>
         <div className="list">
-          {pad.allowedTypes.map((id) => {
+          {options.map((id) => {
             const def = BUILDING_DEFS[id]
             const canAfford = gold >= def.baseCost
             const shortfall = Math.max(0, def.baseCost - gold)
