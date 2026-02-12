@@ -56,7 +56,11 @@ const drawPads = (
   padUnlockLevels?: Record<string, number>,
   strongholdLevel?: number
 ) => {
-  const buildingByPad = new Map(buildings.map((building) => [building.padId, building]))
+  const buildingByPad = new Map(
+    buildings
+      .filter((building) => !(building.id === 'wall' && building.hp <= 0))
+      .map((building) => [building.padId, building])
+  )
   pads.forEach((pad) => {
     const rect = getPadRect(pad)
     const topLeft = worldToScreen({ x: rect.x, y: rect.y }, cam)
@@ -295,7 +299,7 @@ export const renderScene = (
 
   selection.forEach((id) => {
     const entity = sim.entities.find((entry) => entry.id === id)
-    if (!entity || entity.kind === 'hq') return
+    if (!entity || entity.kind === 'hq' || entity.kind === 'tower' || entity.kind === 'wall') return
     drawRange(ctx, entity, cam)
   })
 
@@ -304,6 +308,8 @@ export const renderScene = (
     const isSelected = selection.includes(entity.id)
     if (entity.kind === 'hq') {
       drawHQ(ctx, entity, cam)
+    } else if (entity.kind === 'tower' || entity.kind === 'wall') {
+      // Structures are rendered by building overlays; keep only health bars/effects here.
     } else {
       const isPlayer = entity.team === 'player'
       const isElite = entity.tier === 'boss' || entity.tier === 'miniBoss'
@@ -345,7 +351,9 @@ export const renderScene = (
       ctx.stroke()
     }
 
-    drawHealthBar(ctx, entity, cam)
+    if (entity.kind !== 'tower') {
+      drawHealthBar(ctx, entity, cam)
+    }
 
     const label = labelMap.get(entity.id)
     if (label) {

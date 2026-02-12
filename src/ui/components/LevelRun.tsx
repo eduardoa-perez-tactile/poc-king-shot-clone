@@ -160,7 +160,11 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
   }, [level.enemies.catalog, nextBattlePreview?.previewEnemyTypesDistinct])
 
   const buildingByPad = useMemo(() => {
-    return new Map(activeRun.buildings.map((building) => [building.padId, building]))
+    return new Map(
+      activeRun.buildings
+        .filter((building) => !(building.id === 'wall' && building.hp <= 0))
+        .map((building) => [building.padId, building])
+    )
   }, [activeRun.buildings])
 
   const activePad = selectedPadId ? level.buildingPads.find((pad) => pad.id === selectedPadId) ?? null : null
@@ -209,6 +213,11 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
   const handleBuild = (padId: string, buildingId: BuildingId) => {
     const pad = level.buildingPads.find((entry) => entry.id === padId)
     if (!pad) return
+    const padUnlock = getPadUnlockLevelForRunLevel(level, padId)
+    if (strongholdLevel < padUnlock) {
+      addToast(`Unlock this pad at Stronghold Lv${padUnlock}.`, 'danger')
+      return
+    }
     if (!isBuildingAllowedOnPad(pad, buildingId)) {
       addToast(`${BUILDING_DEFS[buildingId].name} is not allowed on this pad type.`, 'danger')
       return
@@ -234,7 +243,12 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
     if (!building) return
     const cap = getBuildingLevelCapForStrongholdLevel(level, strongholdLevel, building.id)
     if (building.level >= cap) {
-      addToast('Upgrade Stronghold to increase cap.', 'default')
+      addToast(
+        building.id === 'watchtower'
+          ? 'Upgrade locked: upgrade Stronghold to increase tower level cap'
+          : 'Upgrade Stronghold to increase cap.',
+        'default'
+      )
       return
     }
     const cost = getBuildingUpgradeCost(building.id, building.level + 1)
@@ -352,15 +366,19 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
         const def = BUILDING_DEFS[activeBuilding.id]
         const strongholdCap = getBuildingLevelCapForStrongholdLevel(level, strongholdLevel, activeBuilding.id)
         const isMax = activeBuilding.level >= strongholdCap
+        const capLockedMessage =
+          activeBuilding.id === 'watchtower'
+            ? 'Upgrade locked: upgrade Stronghold to increase tower level cap'
+            : 'Upgrade Stronghold or level caps to increase this building.'
         const nextLevel = Math.min(activeBuilding.level + 1, strongholdCap)
         const nextEffects = isMax
-          ? 'Upgrade Stronghold or level caps to increase this building.'
+          ? capLockedMessage
           : describeLevelEffects(activeBuilding.id, nextLevel) || 'No bonuses.'
         const upgradeCostValue = isMax ? 0 : getBuildingUpgradeCost(activeBuilding.id, activeBuilding.level + 1)
         const upgradeCostLabel = isMax ? 'Max' : `${upgradeCostValue} gold`
         const upgradeDisabled = runPhase !== 'build' || isMax || activeRun.gold < upgradeCostValue
         const upgradeTooltip = isMax
-          ? 'Upgrade Stronghold or level caps to increase this building.'
+          ? capLockedMessage
           : runPhase !== 'build'
             ? 'Upgrade available during Build Phase.'
             : activeRun.gold < upgradeCostValue
@@ -527,17 +545,23 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
           {activePad.allowedTypes.filter((id) => isBuildingAllowedOnPad(activePad, id)).map((id) => {
             const cost = BUILDING_DEFS[id].baseCost
             const canAfford = activeRun.gold >= cost
+            const padUnlock = padUnlockLevels[activePad.id] ?? 1
+            const isPadUnlocked = strongholdLevel >= padUnlock
             const isUnlocked = isBuildingUnlockedAtStrongholdForLevel(level, strongholdLevel, id)
             const unlockLevel = getBuildingUnlockLevelForLevel(level, id)
+            const isLocked = !isPadUnlocked || !isUnlocked
+            const lockedReason = !isPadUnlocked
+              ? `Unlock this pad at Stronghold Lv${padUnlock}`
+              : `Unlock by upgrading Stronghold to Lv${unlockLevel}`
             return (
               <BuildOptionCard
                 key={id}
                 title={BUILDING_DEFS[id].name}
                 description={describeEffects(id)}
                 cost={cost}
-                canAfford={canAfford && runPhase === 'build' && isUnlocked}
-                locked={!isUnlocked}
-                lockedReason={`Unlock by upgrading Stronghold to Lv${unlockLevel}`}
+                canAfford={canAfford && runPhase === 'build' && !isLocked}
+                locked={isLocked}
+                lockedReason={lockedReason}
                 onBuild={() => handleBuild(activePad.id, id)}
               />
             )
@@ -726,7 +750,8 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
       lostHeroIds: result.lostHeroIds,
       bossDefeated: result.bossDefeated,
       hqHpPercent: result.hqHpPercent,
-      playerPositions: result.playerPositions
+      playerPositions: result.playerPositions,
+      destroyedWallPadIds: result.destroyedWallPadIds
     })
   }, [resolveCombat])
 

@@ -107,8 +107,11 @@ export interface BuildingPad {
   id: string
   x: number
   y: number
+  rotation?: number
   padType: PadType
+  allowedBuildingType?: BuildingId
   allowedTypes: BuildingId[]
+  unlockLevel?: number
 }
 
 export type GoalType =
@@ -164,6 +167,13 @@ export interface LevelBuildingTuning {
   upgradeBase: number
   upgradeScale: number
   maxLevel: number
+  combat?: {
+    damage: number
+    range: number
+    cooldown: number
+    projectileSpeed?: number
+    projectileType?: string
+  }
 }
 
 export interface LevelUnitTuning {
@@ -238,7 +248,7 @@ export interface LevelDefinition {
   }
 }
 
-export const LEVEL_DEFINITION_VERSION = 4
+export const LEVEL_DEFINITION_VERSION = 5
 
 type JsonSchema = Record<string, unknown>
 
@@ -421,7 +431,16 @@ const defaultBuildings = (): Record<BuildingId, LevelBuildingTuning> =>
       baseCost: def.baseCost,
       upgradeBase: def.upgradeBase,
       upgradeScale: def.upgradeScale,
-      maxLevel: def.maxLevel
+      maxLevel: def.maxLevel,
+      combat: def.combat
+        ? {
+            damage: def.combat.damage,
+            range: def.combat.range,
+            cooldown: def.combat.cooldown,
+            projectileSpeed: def.combat.projectileSpeed,
+            projectileType: def.combat.projectileType
+          }
+        : undefined
     }
     return acc
   }, {} as Record<BuildingId, LevelBuildingTuning>)
@@ -687,13 +706,30 @@ const migrateBuildings = (legacy: Record<string, unknown>, fallback: LevelDefini
   ;(Object.keys(BUILDING_DEFS) as BuildingId[]).forEach((id) => {
     const value = asObject(raw[id])
     const base = fallback.buildings[id]
+    const rawCombat = asObject(value.combat)
+    const baseCombat = base.combat
     next[id] = {
       id,
       name: asString(value.name, base.name),
       baseCost: clampNonNegative(asNumber(value.baseCost, base.baseCost), base.baseCost),
       upgradeBase: clampNonNegative(asNumber(value.upgradeBase, base.upgradeBase), base.upgradeBase),
       upgradeScale: clampNonNegative(asNumber(value.upgradeScale, base.upgradeScale), base.upgradeScale),
-      maxLevel: clampNonNegative(asNumber(value.maxLevel, base.maxLevel), base.maxLevel)
+      maxLevel: clampNonNegative(asNumber(value.maxLevel, base.maxLevel), base.maxLevel),
+      combat: baseCombat
+        ? {
+            damage: clampNonNegative(asNumber(rawCombat.damage, baseCombat.damage), baseCombat.damage),
+            range: clampNonNegative(asNumber(rawCombat.range, baseCombat.range), baseCombat.range),
+            cooldown: clampNonNegative(asNumber(rawCombat.cooldown, baseCombat.cooldown), baseCombat.cooldown),
+            projectileSpeed:
+              typeof rawCombat.projectileSpeed === 'number'
+                ? clampNonNegative(rawCombat.projectileSpeed, baseCombat.projectileSpeed ?? 0)
+                : baseCombat.projectileSpeed,
+            projectileType:
+              typeof rawCombat.projectileType === 'string' && rawCombat.projectileType.trim().length > 0
+                ? rawCombat.projectileType
+                : baseCombat.projectileType
+          }
+        : undefined
     }
   })
   return next
@@ -825,26 +861,38 @@ const migrateBuildingPads = (legacy: Record<string, unknown>, fallback: LevelDef
   const raw = asArray<unknown>(legacy.buildingPads, fallback.buildingPads as unknown[])
   return raw.map((rawPad, index) => {
     const pad = asObject(rawPad)
+    const position = asObject(pad.position)
     const rawAllowedTypes = asArray<BuildingId>(pad.allowedTypes, []).filter((id): id is BuildingId => Boolean(BUILDING_DEFS[id]))
+    const rawAllowedBuildingType = asString(pad.allowedBuildingType, '') as BuildingId
+    const fixedAllowedType = BUILDING_DEFS[rawAllowedBuildingType] ? rawAllowedBuildingType : undefined
+    const normalizedInputAllowedTypes = fixedAllowedType ? [fixedAllowedType] : rawAllowedTypes
     const rawPadType = asString(pad.padType, '')
-    const inferredPadType = inferPadType(rawAllowedTypes)
+    const inferredPadType = inferPadType(normalizedInputAllowedTypes)
     const padType: PadType =
       rawPadType === 'UNIT_PRODUCER' || rawPadType === 'HERO' || rawPadType === 'TOWER_ONLY'
         ? (rawPadType as PadType)
         : inferredPadType
-    const normalizedAllowedTypes = Array.from(
+    const allowedTypes = Array.from(
       new Set(
-        (rawAllowedTypes.length > 0 ? rawAllowedTypes : getAllowedBuildingTypesForPadType(padType)).filter((buildingId) =>
+        (normalizedInputAllowedTypes.length > 0
+          ? normalizedInputAllowedTypes
+          : getAllowedBuildingTypesForPadType(padType)).filter((buildingId) =>
           isBuildingAllowedOnPadType(padType, buildingId)
         )
       )
     )
+    const normalizedAllowedTypes = allowedTypes.length > 0 ? [allowedTypes[0]] : getAllowedBuildingTypesForPadType(padType).slice(0, 1)
+    const unlockLevelRaw = asNumber(pad.unlockLevel, NaN)
+    const unlockLevel = Number.isFinite(unlockLevelRaw) ? Math.max(1, Math.floor(unlockLevelRaw)) : undefined
     return {
       id: asString(pad.id, `pad_${index}`),
-      x: asNumber(pad.x, 0),
-      y: asNumber(pad.y, 0),
+      x: asNumber(position.x, asNumber(pad.x, 0)),
+      y: asNumber(position.y, asNumber(pad.y, 0)),
+      rotation: asNumber(pad.rotation, 0),
       padType,
-      allowedTypes: normalizedAllowedTypes.length > 0 ? normalizedAllowedTypes : getAllowedBuildingTypesForPadType(padType)
+      allowedBuildingType: normalizedAllowedTypes[0],
+      allowedTypes: normalizedAllowedTypes,
+      unlockLevel
     }
   })
 }
@@ -1004,9 +1052,21 @@ export const migrateLevelDefinition = (input: unknown): LevelDefinition => {
   const padConstraints = migratePadConstraints(legacy, fallback)
   const producerDefaults = migrateProducerDefaults(legacy, fallback)
   const minibossRules = migrateMinibossRules(legacy, fallback)
-  const stronghold = migrateStronghold(legacy, fallback)
+  const rawStronghold = migrateStronghold(legacy, fallback)
   const hero = migrateHero(legacy, fallback)
   const heroLoadout = migrateHeroLoadout(legacy, fallback, hero)
+  const buildingPads = migrateBuildingPads(legacy, fallback)
+  const normalizedPadUnlockLevels: Record<string, number> = {}
+  buildingPads.forEach((pad) => {
+    const fallbackUnlock = rawStronghold.padUnlockLevels[pad.id] ?? 1
+    normalizedPadUnlockLevels[pad.id] =
+      typeof pad.unlockLevel === 'number' ? Math.max(1, Math.floor(pad.unlockLevel)) : Math.max(1, Math.floor(fallbackUnlock))
+  })
+  const stronghold = {
+    ...rawStronghold,
+    padUnlockLevels: normalizedPadUnlockLevels,
+    padUnlocksByLevel: buildPadUnlocksByLevelFromLevels(normalizedPadUnlockLevels)
+  }
   const migrated: LevelDefinition = {
     version: LEVEL_DEFINITION_VERSION,
     metadata,
@@ -1032,7 +1092,7 @@ export const migrateLevelDefinition = (input: unknown): LevelDefinition => {
       if (typeof legacy.bossId === 'string' && ELITE_DEFS[legacy.bossId as EliteId]) return legacy.bossId as EliteId
       return 'boss'
     })(),
-    buildingPads: migrateBuildingPads(legacy, fallback),
+    buildingPads,
     startingBuildings: migrateStartingBuildings(legacy, fallback),
     goals: migrateGoals(legacy, fallback),
     days: migrateDays(legacy, fallback),
@@ -1072,6 +1132,28 @@ export const validateLevelDefinition = (level: LevelDefinition): LevelValidation
         'warning',
         `buildingPads.${index}`,
         `Pad "${pad.id}" is outside map bounds ${level.map.width}x${level.map.height}.`
+      )
+    }
+    if (!Number.isFinite(pad.rotation ?? 0)) {
+      pushIssue(issues, 'error', `buildingPads.${index}.rotation`, 'Pad rotation must be a finite number.')
+    }
+    if (pad.unlockLevel !== undefined && pad.unlockLevel < 1) {
+      pushIssue(issues, 'error', `buildingPads.${index}.unlockLevel`, 'Pad unlock level must be >= 1.')
+    }
+    if (pad.allowedTypes.length !== 1) {
+      pushIssue(
+        issues,
+        'warning',
+        `buildingPads.${index}.allowedTypes`,
+        'Pads are expected to have exactly one allowed building type.'
+      )
+    }
+    if (pad.allowedBuildingType && !pad.allowedTypes.includes(pad.allowedBuildingType)) {
+      pushIssue(
+        issues,
+        'warning',
+        `buildingPads.${index}.allowedBuildingType`,
+        'allowedBuildingType is not present in allowedTypes and will be normalized.'
       )
     }
     pad.allowedTypes.forEach((id, allowedIndex) => {
@@ -1190,6 +1272,16 @@ export const validateLevelDefinition = (level: LevelDefinition): LevelValidation
     }
     if (!padIds.has(building.padId)) {
       pushIssue(issues, 'error', `startingBuildings.${index}.padId`, `Unknown pad id "${building.padId}".`)
+    } else {
+      const pad = level.buildingPads.find((entry) => entry.id === building.padId)
+      if (pad && !isBuildingAllowedOnPad(pad, building.id)) {
+        pushIssue(
+          issues,
+          'error',
+          `startingBuildings.${index}`,
+          `Building "${building.id}" is not allowed on pad "${building.padId}".`
+        )
+      }
     }
     if (building.level < 1) {
       pushIssue(issues, 'error', `startingBuildings.${index}.level`, 'Starting level must be >= 1.')

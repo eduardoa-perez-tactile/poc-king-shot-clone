@@ -2,6 +2,7 @@ import React, { useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import {
   buildCombatResult,
   createGridForCombat,
+  createGridForState,
   createSimState,
   getPlayerPositionSnapshot,
   issueOrder,
@@ -209,7 +210,7 @@ export const CanvasLayer3D = React.memo(
     }, [phase, combat, resetOnBuild, run])
 
     const rallyToHero = () => {
-      const rallied = rallyFriendlyToHero(simRef.current, gridRef.current)
+      const rallied = rallyFriendlyToHero(simRef.current, createGridForState(simRef.current))
       simRef.current = rallied.state
     }
 
@@ -319,7 +320,7 @@ export const CanvasLayer3D = React.memo(
       const qReadyIn = Math.max(0, sim.heroAbilityCooldowns.q - sim.time)
       const eReadyIn = Math.max(0, sim.heroAbilityCooldowns.e - sim.time)
       const playerUnits = sim.entities
-        .filter((entity) => entity.team === 'player' && entity.kind !== 'hq')
+        .filter((entity) => entity.team === 'player' && entity.kind !== 'hq' && !entity.isStructure)
         .map((entity) => ({
           x: entity.pos.x,
           y: entity.pos.y,
@@ -399,7 +400,10 @@ export const CanvasLayer3D = React.memo(
             const def =
               entity.kind === 'hero'
                 ? { name: entity.heroName ?? combatRef.current.hero.name }
-                : UNIT_DEFS[entity.kind]
+                : entity.kind === 'infantry' || entity.kind === 'archer' || entity.kind === 'cavalry'
+                  ? UNIT_DEFS[entity.kind]
+                  : null
+            if (!def) return null
             return { id, name: def.name, hp: entity.hp, maxHp: entity.maxHp }
           })
           .filter(Boolean) as Array<{ id: string; name: string; hp: number; maxHp: number }>
@@ -425,6 +429,10 @@ export const CanvasLayer3D = React.memo(
           cooldown: entity.cooldown
         })
       } else {
+        if (entity.kind !== 'infantry' && entity.kind !== 'archer' && entity.kind !== 'cavalry') {
+          onSelectionRef.current({ kind: 'none' })
+          return
+        }
         const def = UNIT_DEFS[entity.kind]
         onSelectionRef.current({
           kind: 'unit',
@@ -534,10 +542,10 @@ export const CanvasLayer3D = React.memo(
       if (selectedIdsRef.current.length === 0) return
       const eligible = selectedIdsRef.current.filter((id) => {
         const entity = simRef.current.entities.find((entry) => entry.id === id)
-        return entity?.team === 'player' && entity.kind !== 'hq'
+        return entity?.team === 'player' && entity.kind !== 'hq' && !entity.isStructure
       })
       if (eligible.length === 0) return
-      const updated = issueOrder(simRef.current, eligible, order, gridRef.current)
+      const updated = issueOrder(simRef.current, eligible, order, createGridForState(simRef.current))
       simRef.current = updated
     }
 
@@ -587,10 +595,9 @@ export const CanvasLayer3D = React.memo(
             const unlockLevel = padUnlockLevelsRef.current?.[pick.padId] ?? 1
             if (runRef.current.strongholdLevel < unlockLevel) {
               onPadLockedRef.current?.(pick.padId)
-            } else {
-              strongholdSelectedRef.current = false
-              onPadClickRef.current(pick.padId)
             }
+            strongholdSelectedRef.current = false
+            onPadClickRef.current(pick.padId)
           } else {
             onPadBlockedRef.current()
           }
@@ -664,7 +671,7 @@ export const CanvasLayer3D = React.memo(
         const minY = Math.min(start.y, end.y)
         const maxY = Math.max(start.y, end.y)
         const selected = simRef.current.entities.filter((entity) => {
-          if (entity.team !== 'player' || entity.kind === 'hq') return false
+          if (entity.team !== 'player' || entity.kind === 'hq' || entity.isStructure) return false
           const screen = renderer.projectToScreen(entity.pos)
           if (!screen) return false
           return screen.x >= minX && screen.x <= maxX && screen.y >= minY && screen.y <= maxY

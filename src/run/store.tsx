@@ -20,9 +20,11 @@ import {
   getPadUnlockLevelForRunLevel,
   getRunLevel,
   getStrongholdMaxLevelForLevel,
+  markDestroyedWallsForDay,
   markBossDefeated,
   markHqHp,
   recomputeGoalsProgress,
+  respawnDestroyedWallsAtDayStart,
   resetBuildingPurchaseCounts,
   resetBuildingHp,
   summonHero,
@@ -41,6 +43,7 @@ export interface CombatOutcome {
   bossDefeated: boolean
   hqHpPercent: number
   playerPositions?: PlayerPositionSnapshot
+  destroyedWallPadIds?: string[]
 }
 
 interface RunStore {
@@ -223,7 +226,8 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const daysSurvived = outcome.victory ? Math.max(withPositions.daysSurvived, withPositions.dayNumber) : withPositions.daysSurvived
     const runWithDays = { ...withPositions, daysSurvived }
     const healedBuildings = outcome.victory ? resetBuildingHp(runWithDays) : runWithDays
-    const paid = outcome.victory ? applyDayEndRewards(healedBuildings, level) : { run: healedBuildings, breakdown: undefined }
+    const wallsMarked = markDestroyedWallsForDay(healedBuildings, outcome.destroyedWallPadIds ?? [])
+    const paid = outcome.victory ? applyDayEndRewards(wallsMarked, level) : { run: wallsMarked, breakdown: undefined }
     const next = recomputeGoalsProgress(paid.run, level)
     setActiveRun(next)
     setLastCombat(outcome)
@@ -268,7 +272,8 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       dayNumber: next.dayNumber + 1,
       heroProgress: { hp: heroProgress.hp + growth.hp, attack: heroProgress.attack + growth.attack }
     }
-    setActiveRun(resetBuildingPurchaseCounts(next))
+    const withRespawnedWalls = respawnDestroyedWallsAtDayStart(next)
+    setActiveRun(resetBuildingPurchaseCounts(withRespawnedWalls))
     setRunPhase('build')
   }
 
@@ -321,40 +326,52 @@ const normalizeRun = (run: RunState | null): RunState | null => {
   if (!level) return null
   const usedPads = new Set<string>()
   const pads = level.buildingPads
-  const buildings = run.buildings.map((building, index) => {
-    if ('padId' in building && building.padId) {
-      usedPads.add(building.padId)
+  const buildings = run.buildings.reduce<RunState['buildings']>((acc, building) => {
+    const explicitPadId = 'padId' in building && building.padId ? building.padId : null
+    const explicitPad = explicitPadId ? pads.find((pad) => pad.id === explicitPadId) : null
+    const explicitPadValid =
+      Boolean(explicitPad) &&
+      Boolean(explicitPadId) &&
+      !usedPads.has(explicitPadId!) &&
+      isBuildingAllowedOnPad(explicitPad as NonNullable<typeof explicitPad>, building.id)
+    if (explicitPadValid) {
+      usedPads.add(explicitPadId!)
       const maxHp = (building as typeof building & { maxHp?: number }).maxHp
       if (typeof maxHp === 'number') {
-        return {
+        acc.push({
           ...building,
           purchasedUnitsCount: building.purchasedUnitsCount ?? 0,
           heroSummonUsed: building.heroSummonUsed ?? 0
-        }
+        })
+        return acc
       }
       const nextMax = getBuildingMaxHp(building.id, building.level)
-      return {
+      acc.push({
         ...building,
         hp: nextMax,
         maxHp: nextMax,
         purchasedUnitsCount: building.purchasedUnitsCount ?? 0,
         heroSummonUsed: building.heroSummonUsed ?? 0
-      }
+      })
+      return acc
     }
-    const preferred = pads.find((pad) => !usedPads.has(pad.id) && pad.allowedTypes.includes(building.id))
-    const fallback = pads.find((pad) => !usedPads.has(pad.id)) ?? pads[0]
-    const padId = preferred?.id ?? fallback?.id ?? `pad_${index}`
+    const preferred = pads.find((pad) => !usedPads.has(pad.id) && isBuildingAllowedOnPad(pad, building.id))
+    if (!preferred) {
+      return acc
+    }
+    const padId = preferred.id
     usedPads.add(padId)
     const nextMax = getBuildingMaxHp(building.id, building.level)
-    return {
+    acc.push({
       ...building,
       padId,
       hp: nextMax,
       maxHp: nextMax,
       purchasedUnitsCount: building.purchasedUnitsCount ?? 0,
       heroSummonUsed: building.heroSummonUsed ?? 0
-    }
-  })
+    })
+    return acc
+  }, [])
   const unitRoster = (run.unitRoster ?? []).map((squad) => {
     const ownerPadId = squad.ownerBuildingPadId ?? squad.spawnPadId
     const ownerBuilding = ownerPadId ? buildings.find((entry) => entry.padId === ownerPadId) : undefined

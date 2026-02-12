@@ -1,6 +1,7 @@
 import { ELITE_DEFS } from '../config/elites'
 import { HERO_RECRUIT_DEFS } from '../config/heroes'
 import { UNIT_DEFS, UnitType } from '../config/units'
+import { BUILDING_DEFS } from '../config/buildings'
 import { getProducerLevelStatMultipliers, isUnitProducerBuilding } from '../game/rules/progression'
 import { getHQBonusHp, getUnitStatMultipliers } from '../run/economy'
 import { getRunLevel } from '../run/runState'
@@ -55,6 +56,7 @@ const FORMATION_PHASE = -Math.PI / 2
 const SEPARATION_CELL_SIZE = 48
 const SEPARATION_STRENGTH = 0.45
 const SEPARATION_RADIUS_MULTIPLIER = 0.9
+const WALL_FOOTPRINT = { w: 120, h: 56 }
 
 const isUnitKind = (kind: EntityState['kind']): kind is UnitType =>
   kind === 'infantry' || kind === 'archer' || kind === 'cavalry'
@@ -66,6 +68,8 @@ const getIdLabel = (kind: EntityState['kind'], tier: EntityState['tier']) => {
   if (kind === 'infantry') return 'I'
   if (kind === 'archer') return 'A'
   if (kind === 'cavalry') return 'C'
+  if (kind === 'tower') return 'T'
+  if (kind === 'wall') return 'W'
   return ''
 }
 
@@ -238,6 +242,82 @@ const createHQ = (pos: Vec2, hp: number): EntityState => ({
   buffs: []
 })
 
+const createTowerEntity = (
+  pos: Vec2,
+  hp: number,
+  options: {
+    padId: string
+    range: number
+    damage: number
+    cooldown: number
+    projectileSpeed: number
+    projectileType?: string
+  }
+): EntityState => ({
+  id: ENTITY_ID(),
+  team: 'player',
+  kind: 'tower',
+  pos: { ...pos },
+  radius: 20,
+  tier: 'normal',
+  idLabel: getIdLabel('tower', 'normal'),
+  hp,
+  maxHp: hp,
+  attack: options.damage,
+  range: options.range,
+  speed: 0,
+  cooldown: options.cooldown,
+  cooldownLeft: 0,
+  order: { type: 'stop' },
+  targetId: undefined,
+  path: [],
+  buffs: [],
+  isStructure: true,
+  structurePadId: options.padId,
+  structureSize: { w: 58, h: 58 },
+  projectileSpeed: options.projectileSpeed,
+  projectileType: options.projectileType
+})
+
+const createWallEntity = (
+  pos: Vec2,
+  hp: number,
+  options: {
+    padId: string
+    width: number
+    height: number
+    rotation: number
+  }
+): EntityState => {
+  const normalizedRotation = options.rotation ?? 0
+  const isVertical = Math.abs(Math.sin(normalizedRotation)) > 0.707
+  const width = isVertical ? options.height : options.width
+  const height = isVertical ? options.width : options.height
+  return {
+    id: ENTITY_ID(),
+    team: 'player',
+    kind: 'wall',
+    pos: { ...pos },
+    radius: Math.max(width, height) * 0.25,
+    tier: 'normal',
+    idLabel: getIdLabel('wall', 'normal'),
+    hp,
+    maxHp: hp,
+    attack: 0,
+    range: 0,
+    speed: 0,
+    cooldown: 1,
+    cooldownLeft: 0,
+    order: { type: 'stop' },
+    targetId: undefined,
+    path: [],
+    buffs: [],
+    isStructure: true,
+    structurePadId: options.padId,
+    structureSize: { w: width, h: height }
+  }
+}
+
 const createHeroEntity = (
   pos: Vec2,
   stats: { hp: number; attack: number; range: number; speed: number; cooldown: number },
@@ -405,6 +485,36 @@ const resolvePlayerPosition = (
   return jitter(basePos)
 }
 
+const getEntityRect = (entity: EntityState) => {
+  const size = entity.structureSize
+  if (!size) return null
+  return {
+    x: entity.pos.x - size.w / 2,
+    y: entity.pos.y - size.h / 2,
+    w: size.w,
+    h: size.h
+  }
+}
+
+const getActiveWallRects = (entities: EntityState[]) =>
+  entities
+    .filter((entity) => entity.kind === 'wall' && entity.hp > 0)
+    .map((entity) => getEntityRect(entity))
+    .filter((rect): rect is NonNullable<typeof rect> => Boolean(rect))
+
+const buildNavigationGrid = (state: SimState) => {
+  // Dynamic wall blockers are folded into the grid each simulation step.
+  // This keeps A* routing simple while allowing walls to disappear immediately when destroyed.
+  const wallRects = getActiveWallRects(state.entities)
+  return buildGrid(state.combat.map.width, state.combat.map.height, 40, [...state.combat.map.obstacles, ...wallRects])
+}
+
+const isPathBlocked = (grid: Grid, path: Vec2[]) =>
+  path.some((point) => {
+    const cell = worldToCell(grid, point)
+    return Boolean(grid.blocked[cell.y]?.[cell.x])
+  })
+
 export const createSimState = (
   combat: CombatDefinition,
   run: RunState,
@@ -482,7 +592,67 @@ export const createSimState = (
     )
   })
 
-  const spawnGrid = buildGrid(combat.map.width, combat.map.height, 40, combat.map.obstacles)
+  const padById = new Map(level.buildingPads.map((pad) => [pad.id, pad]))
+  run.buildings.forEach((building) => {
+    if (building.hp <= 0) return
+    const pad = padById.get(building.padId)
+    if (!pad) return
+    if (building.id === 'watchtower') {
+      const baseCombat = BUILDING_DEFS.watchtower.combat
+      if (!baseCombat) return
+      const levelCombat = level.buildings.watchtower.combat
+      const perLevel = Math.max(0, building.level - 1)
+      const damage = (levelCombat?.damage ?? baseCombat.damage) * (1 + perLevel * 0.3)
+      const range = levelCombat?.range ?? baseCombat.range
+      const cooldown = Math.max(0.2, (levelCombat?.cooldown ?? baseCombat.cooldown) * (1 - perLevel * 0.06))
+      const projectileSpeed = levelCombat?.projectileSpeed ?? baseCombat.projectileSpeed ?? 320
+      entities.push(
+        createTowerEntity(
+          { x: pad.x, y: pad.y },
+          building.hp,
+          {
+            padId: pad.id,
+            range,
+            damage,
+            cooldown,
+            projectileSpeed,
+            projectileType: levelCombat?.projectileType ?? baseCombat.projectileType
+          }
+        )
+      )
+      return
+    }
+    if (building.id === 'wall') {
+      entities.push(
+        createWallEntity(
+          { x: pad.x, y: pad.y },
+          building.hp,
+          {
+            padId: pad.id,
+            width: WALL_FOOTPRINT.w,
+            height: WALL_FOOTPRINT.h,
+            rotation: pad.rotation ?? 0
+          }
+        )
+      )
+    }
+  })
+
+  const spawnGrid = buildNavigationGrid({
+    time: 0,
+    status: 'running',
+    entities,
+    projectiles: [],
+    effects: [],
+    damageNumbers: [],
+    combat,
+    stats: emptyStats(),
+    waveIndex: 0,
+    nextWaveAt: 0,
+    bossDefeated: false,
+    destroyedWallPadIds: [],
+    heroAbilityCooldowns: { q: 0, e: 0 }
+  })
   entities.forEach((entity) => {
     if (entity.team !== 'player' || entity.kind === 'hq') return
     if (isWalkablePosition(spawnGrid, combat, entity.pos, entity.radius)) return
@@ -521,6 +691,7 @@ export const createSimState = (
     waveIndex: 0,
     nextWaveAt: 0,
     bossDefeated: false,
+    destroyedWallPadIds: [],
     heroEntityId: hero.id,
     heroAbilityCooldowns: { q: 0, e: 0 },
     damageNumbers: []
@@ -577,7 +748,7 @@ const stepHeroFromInput = (sim: SimState, dt: number, grid: Grid, input?: Player
 const applySeparation = (sim: SimState, grid: Grid, dt: number) => {
   const candidates = sim.entities
     .map((entity, index) => ({ entity, index }))
-    .filter(({ entity }) => entity.hp > 0 && entity.kind !== 'hq')
+    .filter(({ entity }) => entity.hp > 0 && entity.kind !== 'hq' && !entity.isStructure)
   if (candidates.length <= 1) return
 
   const buckets = new Map<string, number[]>()
@@ -659,6 +830,7 @@ const findClosestEnemy = (entity: EntityState, entities: EntityState[], range: n
   entities.forEach((other) => {
     if (other.team === entity.team) return
     if (other.hp <= 0) return
+    if (entity.team === 'enemy' && other.kind === 'tower') return
     const d = distance(entity.pos, other.pos)
     if (d < range && d < best) {
       best = d
@@ -713,16 +885,20 @@ const tryImmediateAttack = (
   const targetIsUnit = isUnitKind(target.kind)
   const multiplier = isUnit && targetIsUnit ? typeMultiplier(attacker.kind as UnitType, target.kind as UnitType) : 1
   const dmg = attacker.attack * multiplier
-  const isRanged = attacker.kind === 'archer' || (attacker.kind === 'hero' && attacker.range > 140)
+  const isRanged =
+    attacker.kind === 'archer' ||
+    attacker.kind === 'tower' ||
+    (attacker.kind === 'hero' && attacker.range > 140)
   if (isRanged) {
     projectiles.push({
       id: PROJECTILE_ID(),
       pos: { ...attacker.pos },
       targetId: target.id,
-      speed: 240,
+      speed: Math.max(180, attacker.projectileSpeed ?? 240),
       damage: dmg,
       team: attacker.team,
       sourceId: attacker.id,
+      projectileType: attacker.projectileType,
       special: attacker.heroSpecial
     })
   } else {
@@ -794,7 +970,7 @@ const spawnWave = (sim: SimState) => {
 export const stepSim = (
   state: SimState,
   dt: number,
-  grid: Grid,
+  _grid: Grid,
   mode: 'build' | 'combat',
   playerInput?: PlayerInputState | null
 ): SimState => {
@@ -807,6 +983,16 @@ export const stepSim = (
   const stats: CombatStats = { ...state.stats, lostSquads: [...state.stats.lostSquads], lostHeroes: [...state.stats.lostHeroes] }
 
   const sim: SimState = { ...state, time, entities, projectiles, effects, stats, damageNumbers }
+  const grid = buildNavigationGrid(sim)
+  sim.entities.forEach((entity) => {
+    if (entity.canFly || entity.path.length === 0) return
+    if (isPathBlocked(grid, entity.path)) {
+      entity.path = []
+      if (entity.order.targetPos && entity.speed > 0) {
+        entity.path = findPath(grid, entity.pos, entity.order.targetPos)
+      }
+    }
+  })
   stepHeroFromInput(sim, dt, grid, playerInput)
 
   const enemiesRemaining = entities.filter((entity) => entity.team === 'enemy').length
@@ -837,6 +1023,12 @@ export const stepSim = (
     entity.cooldownLeft = Math.max(0, entity.cooldownLeft - dt)
     entity.buffs = entity.buffs.filter((buff) => buff.expiresAt > time)
 
+    if (entity.kind === 'wall') {
+      entity.path = []
+      entity.targetId = undefined
+      return
+    }
+
     const target = entity.targetId ? entityMap.get(entity.targetId) : undefined
     if (entity.order.type === 'stop') {
       entity.path = []
@@ -864,13 +1056,15 @@ export const stepSim = (
       if (activeTarget) {
         if (distance(entity.pos, activeTarget.pos) <= entity.range) {
           tryImmediateAttack(entity, activeTarget, projectiles, effects, damageNumbers, entities, time)
-        } else {
+        } else if (entity.speed > 0) {
           ensurePath(grid, entity, activeTarget.pos)
           moveAlongPath(entity, dt)
         }
       } else {
-        ensurePath(grid, entity, entity.order.targetPos)
-        moveAlongPath(entity, dt)
+        if (entity.speed > 0) {
+          ensurePath(grid, entity, entity.order.targetPos)
+          moveAlongPath(entity, dt)
+        }
       }
     }
 
@@ -950,11 +1144,14 @@ export const stepSim = (
   const alive = entities.filter((entity) => entity.hp > 0)
   entities.forEach((entity) => {
     if (entity.hp > 0) return
+    if (entity.kind === 'wall' && entity.structurePadId && !sim.destroyedWallPadIds.includes(entity.structurePadId)) {
+      sim.destroyedWallPadIds = [...sim.destroyedWallPadIds, entity.structurePadId]
+    }
     if (entity.team === 'enemy') {
       stats.kills += entity.troopCount ?? 1
       if (entity.tier === 'boss') sim.bossDefeated = true
     }
-    if (entity.team === 'player' && entity.kind !== 'hq') {
+    if (entity.team === 'player' && entity.kind !== 'hq' && !entity.isStructure) {
       stats.losses += 1
       if (entity.squadId && !stats.lostSquads.includes(entity.squadId)) {
         stats.lostSquads.push(entity.squadId)
@@ -1058,7 +1255,7 @@ export const rallyFriendlyToHero = (
   if (!hero) return { state, squadCount: 0, ringCount: 0 }
 
   const rallyUnits = state.entities
-    .filter((entity) => entity.team === 'player' && entity.kind !== 'hq' && entity.id !== hero.id && entity.hp > 0)
+    .filter((entity) => entity.team === 'player' && entity.kind !== 'hq' && entity.id !== hero.id && entity.hp > 0 && !entity.isStructure)
     .slice()
     .sort((a, b) => getStableEntityOrderKey(a).localeCompare(getStableEntityOrderKey(b)))
 
@@ -1121,6 +1318,8 @@ export const issueOrder = (state: SimState, ids: string[], order: Order, grid: G
 export const createGridForCombat = (combat: CombatDefinition) =>
   buildGrid(combat.map.width, combat.map.height, 40, combat.map.obstacles)
 
+export const createGridForState = (state: SimState) => buildNavigationGrid(state)
+
 export const buildCombatResult = (state: SimState): CombatResult => {
   const hq = state.entities.find((entity) => entity.kind === 'hq')
   const hqHpPercent = hq ? Math.max(0, Math.round((hq.hp / hq.maxHp) * 100)) : 0
@@ -1130,6 +1329,7 @@ export const buildCombatResult = (state: SimState): CombatResult => {
     stats: state.stats,
     lostSquadIds: state.stats.lostSquads,
     lostHeroIds: state.stats.lostHeroes,
+    destroyedWallPadIds: state.destroyedWallPadIds.slice(),
     bossDefeated: state.bossDefeated,
     hqHpPercent,
     playerPositions

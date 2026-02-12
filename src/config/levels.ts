@@ -34,50 +34,90 @@ export type {
   WaveUnitGroup
 } from '../game/types/LevelDefinition'
 
-const DEFAULT_PADS: BuildingPad[] = [
+const LEVEL_1_PADS: BuildingPad[] = [
   {
-    id: 'pad_a',
-    x: 220,
-    y: 180,
+    id: 'pad_barracks',
+    x: 228,
+    y: 192,
+    rotation: 0,
     padType: 'UNIT_PRODUCER',
-    allowedTypes: ['barracks', 'range']
+    allowedBuildingType: 'barracks',
+    allowedTypes: ['barracks'],
+    unlockLevel: 1
   },
   {
-    id: 'pad_b',
-    x: 360,
-    y: 320,
+    id: 'pad_archer',
+    x: 318,
+    y: 674,
+    rotation: 0,
+    padType: 'UNIT_PRODUCER',
+    allowedBuildingType: 'range',
+    allowedTypes: ['range'],
+    unlockLevel: 1
+  },
+  {
+    id: 'pad_tower_nw',
+    x: 498,
+    y: 164,
+    rotation: 0,
     padType: 'TOWER_ONLY',
-    allowedTypes: ['gold_mine', 'house', 'watchtower', 'stable']
+    allowedBuildingType: 'watchtower',
+    allowedTypes: ['watchtower'],
+    unlockLevel: 1
   },
   {
-    id: 'pad_c',
-    x: 520,
-    y: 140,
+    id: 'pad_tower_ne',
+    x: 708,
+    y: 172,
+    rotation: 0,
     padType: 'TOWER_ONLY',
-    allowedTypes: ['gold_mine', 'house', 'blacksmith', 'stable']
+    allowedBuildingType: 'watchtower',
+    allowedTypes: ['watchtower'],
+    unlockLevel: 1
   },
   {
-    id: 'pad_d',
-    x: 320,
-    y: 620,
+    id: 'pad_tower_sw',
+    x: 482,
+    y: 572,
+    rotation: 0,
     padType: 'TOWER_ONLY',
-    allowedTypes: ['gold_mine', 'house', 'watchtower', 'stable']
+    allowedBuildingType: 'watchtower',
+    allowedTypes: ['watchtower'],
+    unlockLevel: 1
   },
   {
-    id: 'pad_e',
-    x: 620,
+    id: 'pad_tower_se',
+    x: 722,
+    y: 548,
+    rotation: 0,
+    padType: 'TOWER_ONLY',
+    allowedBuildingType: 'watchtower',
+    allowedTypes: ['watchtower'],
+    unlockLevel: 1
+  },
+  {
+    id: 'pad_wall_gate',
+    x: 430,
+    y: 418,
+    rotation: 0,
+    padType: 'TOWER_ONLY',
+    allowedBuildingType: 'wall',
+    allowedTypes: ['wall'],
+    unlockLevel: 1
+  },
+  {
+    id: 'pad_hero',
+    x: 624,
     y: 340,
+    rotation: 0,
     padType: 'HERO',
-    allowedTypes: ['hero_recruiter']
-  },
-  {
-    id: 'pad_f',
-    x: 840,
-    y: 220,
-    padType: 'TOWER_ONLY',
-    allowedTypes: ['gold_mine', 'house', 'watchtower', 'blacksmith', 'stable']
+    allowedBuildingType: 'hero_recruiter',
+    allowedTypes: ['hero_recruiter'],
+    unlockLevel: 3
   }
 ]
+
+const DEFAULT_PADS: BuildingPad[] = LEVEL_1_PADS
 
 const DEFAULT_HERO: HeroLoadout = {
   id: 'vanguard',
@@ -120,7 +160,7 @@ const RAW_LEVELS = [
     dayRewardScale: 5,
     heroLoadout: DEFAULT_HERO,
     bossId: 'boss',
-    buildingPads: DEFAULT_PADS,
+    buildingPads: LEVEL_1_PADS,
     startingBuildings: [],
     goals: [
       { id: 'goal_survive_3', type: 'survive_days', label: 'Survive until Day 3', target: 3 },
