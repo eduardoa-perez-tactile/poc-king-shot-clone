@@ -1,0 +1,123 @@
+You are Codex working in the Kingshot-like RTS roguelike (Babylon.js 3D sim with orthographic RTS camera + React UI overlay). Implement a “Primitive Visual Mode” that replaces all current complex/GLB meshes with simple geometry + labels for readability and fast iteration.
+
+PRIMARY GOALS
+1) Buildings: single box mesh per building + semi-transparent material + floating label showing building name + level.
+2) Units: single box mesh per unit + color-coded material by unit type/faction + size variations (hero/miniboss/boss/cavalry) + floating label showing unit type.
+3) Obstacles: shrink footprint slightly on every level so we can place more obstacles and leave room for player-built walls.
+4) No composed meshes: exactly ONE primitive mesh per entity (plus its label). Labels and levels are the primary readability device.
+
+NON-GOALS / CONSTRAINTS
+- Do NOT modify gameplay logic (AI, combat, economy). Visual-only + minor level obstacle footprint change.
+- Maintain performance: reuse shared meshes/materials, instance where possible, avoid per-frame React rerenders.
+- Labels must be easy to read with ortho camera: always face camera, stable scale, no jitter.
+- Keep raycasting selection working (click to select buildings/units), selection ring still allowed.
+- Build pads remain visible/readable.
+
+IMPLEMENTATION PLAN (DO THIS)
+A) Add a global toggle
+- Add a config flag: VISUAL_MODE = "primitive" | "full" (default to "primitive" for now).
+- Provide a single entry point in scene setup: createEntityVisual(entity) that branches by mode.
+- Ensure switching mode does not break entity IDs, selection, or pooling.
+
+B) Primitive visuals for buildings
+- Replace each building’s mesh creation with ONE primitive:
+  - Use BABYLON.MeshBuilder.CreateBox with width/depth based on building footprint; height based on building category/level.
+  - If building footprint is rectangular, use a box with matching x/z dimensions.
+- Material:
+  - Single shared StandardMaterial per building type OR a small palette.
+  - Set material.alpha ~ 0.75 (semi-transparent) so you can see behind; enable transparency properly:
+    - material.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND (or equivalent for the engine version).
+    - Keep backFaceCulling as needed.
+- Label:
+  - Use a billboarded plane with DynamicTexture (or Babylon GUI AdvancedDynamicTexture attached to mesh) that renders:
+    - Line 1: BuildingTypeName (e.g., “STRONGHOLD”, “TOWER”, “BARRACKS”, “ARCHERS”, “HERO RECRUITER”)
+    - Line 2: “Lv X”
+  - Always face camera (billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL).
+  - Position above building top: y = boxHeight/2 + labelOffset.
+  - Avoid label flicker; cache textures by (type, level) and reuse.
+- IMPORTANT: “one primitive geometrical item for the building” refers to 3D mesh. The label can be its own plane, but do not compose 3D shapes for the building itself.
+
+C) Primitive visuals for units
+- Replace unit meshes with ONE primitive box per unit (no multi-part bodies).
+- Color coding:
+  - Create a small set of shared materials keyed by unit archetype and/or faction.
+  - Example mapping (adjust to your unit list):
+    - Player melee: blue
+    - Player ranged: cyan
+    - Player cavalry: teal
+    - Enemy grunt: red
+    - Enemy ranged: orange
+    - Miniboss: purple
+    - Boss: black/dark
+    - Hero: gold/yellow
+  - Use StandardMaterial with diffuseColor set accordingly.
+- Size variations:
+  - Default unit: 1.0x1.0 base footprint, height 1.0
+  - Cavalry: wider/longer footprint (e.g., 1.4x1.2), slightly taller
+  - Hero: taller and slightly larger (e.g., 1.2x1.2 footprint, height 1.8)
+  - Miniboss: bigger (e.g., 1.6x1.6, height 2.2)
+  - Boss: biggest (e.g., 2.4x2.4, height 3.0)
+  - Ensure dimensions remain compatible with collision/occupancy (do not change physics body sizes unless visuals are decoupled).
+- Labels:
+  - Billboarded plane + DynamicTexture (or GUI) rendering unitType (e.g., “ARCHER”, “SWORD”, “CAVALRY”, “MAGE”, “GOLEM”, “DRAGON”, “MINIBOSS”, “BOSS”).
+  - Position above unit: y = boxHeight/2 + labelOffset.
+  - Cache textures by unitType; do not recreate every frame.
+- Optional (if already present and easy): show “HP XX%” on second line, but keep it cheap.
+
+D) Shared mesh/material reuse (PERFORMANCE)
+- For each archetype/size combination, create a base box mesh once, then clone/instance:
+  - Prefer thin instances for large numbers of same-size units if selection doesn’t require individual meshes.
+  - If selection requires individual pickable meshes, use InstancedMesh (still pickable) and keep per-unit metadata.
+- Materials:
+  - Create a material registry: getOrCreateMaterial(key).
+- Labels:
+  - Use a label cache: getOrCreateLabelTexture(key) and reuse DynamicTexture.
+  - Keep label plane mesh simple; reuse plane geometry and only change texture per key.
+- Ensure disposal on entity removal to avoid leaks (instances vs base meshes vs textures).
+
+E) Obstacles footprint shrink + more obstacles + room for walls
+- In the level generation / obstacle placement logic:
+  - Reduce obstacle collider/footprint by a factor (e.g., 0.85) or subtract a fixed margin.
+  - Keep visuals consistent: obstacle primitive box matches new smaller footprint.
+- Update obstacle placement constraints:
+  - Add a “wall corridor margin” near buildable wall paths and/or near build pads so obstacles won’t block future walls.
+  - Ensure navigation/pathing still works (do not create unreachable states).
+- Increase obstacle count slightly (configurable per level) only if it does not overcrowd:
+  - Add a per-level parameter: obstacleDensityMultiplier (default 1.2).
+- Provide debug draw for blocked cells/footprints if already available; otherwise keep it minimal.
+
+F) Integration details
+- Do not break:
+  - Raycast selection (units/buildings/pads)
+  - Selection ring visuals
+  - Current VFX pooling (can remain, but optional to tone down if too noisy)
+  - Orthographic camera readability
+- Make sure labels are visible in ortho:
+  - Clamp label plane size to world scale that reads well.
+  - Consider disabling depth write on label material to avoid clipping behind geometry:
+    - labelMaterial.disableDepthWrite = true (if supported) or use renderingGroupId to render after world.
+- Ensure consistent rendering order:
+  - World meshes: group 0
+  - Labels: group 1 (render later)
+
+DELIVERABLES (WHAT TO COMMIT)
+1) New config flag: VISUAL_MODE with default “primitive”.
+2) New module(s):
+   - PrimitiveVisualFactory (createBuildingPrimitive, createUnitPrimitive, createObstaclePrimitive, createLabelPlane)
+   - MaterialRegistry / LabelCache
+3) Replace existing mesh creation calls with the factory.
+4) Update obstacle sizing + placement with the shrink factor + optional density.
+5) Minimal test checklist in comments:
+   - Start mission, see stronghold + pads + buildings as boxes with labels/levels
+   - Start battle, see units/enemies as boxes with labels and correct sizes/colors
+   - Next-wave spawn indicators still visible
+   - Clicking selects entities correctly
+   - No major FPS drop; no label flickering; no memory leak after multiple cycles
+
+CODE QUALITY REQUIREMENTS
+- Typescript preferred. No per-frame allocations in hot paths.
+- Avoid per-frame React state updates; labels should be Babylon-side.
+- Use clear keys for caches (e.g., `building:${type}:lv${level}`, `unit:${archetype}`, etc.)
+- Add small inline docs for the mapping tables (colors, sizes).
+
+NOW IMPLEMENT IT.
