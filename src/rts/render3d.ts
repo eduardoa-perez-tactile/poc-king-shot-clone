@@ -874,11 +874,11 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     }
   }
 
-  const updateRanges = (sim: SimState, selection: string[]) => {
+  const updateRanges = (sim: SimState, selection: string[], selectedPadId?: string | null) => {
     selection.forEach((id, index) => {
       const entity = sim.entities.find((entry) => entry.id === id)
       const ring = ensureRangeRing(index)
-      if (!entity || entity.kind === 'hq') {
+      if (!entity || entity.kind === 'hq' || entity.range <= 0) {
         ring.setEnabled(false)
         return
       }
@@ -887,7 +887,24 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
       ring.position = new Vector3(entity.pos.x, 0.18, entity.pos.y)
       ring.setEnabled(true)
     })
-    for (let i = selection.length; i < rangeRings.length; i += 1) {
+
+    let activeRangeCount = selection.length
+    if (selectedPadId) {
+      const selectedTower = sim.entities.find(
+        (entry) => entry.kind === 'tower' && entry.team === 'player' && entry.hp > 0 && entry.structurePadId === selectedPadId
+      )
+      const towerAlreadySelected = selectedTower ? selection.includes(selectedTower.id) : false
+      if (selectedTower && !towerAlreadySelected && selectedTower.range > 0) {
+        const ring = ensureRangeRing(activeRangeCount)
+        const diameter = Math.max(4, selectedTower.range * 2)
+        ring.scaling = new Vector3(diameter / 2, 1, diameter / 2)
+        ring.position = new Vector3(selectedTower.pos.x, 0.18, selectedTower.pos.y)
+        ring.setEnabled(true)
+        activeRangeCount += 1
+      }
+    }
+
+    for (let i = activeRangeCount; i < rangeRings.length; i += 1) {
       rangeRings[i].setEnabled(false)
     }
   }
@@ -1086,7 +1103,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     }
     updateProjectiles(input.sim.projectiles)
     updateSelection(input.sim, input.selection)
-    updateRanges(input.sim, input.selection)
+    updateRanges(input.sim, input.selection, input.overlays.selectedPadId)
     updateHealthBars(input.sim)
     updateInvasionIndicators(input.overlays.nextBattlePreview, input.phase, input.sim.time)
     updateHqHover(input.sim, input.overlays.hoveredHq)

@@ -599,7 +599,20 @@ export const CanvasLayer3D = React.memo(
             strongholdSelectedRef.current = false
             onPadClickRef.current(pick.padId)
           } else {
-            onPadBlockedRef.current()
+            const tower = simRef.current.entities.find(
+              (entry) => entry.kind === 'tower' && entry.team === 'player' && entry.hp > 0 && entry.structurePadId === pick.padId
+            )
+            if (tower) {
+              strongholdSelectedRef.current = false
+              if (selectedIdsRef.current.length === 1 && selectedIdsRef.current[0] === tower.id) {
+                selectedIdsRef.current = []
+              } else {
+                selectedIdsRef.current = [tower.id]
+              }
+              emitSelection()
+            } else {
+              onPadBlockedRef.current()
+            }
           }
           dragBoxRef.current = null
           updateDragBox(null)
