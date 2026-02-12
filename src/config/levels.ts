@@ -96,6 +96,46 @@ const LEVEL_1_PADS: BuildingPad[] = [
     unlockLevel: 1
   },
   {
+    id: 'pad_tower_west_mid',
+    x: 240,
+    y: 400,
+    rotation: 0,
+    padType: 'TOWER_ONLY',
+    allowedBuildingType: 'watchtower',
+    allowedTypes: ['watchtower'],
+    unlockLevel: 1
+  },
+  {
+    id: 'pad_tower_east_mid',
+    x: 960,
+    y: 400,
+    rotation: 0,
+    padType: 'TOWER_ONLY',
+    allowedBuildingType: 'watchtower',
+    allowedTypes: ['watchtower'],
+    unlockLevel: 1
+  },
+  {
+    id: 'pad_tower_north_mid',
+    x: 600,
+    y: 104,
+    rotation: 0,
+    padType: 'TOWER_ONLY',
+    allowedBuildingType: 'watchtower',
+    allowedTypes: ['watchtower'],
+    unlockLevel: 1
+  },
+  {
+    id: 'pad_tower_south_mid',
+    x: 600,
+    y: 696,
+    rotation: 0,
+    padType: 'TOWER_ONLY',
+    allowedBuildingType: 'watchtower',
+    allowedTypes: ['watchtower'],
+    unlockLevel: 1
+  },
+  {
     id: 'pad_wall_gate',
     x: 430,
     y: 418,
@@ -146,6 +186,107 @@ const DEFAULT_HERO: HeroLoadout = {
       description: 'Recover health to stay in the fight.',
       cooldown: 12,
       heal: 300
+    }
+  }
+}
+
+const MIN_WATCHTOWER_PADS = 4
+const MIN_PAD_SPACING = 86
+
+const isWatchtowerPad = (pad: BuildingPad) =>
+  pad.padType === 'TOWER_ONLY' && pad.allowedBuildingType === 'watchtower' && pad.allowedTypes.includes('watchtower')
+
+const createWatchtowerPad = (id: string, x: number, y: number): BuildingPad => ({
+  id,
+  x,
+  y,
+  rotation: 0,
+  padType: 'TOWER_ONLY',
+  allowedBuildingType: 'watchtower',
+  allowedTypes: ['watchtower'],
+  unlockLevel: 1
+})
+
+const buildTowerPadCandidates = (map: LevelDefinition['map']) => [
+  { x: map.width * 0.42, y: map.height * 0.22 },
+  { x: map.width * 0.58, y: map.height * 0.22 },
+  { x: map.width * 0.42, y: map.height * 0.72 },
+  { x: map.width * 0.58, y: map.height * 0.72 },
+  { x: map.width * 0.32, y: map.height * 0.42 },
+  { x: map.width * 0.68, y: map.height * 0.42 },
+  { x: map.width * 0.32, y: map.height * 0.6 },
+  { x: map.width * 0.68, y: map.height * 0.6 }
+]
+
+const isTooCloseToOtherPads = (pads: BuildingPad[], x: number, y: number) =>
+  pads.some((pad) => {
+    const dx = pad.x - x
+    const dy = pad.y - y
+    return Math.hypot(dx, dy) < MIN_PAD_SPACING
+  })
+
+const ensureMinimumTowerPads = (level: LevelDefinition): LevelDefinition => {
+  const towerPads = level.buildingPads.filter(isWatchtowerPad)
+  const minTowerPads = Math.max(level.padConstraints.minTowerPads, MIN_WATCHTOWER_PADS)
+  if (towerPads.length >= MIN_WATCHTOWER_PADS && minTowerPads === level.padConstraints.minTowerPads) return level
+
+  const pads = level.buildingPads.map((pad) => ({ ...pad, allowedTypes: [...pad.allowedTypes] }))
+  const existingIds = new Set(pads.map((pad) => pad.id))
+  const addedPadIds: string[] = []
+  let nextTowerCount = towerPads.length
+  let autoIndex = 1
+
+  const addTowerPad = (x: number, y: number) => {
+    if (nextTowerCount >= MIN_WATCHTOWER_PADS) return
+    const clampedX = Math.max(40, Math.min(level.map.width - 40, Math.round(x)))
+    const clampedY = Math.max(40, Math.min(level.map.height - 40, Math.round(y)))
+    if (isTooCloseToOtherPads(pads, clampedX, clampedY)) return
+    while (existingIds.has(`pad_tower_auto_${autoIndex}`)) {
+      autoIndex += 1
+    }
+    const id = `pad_tower_auto_${autoIndex}`
+    existingIds.add(id)
+    pads.push(createWatchtowerPad(id, clampedX, clampedY))
+    addedPadIds.push(id)
+    nextTowerCount += 1
+  }
+
+  buildTowerPadCandidates(level.map).forEach((candidate) => addTowerPad(candidate.x, candidate.y))
+
+  if (nextTowerCount < MIN_WATCHTOWER_PADS) {
+    const centerX = level.map.width * 0.52
+    const centerY = level.map.height * 0.48
+    const radius = Math.min(level.map.width, level.map.height) * 0.22
+    for (let i = 0; i < 16 && nextTowerCount < MIN_WATCHTOWER_PADS; i += 1) {
+      const angle = (Math.PI * 2 * i) / 16
+      addTowerPad(centerX + Math.cos(angle) * radius, centerY + Math.sin(angle) * radius)
+    }
+  }
+
+  const padUnlockLevels = { ...level.stronghold.padUnlockLevels }
+  addedPadIds.forEach((padId) => {
+    padUnlockLevels[padId] = 1
+  })
+
+  const padUnlocksByLevel = Object.entries(level.stronghold.padUnlocksByLevel).reduce<Record<string, string[]>>((acc, [lv, ids]) => {
+    acc[lv] = [...ids]
+    return acc
+  }, {})
+  const levelOneUnlocks = new Set(padUnlocksByLevel['1'] ?? [])
+  addedPadIds.forEach((padId) => levelOneUnlocks.add(padId))
+  padUnlocksByLevel['1'] = Array.from(levelOneUnlocks)
+
+  return {
+    ...level,
+    padConstraints: {
+      ...level.padConstraints,
+      minTowerPads
+    },
+    buildingPads: pads,
+    stronghold: {
+      ...level.stronghold,
+      padUnlockLevels,
+      padUnlocksByLevel
     }
   }
 }
@@ -444,16 +585,16 @@ const RAW_LEVELS = [
   }
 ]
 
-export const BASE_LEVELS: LevelDefinition[] = RAW_LEVELS.map((raw) => migrateLevelDefinition(raw))
+export const BASE_LEVELS: LevelDefinition[] = RAW_LEVELS.map((raw) => ensureMinimumTowerPads(migrateLevelDefinition(raw)))
 
 export const getBaseLevels = () => BASE_LEVELS.slice()
 
 export const getLevels = (): LevelDefinition[] => {
   const overrides = getTuningOverrides()
-  const baseResolved = BASE_LEVELS.map((base) => overrides[base.id] ?? base)
+  const baseResolved = BASE_LEVELS.map((base) => ensureMinimumTowerPads(overrides[base.id] ?? base))
   const extraOverrides = Object.keys(overrides)
     .filter((id) => !BASE_LEVELS.some((level) => level.id === id))
-    .map((id) => overrides[id])
+    .map((id) => ensureMinimumTowerPads(overrides[id]))
   return [...baseResolved, ...extraOverrides]
 }
 
