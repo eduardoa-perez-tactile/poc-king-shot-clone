@@ -210,11 +210,11 @@ export const CanvasLayer3D = React.memo(
     const syncInputVectorToIsometricAxes = () => {
       const input = playerInputRef.current
       const horizontal = (input.right ? 1 : 0) - (input.left ? 1 : 0)
-      const vertical = (input.down ? 1 : 0) - (input.up ? 1 : 0)
-      // Map screen-relative arrows to isometric world axes (45deg):
-      // Up => world upper-right, Right => world lower-right, etc.
-      input.worldX = horizontal + vertical
-      input.worldY = horizontal - vertical
+      const vertical = (input.up ? 1 : 0) - (input.down ? 1 : 0)
+      // Screen-relative isometric mapping:
+      // Up/Down -> world X axis, Left/Right -> world Y axis.
+      input.worldX = -vertical
+      input.worldY = horizontal
     }
 
     useImperativeHandle(ref, () => ({
