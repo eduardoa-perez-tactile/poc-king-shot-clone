@@ -4,15 +4,18 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera'
 import { Camera as BabylonCamera } from '@babylonjs/core/Cameras/camera'
 import { Vector3, Matrix, Quaternion } from '@babylonjs/core/Maths/math.vector'
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color'
+import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh'
 import { Mesh } from '@babylonjs/core/Meshes/mesh'
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder'
 import '@babylonjs/core/Meshes/thinInstanceMesh'
+import { Material } from '@babylonjs/core/Materials/material'
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial'
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture'
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight'
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight'
 import { PAD_SIZE } from './pads'
 import { BUILDING_DEFS } from '../config/buildings'
+import { VISUAL_MODE } from '../config/rendering'
 import type { BuildingPad } from '../config/levels'
 import type { RunBuilding } from '../run/types'
 import type { Camera as Camera2D } from './render'
@@ -20,6 +23,11 @@ import type { EntityState, NextBattlePreview, SimState, Vec2 } from './types'
 import type { PickMeta } from './input/input3d'
 import { createBuildingFactory, type BuildingVisualInstance } from './render/visuals/buildingFactory'
 import { createUnitFactory, type SpecialUnitVisual } from './render/visuals/unitFactory'
+import {
+  PrimitiveVisualFactory,
+  type BuildingPrimitiveVisual,
+  type UnitPrimitiveVisual
+} from './render/visuals/PrimitiveVisualFactory'
 import { VfxManager, type HeroVfxType } from './render/vfx/VfxManager'
 
 const HIT_FLASH_DURATION = 0.14
@@ -34,12 +42,12 @@ const LABEL_TEXTURE_SIZE = 384
 const HEALTH_BAR_HEIGHT = 1.2
 const HEALTH_BAR_DEPTH = 2.2
 const DAMAGE_LABEL_FONT = 96
-const DAMAGE_LABEL_SCALE = 1.3
+const DAMAGE_LABEL_SCALE = 1.5
 const PROJECTILE_SCALE = 3
-const BUILDING_LABEL_FONT = 72
-const BUILDING_LABEL_SCALE = 1.9
-const UNIT_LABEL_FONT = 84
-const UNIT_LABEL_SCALE = 1.4
+const BUILDING_LABEL_FONT = 112
+const BUILDING_LABEL_SCALE = 3.1
+const UNIT_LABEL_FONT = 124
+const UNIT_LABEL_SCALE = 2.6
 const INVASION_MARKER_HEIGHT = 28
 const INVASION_MARKER_RADIUS = 7
 const DEBUG_SHOW_SPAWN_POINTS =
@@ -157,10 +165,13 @@ const createLabel = (scene: Scene, name: string) => {
   mat.opacityTexture = texture
   mat.emissiveColor = Color3.White()
   mat.backFaceCulling = false
-  const mesh = MeshBuilder.CreatePlane(name, { width: 18, height: 9 }, scene)
+  mat.disableDepthWrite = true
+  mat.transparencyMode = Material.MATERIAL_ALPHABLEND
+  const mesh = MeshBuilder.CreatePlane(name, { width: 34, height: 17 }, scene)
   mesh.material = mat
   mesh.billboardMode = Mesh.BILLBOARDMODE_ALL
   mesh.isPickable = false
+  mesh.renderingGroupId = 1
   return { mesh, texture }
 }
 
@@ -315,18 +326,29 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   healthPlayerMaterial.backFaceCulling = false
   healthEnemyMaterial.backFaceCulling = false
 
+  const primitiveMode = VISUAL_MODE === 'primitive'
+  /*
+   * Primitive visual smoke checklist:
+   * 1) Start mission: stronghold/pads/buildings render as labeled boxes with levels.
+   * 2) Start battle: units/enemies render as labeled boxes with size + color mapping.
+   * 3) Next-wave indicators still render.
+   * 4) Clicking still selects units/buildings/pads.
+   * 5) Run multiple battles and verify no label flicker/memory growth/FPS cliff.
+   */
+  const primitiveFactory = new PrimitiveVisualFactory(scene)
   const buildingFactory = createBuildingFactory(scene)
   const unitFactory = createUnitFactory(scene)
   const vfx = new VfxManager(scene)
 
   let activeMap = map
   let ground: Mesh | null = null
-  let obstacles: Mesh[] = []
+  let obstacles: AbstractMesh[] = []
   const padMeshes = new Map<string, Mesh>()
-  const buildingMeshes = new Map<string, BuildingVisualInstance>()
+  const buildingMeshes = new Map<string, BuildingVisualInstance | BuildingPrimitiveVisual>()
   const buildingLabels = new Map<string, LabelMesh>()
   const unitGroups = new Map<UnitGroupKey, ThinGroup>()
   const specialMeshes = new Map<string, SpecialUnitVisual>()
+  const primitiveUnitMeshes = new Map<string, UnitPrimitiveVisual>()
   const labelMeshes = new Map<string, LabelMesh>()
   const damageLabels: LabelMesh[] = []
   const selectionRings: Mesh[] = []
@@ -410,11 +432,16 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     ground.isPickable = true
     ground.metadata = { kind: 'ground' } as PickMeta
     nextMap.obstacles.forEach((ob, index) => {
-      const height = 18
-      const mesh = MeshBuilder.CreateBox(`obstacle_${index}`, { width: ob.w, depth: ob.h, height }, scene)
-      mesh.position = new Vector3(ob.x + ob.w / 2, height / 2, ob.y + ob.h / 2)
-      mesh.material = createMaterial(scene, Color3.FromHexString('#1f2937'), 0.15)
-      mesh.isPickable = false
+      const mesh = primitiveMode
+        ? primitiveFactory.createObstaclePrimitive(ob, `${index}`)
+        : (() => {
+            const height = 18
+            const fullMesh = MeshBuilder.CreateBox(`obstacle_${index}`, { width: ob.w, depth: ob.h, height }, scene)
+            fullMesh.position = new Vector3(ob.x + ob.w / 2, height / 2, ob.y + ob.h / 2)
+            fullMesh.material = createMaterial(scene, Color3.FromHexString('#1f2937'), 0.15)
+            fullMesh.isPickable = false
+            return fullMesh
+          })()
       obstacles.push(mesh)
     })
   }
@@ -433,9 +460,12 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
 
   const ensureBuildingMesh = (padId: string, buildingId: RunBuilding['id'], level: number) => {
     if (buildingMeshes.has(padId)) return buildingMeshes.get(padId)!
-    const instance = buildingFactory.create(buildingId, PAD_SIZE, level, padId)
-    instance.basePlate.isPickable = true
-    instance.basePlate.metadata = { kind: 'building', padId } as PickMeta
+    const instance = primitiveMode
+      ? primitiveFactory.createBuildingPrimitive(buildingId, PAD_SIZE, level, padId)
+      : buildingFactory.create(buildingId, PAD_SIZE, level, padId)
+    const pickMesh = 'mesh' in instance ? instance.mesh : instance.basePlate
+    pickMesh.isPickable = true
+    pickMesh.metadata = { kind: 'building', padId } as PickMeta
     buildingMeshes.set(padId, instance)
     return instance
   }
@@ -516,6 +546,28 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     visual.primary.metadata = { kind: entity.kind === 'hq' ? 'hq' : 'unit', entityId: entity.id } as PickMeta
     specialMeshes.set(entity.id, visual)
     return visual
+  }
+
+  const ensurePrimitiveUnitMesh = (entity: EntityState) => {
+    const existing = primitiveUnitMeshes.get(entity.id)
+    if (existing) return existing
+    const visual = primitiveFactory.createUnitPrimitive(entity)
+    if (entity.kind === 'hq') {
+      visual.mesh.metadata = { kind: 'hq' } as PickMeta
+    } else {
+      visual.mesh.metadata = { kind: 'unit', entityId: entity.id } as PickMeta
+    }
+    primitiveUnitMeshes.set(entity.id, visual)
+    return visual
+  }
+
+  const createEntityVisual = (entity: EntityState) => {
+    if (primitiveMode) {
+      if (entity.kind === 'tower' || entity.kind === 'wall') return null
+      return ensurePrimitiveUnitMesh(entity)
+    }
+    if (entity.kind !== 'hero' && entity.kind !== 'elite' && entity.kind !== 'hq') return null
+    return ensureSpecialMesh(entity)
   }
 
   const ensureDamageLabel = (index: number) => {
@@ -680,6 +732,10 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   }
 
   const updateLabels = (sim: SimState, showLabels: boolean) => {
+    if (primitiveMode) {
+      labelMeshes.forEach((entry) => entry.mesh.setEnabled(false))
+      return
+    }
     if (!showLabels) {
       labelMeshes.forEach((entry) => entry.mesh.setEnabled(false))
       return
@@ -818,11 +874,11 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     }
   }
 
-  const updateRanges = (sim: SimState, selection: string[]) => {
+  const updateRanges = (sim: SimState, selection: string[], selectedPadId?: string | null) => {
     selection.forEach((id, index) => {
       const entity = sim.entities.find((entry) => entry.id === id)
       const ring = ensureRangeRing(index)
-      if (!entity || entity.kind === 'hq') {
+      if (!entity || entity.kind === 'hq' || entity.range <= 0) {
         ring.setEnabled(false)
         return
       }
@@ -831,16 +887,51 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
       ring.position = new Vector3(entity.pos.x, 0.18, entity.pos.y)
       ring.setEnabled(true)
     })
-    for (let i = selection.length; i < rangeRings.length; i += 1) {
+
+    let activeRangeCount = selection.length
+    if (selectedPadId) {
+      const selectedTower = sim.entities.find(
+        (entry) => entry.kind === 'tower' && entry.team === 'player' && entry.hp > 0 && entry.structurePadId === selectedPadId
+      )
+      const towerAlreadySelected = selectedTower ? selection.includes(selectedTower.id) : false
+      if (selectedTower && !towerAlreadySelected && selectedTower.range > 0) {
+        const ring = ensureRangeRing(activeRangeCount)
+        const diameter = Math.max(4, selectedTower.range * 2)
+        ring.scaling = new Vector3(diameter / 2, 1, diameter / 2)
+        ring.position = new Vector3(selectedTower.pos.x, 0.18, selectedTower.pos.y)
+        ring.setEnabled(true)
+        activeRangeCount += 1
+      }
+    }
+
+    for (let i = activeRangeCount; i < rangeRings.length; i += 1) {
       rangeRings[i].setEnabled(false)
     }
   }
 
-  const updateSpecialMeshes = (sim: SimState) => {
+  const updateEntityVisuals = (sim: SimState) => {
+    if (primitiveMode) {
+      const activeIds = new Set<string>()
+      sim.entities.forEach((entity) => {
+        const visual = createEntityVisual(entity)
+        if (!visual || 'root' in visual) return
+        activeIds.add(entity.id)
+        visual.mesh.position.set(entity.pos.x, visual.height / 2, entity.pos.y)
+        visual.setEnabled(true)
+      })
+      primitiveUnitMeshes.forEach((mesh, id) => {
+        if (!activeIds.has(id)) {
+          mesh.dispose()
+          primitiveUnitMeshes.delete(id)
+        }
+      })
+      return
+    }
+
     const activeIds = new Set<string>()
     sim.entities.forEach((entity) => {
-      if (entity.kind !== 'hero' && entity.kind !== 'elite' && entity.kind !== 'hq') return
-      const visual = ensureSpecialMesh(entity)
+      const visual = createEntityVisual(entity)
+      if (!visual || !('root' in visual)) return
       activeIds.add(entity.id)
       if (entity.kind === 'hq') {
         const height = BASE_BUILDING_HEIGHT + Math.max(0, entity.radius)
@@ -883,14 +974,19 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
         instance.root.rotation.y = pad.rotation ?? 0
         instance.setLevel(building.level)
         instance.setEnabled(true)
-        const label = ensureBuildingLabel(pad.id)
-        const name = BUILDING_DEFS[building.id].name
-        if (label.text !== name) {
-          drawLabel(label.texture, name, '#e2e8f0', BUILDING_LABEL_FONT)
-          label.text = name
+        if (!primitiveMode) {
+          const label = ensureBuildingLabel(pad.id)
+          const name = BUILDING_DEFS[building.id].name
+          if (label.text !== name) {
+            drawLabel(label.texture, name, '#e2e8f0', BUILDING_LABEL_FONT)
+            label.text = name
+          }
+          label.mesh.position = new Vector3(pad.x, instance.height + 18, pad.y)
+          label.mesh.setEnabled(true)
+        } else {
+          const label = buildingLabels.get(pad.id)
+          if (label) label.mesh.setEnabled(false)
         }
-        label.mesh.position = new Vector3(pad.x, instance.height + 18, pad.y)
-        label.mesh.setEnabled(true)
       } else {
         const mesh = buildingMeshes.get(pad.id)
         if (mesh) mesh.setEnabled(false)
@@ -903,11 +999,13 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
         mesh.setEnabled(false)
       }
     })
-    buildingLabels.forEach((label, padId) => {
-      if (!activeBuildingPads.has(padId)) {
-        label.mesh.setEnabled(false)
-      }
-    })
+    if (!primitiveMode) {
+      buildingLabels.forEach((label, padId) => {
+        if (!activeBuildingPads.has(padId)) {
+          label.mesh.setEnabled(false)
+        }
+      })
+    }
   }
 
   const updateHqHover = (sim: SimState, hovered: boolean | undefined) => {
@@ -965,36 +1063,47 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   const update = (input: Render3DUpdateInput) => {
     updatePads(input.overlays)
     updateBuildings(input.sim, input.overlays.pads, input.overlays.buildings)
-    updateSpecialMeshes(input.sim)
-    const unitBuckets = new Map<UnitGroupKey, EntityState[]>()
-    input.sim.entities.forEach((entity) => {
-      if (
-        entity.kind === 'hq' ||
-        entity.kind === 'hero' ||
-        entity.kind === 'elite' ||
-        entity.kind === 'tower' ||
-        entity.kind === 'wall'
-      ) {
-        return
-      }
-      const key = `${entity.team}_${entity.kind}`
-      if (!unitBuckets.has(key)) unitBuckets.set(key, [])
-      unitBuckets.get(key)!.push(entity)
-    })
-    unitBuckets.forEach((entities, key) => {
-      const [team, kind] = key.split('_') as [EntityState['team'], EntityState['kind']]
-      const group = ensureUnitGroup(key, getGroupColor(team, kind))
-      updateThinGroup(group, entities, input.sim.time)
-    })
-    unitGroups.forEach((group, key) => {
-      if (!unitBuckets.has(key)) {
+    updateEntityVisuals(input.sim)
+    if (!primitiveMode) {
+      const unitBuckets = new Map<UnitGroupKey, EntityState[]>()
+      input.sim.entities.forEach((entity) => {
+        if (
+          entity.kind === 'hq' ||
+          entity.kind === 'hero' ||
+          entity.kind === 'elite' ||
+          entity.kind === 'tower' ||
+          entity.kind === 'wall'
+        ) {
+          return
+        }
+        const key = `${entity.team}_${entity.kind}`
+        if (!unitBuckets.has(key)) unitBuckets.set(key, [])
+        unitBuckets.get(key)!.push(entity)
+      })
+      unitBuckets.forEach((entities, key) => {
+        const [team, kind] = key.split('_') as [EntityState['team'], EntityState['kind']]
+        const group = ensureUnitGroup(key, getGroupColor(team, kind))
+        updateThinGroup(group, entities, input.sim.time)
+      })
+      unitGroups.forEach((group, key) => {
+        if (!unitBuckets.has(key)) {
+          group.mesh.thinInstanceCount = 0
+          group.ids = []
+        }
+      })
+    } else {
+      unitGroups.forEach((group) => {
         group.mesh.thinInstanceCount = 0
         group.ids = []
-      }
-    })
+      })
+      specialMeshes.forEach((mesh, id) => {
+        mesh.dispose()
+        specialMeshes.delete(id)
+      })
+    }
     updateProjectiles(input.sim.projectiles)
     updateSelection(input.sim, input.selection)
-    updateRanges(input.sim, input.selection)
+    updateRanges(input.sim, input.selection, input.overlays.selectedPadId)
     updateHealthBars(input.sim)
     updateInvasionIndicators(input.overlays.nextBattlePreview, input.phase, input.sim.time)
     updateHqHover(input.sim, input.overlays.hoveredHq)
@@ -1020,6 +1129,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   }
 
   const dispose = () => {
+    primitiveFactory.dispose()
     scene.dispose()
     engine.dispose()
   }

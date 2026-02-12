@@ -241,6 +241,7 @@ export interface LevelDefinition {
   map: {
     width: number
     height: number
+    obstacleDensityMultiplier?: number
     obstacles: { x: number; y: number; w: number; h: number }[]
     playerSpawn: { x: number; y: number }
     enemySpawn: { x: number; y: number }
@@ -465,6 +466,7 @@ const defaultEnemyCatalog = (): EnemyCatalogEntry[] => [
 const createDefaultMap = () => ({
   width: 1200,
   height: 800,
+  obstacleDensityMultiplier: 1.2,
   obstacles: [] as { x: number; y: number; w: number; h: number }[],
   playerSpawn: { x: 320, y: 320 },
   enemySpawn: { x: 940, y: 380 },
@@ -1023,6 +1025,10 @@ const migrateMap = (legacy: Record<string, unknown>, fallback: LevelDefinition):
   return {
     width: clampNonNegative(asNumber(raw.width, defaults.width), defaults.width),
     height: clampNonNegative(asNumber(raw.height, defaults.height), defaults.height),
+    obstacleDensityMultiplier:
+      typeof raw.obstacleDensityMultiplier === 'number'
+        ? clampNonNegative(asNumber(raw.obstacleDensityMultiplier, defaults.obstacleDensityMultiplier ?? 1.2), 1)
+        : defaults.obstacleDensityMultiplier,
     obstacles: asArray<Record<string, unknown>>(raw.obstacles, defaults.obstacles).map((obs) => ({
       x: asNumber(obs.x, 0),
       y: asNumber(obs.y, 0),
