@@ -1,4 +1,4 @@
-import { HeroRuntime } from '../config/levels'
+import { HeroRuntime, SpawnEdge, SpawnEdgeConfig, SpawnPointCount } from '../config/levels'
 import { EliteId } from '../config/elites'
 import { HeroRecruitId } from '../config/heroes'
 import { UnitType } from '../config/units'
@@ -93,12 +93,28 @@ export interface WaveUnitGroup {
   squadSize?: number
 }
 
+export interface SpawnTransform {
+  position: Vec2
+  forward: Vec2
+  edge: SpawnEdge
+}
+
 export interface CombatWave {
   id: string
   units: WaveUnitGroup[]
   spawnTimeSec?: number
   elite?: EliteId
   eliteCount?: number
+  spawnEdges?: SpawnEdgeConfig[]
+  spawnPointsPerEdge?: SpawnPointCount
+  spawnPadding?: number
+  resolvedSpawnTransforms?: SpawnTransform[]
+}
+
+export interface NextBattlePreview {
+  previewEdges: SpawnEdge[]
+  previewEnemyTypesDistinct: string[]
+  previewSpawnTransforms: SpawnTransform[]
 }
 
 export interface CombatDefinition {
@@ -120,6 +136,7 @@ export interface CombatDefinition {
     attackMultiplier: number
   }
   hqBaseHp: number
+  nextBattlePreview?: NextBattlePreview
 }
 
 export interface CombatStats {

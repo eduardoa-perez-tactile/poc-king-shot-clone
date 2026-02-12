@@ -16,7 +16,7 @@ import { BUILDING_DEFS } from '../config/buildings'
 import type { BuildingPad } from '../config/levels'
 import type { RunBuilding } from '../run/types'
 import type { Camera as Camera2D } from './render'
-import type { EntityState, SimState, Vec2 } from './types'
+import type { EntityState, NextBattlePreview, SimState, Vec2 } from './types'
 import type { PickMeta } from './input/input3d'
 import { createBuildingFactory, type BuildingVisualInstance } from './render/visuals/buildingFactory'
 import { createUnitFactory, type SpecialUnitVisual } from './render/visuals/unitFactory'
@@ -40,6 +40,12 @@ const BUILDING_LABEL_FONT = 72
 const BUILDING_LABEL_SCALE = 1.9
 const UNIT_LABEL_FONT = 84
 const UNIT_LABEL_SCALE = 1.4
+const INVASION_MARKER_HEIGHT = 28
+const INVASION_MARKER_RADIUS = 7
+const DEBUG_SHOW_SPAWN_POINTS =
+  import.meta.env.DEV &&
+  typeof window !== 'undefined' &&
+  window.localStorage.getItem('rts_debug_spawn_points') === '1'
 
 type UnitGroupKey = string
 
@@ -74,6 +80,7 @@ export interface Render3DOverlays {
   padUnlockLevels?: Record<string, number>
   strongholdLevel?: number
   hoveredHq?: boolean
+  nextBattlePreview?: NextBattlePreview
 }
 
 export interface Render3DOptions {
@@ -83,6 +90,7 @@ export interface Render3DOptions {
 export interface Render3DUpdateInput {
   sim: SimState
   camera: Camera2D
+  phase: 'build' | 'combat'
   selection: string[]
   overlays: Render3DOverlays
   options?: Render3DOptions
@@ -296,9 +304,13 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   const rangeMaterial = createMaterial(scene, Color3.FromHexString('#38bdf8'), 0.35)
   const hqHoverMaterial = createMaterial(scene, Color3.FromHexString('#facc15'), 0.7)
   const projectileMaterial = createMaterial(scene, Color3.FromHexString('#f97316'), 0.8)
+  const invasionMarkerMaterial = createMaterial(scene, Color3.FromHexString('#ef4444'), 0.95)
   const healthBgMaterial = createMaterial(scene, Color3.FromHexString('#0f172a'), 0.2)
   const healthPlayerMaterial = createMaterial(scene, Color3.FromHexString('#22c55e'), 0.5)
   const healthEnemyMaterial = createMaterial(scene, Color3.FromHexString('#ef4444'), 0.5)
+  invasionMarkerMaterial.useVertexColor = true
+  invasionMarkerMaterial.alpha = 0.92
+  invasionMarkerMaterial.backFaceCulling = false
   healthBgMaterial.backFaceCulling = false
   healthPlayerMaterial.backFaceCulling = false
   healthEnemyMaterial.backFaceCulling = false
@@ -307,6 +319,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   const unitFactory = createUnitFactory(scene)
   const vfx = new VfxManager(scene)
 
+  let activeMap = map
   let ground: Mesh | null = null
   let obstacles: Mesh[] = []
   const padMeshes = new Map<string, Mesh>()
@@ -370,7 +383,24 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   projectileGroup.mesh.isPickable = false
   projectileGroup.mesh.thinInstanceEnablePicking = false
 
+  const invasionMarkerGroup: ThinGroup = {
+    mesh: MeshBuilder.CreateCylinder(
+      'next_invasion_marker',
+      { height: 1, diameterTop: 0, diameterBottom: 1, tessellation: 6 },
+      scene
+    ),
+    ids: [],
+    matrices: new Float32Array(0),
+    colors: new Float32Array(0),
+    capacity: 0,
+    baseColor: Color3.FromHexString('#ef4444')
+  }
+  invasionMarkerGroup.mesh.material = invasionMarkerMaterial
+  invasionMarkerGroup.mesh.isPickable = false
+  invasionMarkerGroup.mesh.thinInstanceEnablePicking = false
+
   const ensureGround = (nextMap: SimState['combat']['map']) => {
+    activeMap = nextMap
     ground?.dispose()
     obstacles.forEach((mesh) => mesh.dispose())
     obstacles = []
@@ -596,6 +626,56 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     projectileGroup.mesh.thinInstanceSetBuffer('matrix', projectileGroup.matrices, 16, false)
     projectileGroup.mesh.thinInstanceSetBuffer('color', projectileGroup.colors, 4, false)
     projectileGroup.mesh.thinInstanceCount = count
+  }
+
+  const getEdgeCenterPreviewTransform = (edge: 'N' | 'E' | 'S' | 'W') => {
+    if (edge === 'N') return { position: { x: activeMap.width * 0.5, y: -28 }, forward: { x: 0, y: 1 }, edge }
+    if (edge === 'S') return { position: { x: activeMap.width * 0.5, y: activeMap.height + 28 }, forward: { x: 0, y: -1 }, edge }
+    if (edge === 'W') return { position: { x: -28, y: activeMap.height * 0.5 }, forward: { x: 1, y: 0 }, edge }
+    return { position: { x: activeMap.width + 28, y: activeMap.height * 0.5 }, forward: { x: -1, y: 0 }, edge }
+  }
+
+  const updateInvasionIndicators = (preview: NextBattlePreview | undefined, phase: Render3DUpdateInput['phase'], time: number) => {
+    if ((phase !== 'build' && !DEBUG_SHOW_SPAWN_POINTS) || !preview) {
+      invasionMarkerGroup.mesh.thinInstanceCount = 0
+      return
+    }
+    const sources =
+      preview.previewSpawnTransforms.length > 0
+        ? preview.previewSpawnTransforms
+        : preview.previewEdges.map((edge) => getEdgeCenterPreviewTransform(edge))
+    const count = sources.length
+    if (count === 0) {
+      invasionMarkerGroup.mesh.thinInstanceCount = 0
+      return
+    }
+    if (count > invasionMarkerGroup.capacity) {
+      const nextCap = Math.max(count, invasionMarkerGroup.capacity + 8)
+      invasionMarkerGroup.capacity = nextCap
+      invasionMarkerGroup.matrices = new Float32Array(nextCap * 16)
+      invasionMarkerGroup.colors = new Float32Array(nextCap * 4)
+    }
+    sources.forEach((entry, index) => {
+      const pulse = 1 + Math.sin(time * 3.2 + index * 0.45) * 0.08
+      const scale = new Vector3(
+        INVASION_MARKER_RADIUS * pulse,
+        INVASION_MARKER_HEIGHT * pulse,
+        INVASION_MARKER_RADIUS * pulse
+      )
+      const yaw = Math.atan2(entry.forward.x, entry.forward.y)
+      const rotation = Quaternion.FromEulerAngles(0, yaw, 0)
+      const pos = new Vector3(entry.position.x, scale.y * 0.5 + 0.5, entry.position.y)
+      const matrix = Matrix.Compose(scale, rotation, pos)
+      matrix.copyToArray(invasionMarkerGroup.matrices, index * 16)
+      invasionMarkerGroup.colors[index * 4 + 0] = invasionMarkerGroup.baseColor.r
+      invasionMarkerGroup.colors[index * 4 + 1] = invasionMarkerGroup.baseColor.g
+      invasionMarkerGroup.colors[index * 4 + 2] = invasionMarkerGroup.baseColor.b
+      invasionMarkerGroup.colors[index * 4 + 3] = 0.95
+    })
+    invasionMarkerGroup.mesh.thinInstanceSetBuffer('matrix', invasionMarkerGroup.matrices, 16, false)
+    invasionMarkerGroup.mesh.thinInstanceSetBuffer('color', invasionMarkerGroup.colors, 4, false)
+    invasionMarkerGroup.mesh.thinInstanceCount = count
+    invasionMarkerGroup.mesh.thinInstanceRefreshBoundingInfo(true)
   }
 
   const updateLabels = (sim: SimState, showLabels: boolean) => {
@@ -894,6 +974,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     updateSelection(input.sim, input.selection)
     updateRanges(input.sim, input.selection)
     updateHealthBars(input.sim)
+    updateInvasionIndicators(input.overlays.nextBattlePreview, input.phase, input.sim.time)
     updateHqHover(input.sim, input.overlays.hoveredHq)
     updateLabels(input.sim, Boolean(input.options?.showLabels))
     updateDamageNumbers(input.sim)

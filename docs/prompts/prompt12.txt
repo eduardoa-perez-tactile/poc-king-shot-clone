@@ -1,0 +1,77 @@
+You are working in our single-player browser RTS roguelike (Babylon.js 3D scene with orthographic RTS camera + React UI overlay). The game has a day loop: Map Scene (day/build phase) → player presses Battle Cry → real-time wave combat on the same map → end of battle/day rewards → back to build phase. Input uses raycasting; avoid per-frame React rerenders; prefer pooled/instanced visuals.
+
+FEATURE: Multi-border enemy wave spawns + next-wave indicators + day-cycle preview UI.
+
+Requirements
+1) Waves can spawn from different places on the map, using map borders (N/E/S/W). Do NOT spawn inside the playable area.
+2) During day/build phase (NOT during battle), show a visible indicator in the 3D map of where enemies will come from in the NEXT battle cycle.
+3) During day/build phase, add a new UI screen/panel that summarizes DISTINCT enemy types that will appear in the next battle cycle (not counts per wave necessarily; show unique types for the upcoming cycle, grouped cleanly).
+4) During battle, a given wave can spawn from MORE THAN ONE spawn point (multi-source wave).
+
+Implementation constraints
+- Indicators should be lightweight (instanced meshes or thin instances, reused materials), pooled if animated, and toggled on/off without reallocating.
+- React UI should update only on state changes (next-cycle data changes), not per-frame.
+- Keep architecture data-driven: spawns should be determined by level config / wave config, not hardcoded.
+
+Deliverables
+A) Data model changes
+- Extend the wave/level configuration to support:
+  - spawnEdges: one or many of ["N","E","S","W"] per wave (or per wave group), plus optional weights.
+  - spawnPointsPerEdge: integer or range (e.g. 1..3) to allow multi-source.
+  - For each wave, a resolved list of spawn transforms (positions + forward direction) computed at battle start.
+- Add “nextBattlePreview” computed during day phase:
+  - previewEdges: set of edges used across next cycle’s waves (or a subset if design dictates).
+  - previewEnemyTypesDistinct: set/list of enemy archetype ids present in next cycle.
+
+B) Border spawn point system
+- Use the map’s playable bounds to derive border lines (AABB or explicit nav/play bounds already used).
+- Provide a function:
+  resolveSpawnTransforms({edges, countPerEdge, bounds, padding, rngSeed}) -> Transform[]
+  - Pick positions along each selected border with spacing, randomization, and “padding” so spawns appear just outside the playable area.
+  - Provide forward direction pointing inward (toward map center or toward nearest interior point).
+  - Ensure multiple spawn points don’t overlap (min distance).
+- Battle runtime:
+  - For each wave, resolve its spawn transforms once (at wave start or at battle start) and spawn enemies distributed across transforms.
+  - If wave has multiple enemy groups/types, distribute fairly across spawn transforms.
+
+C) 3D indicator during day phase
+- Add a “Next Invasion” indicator system visible only in day/build phase:
+  - For each edge in previewEdges, render a clear marker on that border: e.g. arrow decals/mesh arrows, light columns, or banner-like low-poly markers.
+  - Markers should be placed along the border near the expected spawn positions (if known) or centered on the edge (if not).
+  - Markers should be selectable=false and not interfere with raycasting for gameplay (layer mask or pickable=false).
+- The indicator must update when the upcoming cycle changes (e.g., after completing a day/battle, or when level is loaded).
+
+D) New day-cycle UI screen/panel: “Next Battle Intel”
+- Add a new UI entry accessible during day/build phase (not battle):
+  - Could be a button in the HUD: “Intel” or “Next Wave”.
+  - Opens a panel listing DISTINCT enemy types in the next cycle.
+  - Each type row: icon (if available), display name, and 1-line trait/tag (optional).
+- The UI must be driven by previewEnemyTypesDistinct from game state.
+- Keep styling consistent with existing UI components; no per-frame updates.
+
+E) Integration points
+- When a level loads, compute “next battle cycle” waves reference and generate preview data.
+- When the player finishes a battle and advances the day, recompute preview for the next cycle and refresh:
+  - 3D markers on borders
+  - UI panel list
+- Ensure existing single-spawn logic is preserved as a default (if no spawnEdges specified, fallback to previous behavior or default edge).
+
+F) Acceptance criteria (must satisfy)
+- In day phase, I can see border indicators showing where the next cycle will spawn from.
+- In day phase, I can open the intel UI and see unique enemy archetypes for the next cycle.
+- In battle, at least one wave can spawn simultaneously from 2+ border points, and enemies appear outside bounds then move inward.
+- No obvious performance regression (no per-frame React rerenders, indicators use instancing/pooling).
+
+Coding tasks (do these in code)
+1) Update config types/interfaces and add validation defaults.
+2) Implement bounds-derived border spawn resolver.
+3) Update wave spawner to support multiple spawn transforms per wave.
+4) Implement day-phase preview computation (edges + distinct enemy types).
+5) Implement 3D indicator manager (create/update/dispose via pooling).
+6) Implement React UI panel + button hook-up to state.
+7) Add minimal debug logging and a simple dev toggle to visualize spawn points (optional but helpful).
+
+Output expectations
+- Provide a short summary of files changed/added.
+- Make changes directly in code (Babylon + React project).
+- Keep code readable and consistent with existing style.

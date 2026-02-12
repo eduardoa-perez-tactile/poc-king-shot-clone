@@ -18,7 +18,10 @@ Governor: Day Cycle is a single-player, browser-based RTS prototype. The core lo
 ## Key Directories
 - `src/run` — RunState, economy, goals, day/phase loop, run store
 - `src/rts` — real-time simulation, pathfinding, combat, input, 2D/3D rendering
+  - `src/rts/spawnResolver.ts` — border spawn transform resolver (N/E/S/W edges, spacing, padding, seed)
+  - `src/rts/waveSpawns.ts` — wave spawn transform resolution + next-battle preview aggregation
 - `src/ui` — React HUD, menus, LevelRun scene, canvas layers
+  - `src/ui/components/hud/NextBattleIntelPanel.tsx` — day-phase intel modal for distinct upcoming enemy types
 - `src/config` — units, buildings, levels/waves, heroes, elites, stronghold, rendering
 - `src/storage` — save/load with `localStorage`
 - `src/game` — meta systems (town/hero/troops/quests) used by `src/ui/MetaHub.tsx` but not wired in `src/ui/App.tsx`
@@ -36,6 +39,11 @@ Tuning is data-driven. Prefer editing configs over hardcoding values in logic or
 - `src/config/buildings.ts` — costs, upgrades, income, bonuses, hero recruiter
 - `src/config/units.ts` — squad stats and costs
 - `src/config/levels.ts` — waves, goals, hero loadouts, map data
+  - Wave spawn config supports border spawns with:
+    - `spawnEdges` (`N`/`E`/`S`/`W`, optionally weighted)
+    - `spawnPointsPerEdge` (number or `{ min, max }`)
+    - `spawnPadding` (spawn offset outside playable bounds)
+  - If border config is omitted, runtime falls back to legacy single `enemySpawn`.
 - `src/config/stronghold.ts` — unlocks, caps, pad gating, HQ scaling
 - `src/config/heroes.ts` — summonable hero defs and stats
 - `src/config/elites.ts` — mini-boss/boss tuning
@@ -50,3 +58,9 @@ Tuning is data-driven. Prefer editing configs over hardcoding values in logic or
 - `RunState` is the shared source of truth for a run. Update it rather than duplicating state.
 - Render mode is toggled in `src/config/rendering.ts`; 3D uses BabylonJS in `src/rts/render3d.ts` and `src/rts/render/`.
 - Keep build/combat logic data-driven and aligned with config tables.
+- Day-phase preview is computed from combat wave data in `src/rts/combat.ts` (`nextBattlePreview`) and feeds both:
+  - 3D border indicators ("Next Invasion") in `src/rts/render3d.ts`
+  - HUD Intel panel in `src/ui/components/hud/NextBattleIntelPanel.tsx`
+- Border invasion indicators must remain lightweight: thin instances/material reuse, non-pickable, toggled by phase/state changes.
+- Optional dev toggle for spawn debugging:
+  - `localStorage.setItem('rts_debug_spawn_points', '1')`

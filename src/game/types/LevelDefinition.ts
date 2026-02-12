@@ -23,12 +23,29 @@ export interface WaveUnitGroup {
   squadSize?: number
 }
 
+export type SpawnEdge = 'N' | 'E' | 'S' | 'W'
+
+export interface SpawnEdgeConfig {
+  edge: SpawnEdge
+  weight?: number
+}
+
+export interface SpawnPointCountRange {
+  min: number
+  max: number
+}
+
+export type SpawnPointCount = number | SpawnPointCountRange
+
 export interface DayWave {
   id: string
   units: WaveUnitGroup[]
   spawnTimeSec?: number
   elite?: EliteId
   eliteCount?: number
+  spawnEdges?: SpawnEdgeConfig[]
+  spawnPointsPerEdge?: SpawnPointCount
+  spawnPadding?: number
 }
 
 export interface DayPlan {
@@ -221,7 +238,7 @@ export interface LevelDefinition {
   }
 }
 
-export const LEVEL_DEFINITION_VERSION = 3
+export const LEVEL_DEFINITION_VERSION = 4
 
 type JsonSchema = Record<string, unknown>
 
@@ -443,7 +460,11 @@ const GOAL_TYPES: GoalType[] = [
   'stronghold_level'
 ]
 
+const SPAWN_EDGES: SpawnEdge[] = ['N', 'E', 'S', 'W']
+
 const isGoalType = (value: string): value is GoalType => GOAL_TYPES.includes(value as GoalType)
+
+const isSpawnEdge = (value: string): value is SpawnEdge => SPAWN_EDGES.includes(value as SpawnEdge)
 
 export const cloneLevelDefinition = (level: LevelDefinition): LevelDefinition => JSON.parse(JSON.stringify(level)) as LevelDefinition
 
@@ -863,6 +884,47 @@ const migrateGoals = (legacy: Record<string, unknown>, fallback: LevelDefinition
   })
 }
 
+const migrateSpawnEdges = (raw: unknown): SpawnEdgeConfig[] | undefined => {
+  const entries = asArray<unknown>(raw, [])
+  if (entries.length === 0) return undefined
+  const seen = new Set<SpawnEdge>()
+  const normalized: SpawnEdgeConfig[] = []
+  entries.forEach((entry) => {
+    if (typeof entry === 'string') {
+      const edge = entry.trim().toUpperCase()
+      if (isSpawnEdge(edge) && !seen.has(edge)) {
+        seen.add(edge)
+        normalized.push({ edge })
+      }
+      return
+    }
+    const value = asObject(entry)
+    const edgeValue = asString(value.edge, '').trim().toUpperCase()
+    if (!isSpawnEdge(edgeValue) || seen.has(edgeValue)) return
+    seen.add(edgeValue)
+    const weight = typeof value.weight === 'number' ? clampNonNegative(value.weight, 1) : undefined
+    normalized.push({
+      edge: edgeValue,
+      weight: weight === 1 ? undefined : weight
+    })
+  })
+  return normalized.length > 0 ? normalized : undefined
+}
+
+const migrateSpawnPointsPerEdge = (raw: unknown): SpawnPointCount | undefined => {
+  if (typeof raw === 'number') {
+    return Math.max(1, Math.floor(clampNonNegative(raw, 1)))
+  }
+  const value = asObject(raw)
+  if (Object.keys(value).length === 0) return undefined
+  const hasMin = typeof value.min === 'number'
+  const hasMax = typeof value.max === 'number'
+  if (!hasMin && !hasMax) return undefined
+  const min = Math.max(1, Math.floor(asNumber(value.min, 1)))
+  const max = Math.max(min, Math.floor(asNumber(value.max, min)))
+  return { min, max }
+}
+
 const migrateDays = (legacy: Record<string, unknown>, fallback: LevelDefinition): DayPlan[] => {
   const rawDays = asArray<unknown>(legacy.days, fallback.days as unknown[])
   return rawDays.map((rawDay, index) => {
@@ -882,7 +944,10 @@ const migrateDays = (legacy: Record<string, unknown>, fallback: LevelDefinition)
         if (typeof wave.elite !== 'string') return undefined
         return ELITE_DEFS[wave.elite as EliteId] ? (wave.elite as EliteId) : undefined
       })(),
-      eliteCount: typeof wave.eliteCount === 'number' ? clampNonNegative(wave.eliteCount, 1) : undefined
+      eliteCount: typeof wave.eliteCount === 'number' ? clampNonNegative(wave.eliteCount, 1) : undefined,
+      spawnEdges: migrateSpawnEdges(wave.spawnEdges),
+      spawnPointsPerEdge: migrateSpawnPointsPerEdge(wave.spawnPointsPerEdge),
+      spawnPadding: typeof wave.spawnPadding === 'number' ? clampNonNegative(wave.spawnPadding, 0) : undefined
     }))
     const enemyModifiers = asObject(day.enemyModifiers)
     return {
@@ -1145,6 +1210,53 @@ export const validateLevelDefinition = (level: LevelDefinition): LevelValidation
     day.waves.forEach((wave, waveIndex) => {
       if (!wave.id.trim()) {
         pushIssue(issues, 'error', `days.${dayIndex}.waves.${waveIndex}.id`, 'Wave id is required.')
+      }
+      if (wave.spawnEdges && wave.spawnEdges.length === 0) {
+        pushIssue(issues, 'warning', `days.${dayIndex}.waves.${waveIndex}.spawnEdges`, 'Spawn edges list is empty and will be ignored.')
+      }
+      wave.spawnEdges?.forEach((edge, edgeIndex) => {
+        if (!SPAWN_EDGES.includes(edge.edge)) {
+          pushIssue(
+            issues,
+            'error',
+            `days.${dayIndex}.waves.${waveIndex}.spawnEdges.${edgeIndex}.edge`,
+            `Unknown spawn edge "${edge.edge}".`
+          )
+        }
+        if (edge.weight !== undefined && edge.weight <= 0) {
+          pushIssue(
+            issues,
+            'error',
+            `days.${dayIndex}.waves.${waveIndex}.spawnEdges.${edgeIndex}.weight`,
+            'Spawn edge weight must be > 0.'
+          )
+        }
+      })
+      if (typeof wave.spawnPointsPerEdge === 'number' && wave.spawnPointsPerEdge < 1) {
+        pushIssue(
+          issues,
+          'error',
+          `days.${dayIndex}.waves.${waveIndex}.spawnPointsPerEdge`,
+          'spawnPointsPerEdge must be >= 1 when using a number.'
+        )
+      }
+      if (typeof wave.spawnPointsPerEdge === 'object') {
+        if (wave.spawnPointsPerEdge.min < 1) {
+          pushIssue(
+            issues,
+            'error',
+            `days.${dayIndex}.waves.${waveIndex}.spawnPointsPerEdge.min`,
+            'spawnPointsPerEdge.min must be >= 1.'
+          )
+        }
+        if (wave.spawnPointsPerEdge.max < wave.spawnPointsPerEdge.min) {
+          pushIssue(
+            issues,
+            'error',
+            `days.${dayIndex}.waves.${waveIndex}.spawnPointsPerEdge.max`,
+            'spawnPointsPerEdge.max must be >= min.'
+          )
+        }
       }
       wave.units.forEach((unit, unitIndex) => {
         if (!UNIT_DEFS[unit.type]) {
