@@ -40,8 +40,8 @@ const BUILDING_LABEL_FONT = 72
 const BUILDING_LABEL_SCALE = 1.9
 const UNIT_LABEL_FONT = 84
 const UNIT_LABEL_SCALE = 1.4
-const INVASION_MARKER_HEIGHT = 18
-const INVASION_MARKER_RADIUS = 4.5
+const INVASION_MARKER_HEIGHT = 28
+const INVASION_MARKER_RADIUS = 7
 const DEBUG_SHOW_SPAWN_POINTS =
   import.meta.env.DEV &&
   typeof window !== 'undefined' &&
@@ -304,7 +304,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   const rangeMaterial = createMaterial(scene, Color3.FromHexString('#38bdf8'), 0.35)
   const hqHoverMaterial = createMaterial(scene, Color3.FromHexString('#facc15'), 0.7)
   const projectileMaterial = createMaterial(scene, Color3.FromHexString('#f97316'), 0.8)
-  const invasionMarkerMaterial = createMaterial(scene, Color3.FromHexString('#facc15'), 0.85)
+  const invasionMarkerMaterial = createMaterial(scene, Color3.FromHexString('#ef4444'), 0.95)
   const healthBgMaterial = createMaterial(scene, Color3.FromHexString('#0f172a'), 0.2)
   const healthPlayerMaterial = createMaterial(scene, Color3.FromHexString('#22c55e'), 0.5)
   const healthEnemyMaterial = createMaterial(scene, Color3.FromHexString('#ef4444'), 0.5)
@@ -393,7 +393,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     matrices: new Float32Array(0),
     colors: new Float32Array(0),
     capacity: 0,
-    baseColor: Color3.FromHexString('#facc15')
+    baseColor: Color3.FromHexString('#ef4444')
   }
   invasionMarkerGroup.mesh.material = invasionMarkerMaterial
   invasionMarkerGroup.mesh.isPickable = false
