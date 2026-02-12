@@ -1,6 +1,6 @@
 import type { BuildingPad } from '../../config/levels'
 import type { RunBuilding, RunState } from '../../run/types'
-import type { CombatDefinition, CombatResult } from '../../rts/types'
+import type { CombatDefinition, CombatResult, NextBattlePreview } from '../../rts/types'
 import type { SelectionInfo } from '../store/uiStore'
 
 export interface CanvasTelemetry {
@@ -52,4 +52,5 @@ export interface CanvasLayerProps {
   padUnlockLevels?: Record<string, number>
   showUnitLabels?: boolean
   onEliteWarning?: (message: string) => void
+  nextBattlePreview?: NextBattlePreview
 }

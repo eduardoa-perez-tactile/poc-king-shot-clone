@@ -27,6 +27,10 @@ export type {
   LevelValidationIssue,
   LevelValidationResult,
   LevelWaveRules,
+  SpawnEdge,
+  SpawnEdgeConfig,
+  SpawnPointCount,
+  SpawnPointCountRange,
   WaveUnitGroup
 } from '../game/types/LevelDefinition'
 
@@ -131,6 +135,8 @@ const RAW_LEVELS = [
         waves: [
           {
             id: 'd1_w1',
+            spawnEdges: ['N', 'E'],
+            spawnPointsPerEdge: 1,
             units: [
               { type: 'infantry', squads: 2 },
               { type: 'archer', squads: 1 }
@@ -138,6 +144,7 @@ const RAW_LEVELS = [
           },
           {
             id: 'd1_w2',
+            spawnEdges: ['S'],
             units: [
               { type: 'infantry', squads: 2 },
               { type: 'archer', squads: 1 }
@@ -161,6 +168,11 @@ const RAW_LEVELS = [
           },
           {
             id: 'd2_w2',
+            spawnEdges: [
+              { edge: 'W', weight: 1.4 },
+              { edge: 'N', weight: 1 }
+            ],
+            spawnPointsPerEdge: { min: 1, max: 2 },
             units: [
               { type: 'infantry', squads: 2 },
               { type: 'archer', squads: 2 }

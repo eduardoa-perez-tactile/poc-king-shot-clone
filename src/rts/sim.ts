@@ -84,6 +84,11 @@ const jitter = (pos: Vec2) => ({
   y: pos.y + (Math.random() - 0.5) * 40
 })
 
+const DEBUG_BORDER_SPAWNS =
+  import.meta.env.DEV &&
+  typeof window !== 'undefined' &&
+  window.localStorage.getItem('rts_debug_spawn_points') === '1'
+
 export interface PlayerInputState {
   up: boolean
   down: boolean
@@ -734,6 +739,24 @@ const spawnWave = (sim: SimState) => {
   const wave = sim.combat.waves[sim.waveIndex]
   if (!wave) return
   const enemyMult = sim.combat.enemyModifiers
+  const spawnTransforms =
+    wave.resolvedSpawnTransforms && wave.resolvedSpawnTransforms.length > 0
+      ? wave.resolvedSpawnTransforms
+      : [{ position: sim.combat.map.enemySpawn, forward: { x: 0, y: 1 }, edge: 'E' as const }]
+  let spawnCursor = 0
+
+  const nextSpawnPosition = () => {
+    const transform = spawnTransforms[spawnCursor % spawnTransforms.length]
+    spawnCursor += 1
+    return jitter(transform.position)
+  }
+
+  if (DEBUG_BORDER_SPAWNS) {
+    console.debug(
+      `[Spawn] Wave ${wave.id} uses ${spawnTransforms.length} source(s): ${spawnTransforms.map((entry) => entry.edge).join(',')}`
+    )
+  }
+
   wave.units.forEach((group) => {
     for (let i = 0; i < group.squads; i += 1) {
       const size = group.squadSize ?? UNIT_DEFS[group.type].squadSize
@@ -741,7 +764,7 @@ const spawnWave = (sim: SimState) => {
         createTroopEntity(
           group.type,
           'enemy',
-          jitter(sim.combat.map.enemySpawn),
+          nextSpawnPosition(),
           size,
           {
             hp: enemyMult.hpMultiplier,
@@ -758,7 +781,7 @@ const spawnWave = (sim: SimState) => {
     const count = Math.max(1, wave.eliteCount ?? 1)
     for (let i = 0; i < count; i += 1) {
       sim.entities.push(
-        createEliteEntity(wave.elite, 'enemy', jitter(sim.combat.map.enemySpawn), {
+        createEliteEntity(wave.elite, 'enemy', nextSpawnPosition(), {
           hp: enemyMult.hpMultiplier,
           attack: enemyMult.attackMultiplier
         })

@@ -43,7 +43,8 @@ export const CanvasLayer3D = React.memo(
     selectedPadId,
     padUnlockLevels,
     showUnitLabels,
-    onEliteWarning
+    onEliteWarning,
+    nextBattlePreview
   }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const containerRef = useRef<HTMLDivElement>(null)
@@ -81,6 +82,7 @@ export const CanvasLayer3D = React.memo(
     const onPauseToggleRef = useRef(onPauseToggle)
     const onEliteWarningRef = useRef(onEliteWarning)
     const inputBlockedRef = useRef(Boolean(inputBlocked))
+    const nextBattlePreviewRef = useRef(nextBattlePreview)
     const lastTelemetryRef = useRef<CanvasTelemetry | null>(null)
     const lastTelemetryAt = useRef(0)
     const lastWaveIndexRef = useRef(0)
@@ -113,6 +115,10 @@ export const CanvasLayer3D = React.memo(
     useEffect(() => {
       inputBlockedRef.current = Boolean(inputBlocked)
     }, [inputBlocked])
+
+    useEffect(() => {
+      nextBattlePreviewRef.current = nextBattlePreview
+    }, [nextBattlePreview])
 
     useEffect(() => {
       showLabelsRef.current = Boolean(showUnitLabels)
@@ -725,6 +731,7 @@ export const CanvasLayer3D = React.memo(
           renderer.update({
             sim: simRef.current,
             camera: cameraState,
+            phase: phaseRef.current === 'combat' ? 'combat' : 'build',
             selection: selectedIdsRef.current,
             overlays: {
               pads: padsRef.current,
@@ -733,7 +740,8 @@ export const CanvasLayer3D = React.memo(
               hoveredHq: hoveredHqRef.current,
               selectedPadId: selectedPadRef.current,
               padUnlockLevels: padUnlockLevelsRef.current,
-              strongholdLevel: runRef.current.strongholdLevel
+              strongholdLevel: runRef.current.strongholdLevel,
+              nextBattlePreview: nextBattlePreviewRef.current
             },
             options: { showLabels: showLabelsRef.current }
           })

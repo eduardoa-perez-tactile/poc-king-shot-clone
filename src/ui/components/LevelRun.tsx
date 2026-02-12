@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BuildingId, BUILDING_DEFS } from '../../config/buildings'
+import { ELITE_DEFS } from '../../config/elites'
 import { HERO_RECRUIT_DEFS, HeroRecruitId } from '../../config/heroes'
 import { getLevelById } from '../../config/levels'
 import { UnitType, UNIT_DEFS } from '../../config/units'
@@ -23,6 +24,7 @@ import type { CanvasHandle, CanvasTelemetry } from './CanvasLayer'
 import { AppShell } from './hud/AppShell'
 import { TopBar } from './hud/TopBar'
 import { Panel } from './hud/Panel'
+import { NextBattleIntelPanel, type NextBattleIntelEntry } from './hud/NextBattleIntelPanel'
 import { EntityCard } from './hud/EntityCard'
 import { BuildOptionCard } from './hud/BuildOptionCard'
 import { AbilityButton } from './hud/AbilityButton'
@@ -102,6 +104,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
 
   const [telemetry, setTelemetry] = useState<CanvasTelemetry | null>(null)
   const [eliteWarnings, setEliteWarnings] = useState<Array<{ id: string; message: string }>>([])
+  const [intelOpen, setIntelOpen] = useState(false)
   const canvasRef = useRef<CanvasHandle | null>(null)
   const isMobile = useMediaQuery('(max-width: 639px)')
 
@@ -109,7 +112,8 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
   const level = getLevelById(activeRun.levelId)
   if (!level) return null
 
-  const combatDefinition = buildCombatDefinition(activeRun)
+  const combatDefinition = useMemo(() => buildCombatDefinition(activeRun), [activeRun])
+  const nextBattlePreview = combatDefinition.nextBattlePreview
   const squadCap = getSquadCap(activeRun)
   const dayIncome = activeRun.lastIncome ?? getIncomeBreakdown(activeRun, 0)
   const strongholdLevel = activeRun.strongholdLevel
@@ -120,6 +124,40 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
     unlockedBuildingTypes.length > 0
       ? `Unlocked: ${unlockedBuildingTypes.map((id) => BUILDING_DEFS[id].name).join(', ')} · Max Lv${getBuildingLevelCapForStrongholdLevel(level, strongholdLevel, 'gold_mine')}`
       : `Stronghold Lv${strongholdLevel}`
+
+  const intelEntries = useMemo<NextBattleIntelEntry[]>(() => {
+    const ids = nextBattlePreview?.previewEnemyTypesDistinct ?? []
+    return ids
+      .map((id) => {
+        const unit = UNIT_DEFS[id as UnitType]
+        if (unit) {
+          return {
+            id,
+            name: unit.name,
+            trait: unit.description,
+            kind: 'unit' as const
+          }
+        }
+        const elite = ELITE_DEFS[id as keyof typeof ELITE_DEFS]
+        if (elite) {
+          return {
+            id,
+            name: elite.name,
+            trait: 'Elite archetype with high durability and burst threat.',
+            kind: 'elite' as const
+          }
+        }
+        const catalog = level.enemies.catalog.find((entry) => entry.id === id)
+        if (!catalog) return null
+        return {
+          id,
+          name: catalog.name,
+          trait: catalog.kind === 'elite' ? 'Elite threat.' : 'Enemy unit archetype.',
+          kind: catalog.kind
+        }
+      })
+      .filter((entry): entry is NextBattleIntelEntry => Boolean(entry))
+  }, [level.enemies.catalog, nextBattlePreview?.previewEnemyTypesDistinct])
 
   const buildingByPad = useMemo(() => {
     return new Map(activeRun.buildings.map((building) => [building.padId, building]))
@@ -146,6 +184,12 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
   useEffect(() => {
     if (runPhase !== 'build') {
       uiActions.setSelectedPad(null)
+    }
+  }, [runPhase])
+
+  useEffect(() => {
+    if (runPhase !== 'build') {
+      setIntelOpen(false)
     }
   }, [runPhase])
 
@@ -727,6 +771,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
           padUnlockLevels={padUnlockLevels}
           showUnitLabels={showUnitLabels}
           onEliteWarning={handleEliteWarning}
+          nextBattlePreview={nextBattlePreview}
         />
 
       <div className="pointer-events-none absolute inset-0 z-10 flex flex-col">
@@ -749,6 +794,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
             income={dayIncome.buildingTotal + dayIncome.reward}
             strongholdLevel={strongholdLevel}
             strongholdSummary={strongholdSummary}
+            onIntel={runPhase === 'build' ? () => setIntelOpen(true) : undefined}
             onSettings={uiActions.openSettings}
             onExit={onExit}
           />
@@ -903,6 +949,14 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
           onNextDay={startNewDay}
         />
       )}
+
+      <NextBattleIntelPanel
+        open={intelOpen}
+        dayNumber={activeRun.dayNumber}
+        previewEdges={nextBattlePreview?.previewEdges ?? []}
+        enemies={intelEntries}
+        onOpenChange={setIntelOpen}
+      />
 
       {pauseOpen && (
         <div className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center bg-black/70 px-4">

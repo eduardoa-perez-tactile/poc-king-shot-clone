@@ -1,5 +1,5 @@
 import React from 'react'
-import { Coins, Settings2, Waves } from 'lucide-react'
+import { Coins, Radar, Settings2, Waves } from 'lucide-react'
 import { AnimatedNumber } from './AnimatedNumber'
 import { PhaseBadge } from './PhaseBadge'
 import { ResourcePill } from './ResourcePill'
@@ -16,9 +16,25 @@ export const TopBar: React.FC<{
   income: number
   strongholdLevel: number
   strongholdSummary?: React.ReactNode
+  onIntel?: () => void
+  intelDisabled?: boolean
   onSettings: () => void
   onExit?: () => void
-}> = ({ mission, day, phase, objective, waveLabel, gold, income, strongholdLevel, strongholdSummary, onSettings, onExit }) => {
+}> = ({
+  mission,
+  day,
+  phase,
+  objective,
+  waveLabel,
+  gold,
+  income,
+  strongholdLevel,
+  strongholdSummary,
+  onIntel,
+  intelDisabled,
+  onSettings,
+  onExit
+}) => {
   return (
     <div className="pointer-events-auto flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-white/10 bg-surface/80 px-4 py-3 shadow-soft backdrop-blur">
       <div className="flex min-w-[220px] flex-1 items-center gap-3">
@@ -65,6 +81,12 @@ export const TopBar: React.FC<{
         {onExit && (
           <Button variant="ghost" size="sm" onClick={onExit}>
             Exit
+          </Button>
+        )}
+        {onIntel && (
+          <Button variant="ghost" size="sm" onClick={onIntel} disabled={intelDisabled}>
+            <Radar className="h-4 w-4" />
+            <span className="hidden sm:inline">Intel</span>
           </Button>
         )}
         <Button variant="ghost" size="sm" onClick={onSettings}>
