@@ -1,0 +1,128 @@
+Implement a new “Map Preview” feature inside the Game Dashboard level editor, specifically when editing Pads / Build Slots.
+
+Context
+- Project: single-player browser RTS roguelike.
+- Rendering: Babylon.js 3D scene (orthographic RTS camera) with React UI overlay.
+- There is a Dashboard accessible from Main Menu used to edit/tune level content.
+- Level data includes: build pads / build slots (fixed locations), obstacles, walls, stronghold, towers, enemy spawn indicators, etc.
+
+Goal
+When the user edits pad/build-slot data in the Dashboard, they can click “Generate Preview” to open a popup modal that renders a 3D preview of the level layout. This is a non-interactive (or minimal interactive) preview meant for visualization only, not gameplay. It must be fast and not impact the main game scene.
+
+UX Requirements
+1) In the Dashboard editor panel where Pads/Build Slots are listed/edited:
+   - Add a button: “Generate Preview”.
+   - Add a small status indicator: “Preview up to date” / “Preview out of date” (out of date whenever level data changes since last preview).
+2) Clicking “Generate Preview” opens a modal popup (React) containing:
+   - A canvas area rendering the preview scene.
+   - Controls row:
+     - “Regenerate” (rebuild scene using current edited data)
+     - “Close”
+     - Optional: toggles “Show Labels”, “Show Obstacles”, “Show Spawn Indicators”, “Show Paths (if any)”
+3) The preview should use the simplified geometry style we’re moving toward:
+   - Buildings/pads: rectangles/boxes with translucent materials
+   - Units are NOT needed (this is level layout preview)
+   - Obstacles: simple boxes
+   - Labels: billboard text or dynamic texture planes (pad type + level cap or slot type)
+   - Spawn indicators: colored border markers/arrows on map edges (if level config includes them)
+4) Performance constraints:
+   - Create a dedicated Babylon engine/scene for the preview modal (do NOT reuse the main game engine).
+   - Dispose preview scene and engine cleanly when closing the modal to avoid memory leaks.
+   - Use instancing/thin instances for repeated obstacles/pads when possible.
+   - Avoid per-frame React rerenders; React only manages UI state, Babylon handles rendering loop.
+
+Technical Requirements
+A) Data Flow
+- The Dashboard has an editable “draft” level config in state (or a store).
+- The preview should render from the current draft config (not only saved config).
+- Track a revision counter or hash:
+  - Increment on any draft change (pads/build slots/obstacles/spawns)
+  - Store lastPreviewRevision; determine “out of date” by comparing.
+- “Generate Preview” sets lastPreviewRevision = current revision after successful build.
+
+B) React Components
+- Add a component: LevelPreviewModal
+  Props:
+  - isOpen: boolean
+  - onClose: () => void
+  - levelDraft: LevelConfig (current draft)
+  - revision: number
+- Inside modal:
+  - <canvas ref=...> for Babylon preview
+  - Buttons for regenerate/close, and toggles
+- The modal should be accessible via the pads/build-slots editor section.
+
+C) Babylon Preview Scene
+- Create helper: createLevelPreviewScene({
+    canvas,
+    levelConfig,
+    options: { showLabels, showObstacles, showSpawns, showPaths }
+  }) -> { engine, scene, dispose, regenerate(levelConfig, options) }
+- Camera:
+  - Orthographic RTS camera similar to main game
+  - Auto-frame the map: compute bounds from pads+obstacles+stronghold+mapSize, set camera target and ortho size to fit.
+- Lighting:
+  - Simple hemispheric light
+- Ground:
+  - Flat plane sized to map bounds; subtle grid material if already exists or simple standard material.
+
+D) Preview Mesh Building
+- Build pads/build slots:
+  - For each pad: create a box scaled to pad size (or default pad size), position from config.
+  - Color-code by pad type (tower pad, barracks pad, archer pad, hero pad, wall pad, etc).
+  - Material slightly transparent (alpha ~0.6-0.8).
+  - Add outline or selection ring not required, but optional for readability.
+- Labels:
+  - For each pad/slot: create a small plane above it with DynamicTexture text:
+    “TOWER PAD”
+    “BARRACKS PAD”
+    “ARCHERS PAD”
+    “HERO PAD”
+    plus any level/limit info if present.
+  - Use billboard mode so text faces camera.
+  - Keep texture resolution modest; reuse textures for identical label strings via caching map.
+- Obstacles:
+  - Create boxes for obstacles; slightly smaller if we already updated obstacle sizing in meta.
+  - Use instancing if many obstacles share same size; otherwise thin instances with per-instance transform matrix.
+- Spawn indicators (optional):
+  - Render arrows/triangles on map border where spawns are configured for next wave sets.
+  - Simple emissive colored meshes.
+- Paths (optional if we have nav/path preview):
+  - If the level config contains path nodes or lanes, draw line meshes.
+
+E) Lifecycle / Cleanup (must be correct)
+- When modal opens:
+  - Initialize engine + scene once.
+  - Build scene from current levelDraft.
+  - Start render loop engine.runRenderLoop(() => scene.render()).
+  - Attach resize observer to canvas/modal container; call engine.resize().
+- When modal closes:
+  - Stop render loop
+  - Dispose all meshes/materials/textures
+  - Dispose scene then engine
+  - Remove observers/events
+- Regenerate:
+  - Dispose only preview-generated meshes/materials (keep camera/ground if desired), then rebuild.
+  - Update lastPreviewRevision.
+
+F) Minimal Interactivity (optional but useful)
+- Allow mouse wheel zoom (adjust ortho size) and right-drag pan OR keep fixed with “Fit to screen” button.
+- Provide “Fit” button that recomputes bounds and frames scene.
+
+Acceptance Criteria
+- In Dashboard pad/build-slot editor, user sees “Generate Preview” button.
+- Clicking it opens a modal with a 3D render of the current edited level draft.
+- Edits to pads/build slots mark preview as “out of date” until regenerated.
+- Closing the modal fully releases Babylon resources (verify by opening/closing repeatedly without FPS drop or memory ballooning).
+- Preview rendering is stable, readable, and uses simple geometry + labels.
+
+Deliverables
+- UI: button + modal component + out-of-date indicator.
+- Preview renderer module: createLevelPreviewScene + regeneration + cleanup.
+- Integration into dashboard state/revision tracking.
+
+Implementation Notes / Constraints
+- Keep the preview self-contained; do not affect main game scene/camera/input.
+- Avoid heavy textures; cache label textures.
+- Prefer thin instances for repeated obstacles/pads.
+- No dependency on gameplay systems (no AI, no nav sim).
