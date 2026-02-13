@@ -21,7 +21,7 @@ export const LoseScreen: React.FC<{
         )}
         <div className="menu-buttons">
           <button className="btn success" onClick={onRetry}>Retry Day 1</button>
-          <button className="btn" onClick={onLevelSelect}>Level Select</button>
+          <button className="btn" onClick={onLevelSelect}>World Map</button>
         </div>
       </div>
     </div>

@@ -16,7 +16,7 @@ export const WinScreen: React.FC<{ onLevelSelect: () => void }> = ({ onLevelSele
             <div>Total Gold Earned: {activeRun.totalGoldEarned}</div>
           </div>
         )}
-        <button className="btn success" onClick={onLevelSelect}>Return to Level Select</button>
+        <button className="btn success" onClick={onLevelSelect}>Return to World Map</button>
       </div>
     </div>
   )
