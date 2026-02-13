@@ -37,6 +37,8 @@ interface DashboardEditorState {
   search: string
   activeTab: DashboardTab
   historyById: Record<string, LevelHistory>
+  draftRevisionById: Record<string, number>
+  lastPreviewRevisionById: Record<string, number>
 }
 
 const MAX_HISTORY = 50
@@ -62,6 +64,18 @@ const toMap = (levels: LevelDefinition[]) =>
     return acc
   }, {} as Record<string, LevelDefinition>)
 
+const createRevisionMap = (ids: string[]) =>
+  ids.reduce((acc, id) => {
+    acc[id] = 0
+    return acc
+  }, {} as Record<string, number>)
+
+const pruneRevisionMap = (map: Record<string, number>, validIds: Set<string>) =>
+  Object.keys(map).reduce((acc, id) => {
+    if (validIds.has(id)) acc[id] = map[id]
+    return acc
+  }, {} as Record<string, number>)
+
 const buildInitialState = (): DashboardEditorState => {
   const baseLevels = getBaseLevels()
   const resolvedLevels = getLevels()
@@ -77,7 +91,9 @@ const buildInitialState = (): DashboardEditorState => {
     selectedLevelId: order[0] ?? null,
     search: '',
     activeTab: 'overview',
-    historyById: {}
+    historyById: {},
+    draftRevisionById: createRevisionMap(order),
+    lastPreviewRevisionById: {}
   }
 }
 
@@ -127,12 +143,24 @@ const updateLevel = (levelId: string, updater: (level: LevelDefinition) => Level
             prev.order.map((id) => (id === levelId ? nextLevel.id : id)),
             Object.keys(prev.baseLevelsById)
           )
+    const nextDraftRevisionById = { ...prev.draftRevisionById }
+    const currentRevision = nextDraftRevisionById[levelId] ?? 0
+    if (nextLevel.id !== levelId) {
+      delete nextDraftRevisionById[levelId]
+    }
+    nextDraftRevisionById[nextLevel.id] = currentRevision + 1
+    const nextLastPreviewRevisionById = { ...prev.lastPreviewRevisionById }
+    if (nextLevel.id !== levelId) {
+      delete nextLastPreviewRevisionById[levelId]
+    }
     return {
       ...prev,
       levelsById: nextLevelsById,
       historyById: nextHistory,
       order: nextOrder,
-      selectedLevelId: prev.selectedLevelId === levelId ? nextLevel.id : prev.selectedLevelId
+      selectedLevelId: prev.selectedLevelId === levelId ? nextLevel.id : prev.selectedLevelId,
+      draftRevisionById: nextDraftRevisionById,
+      lastPreviewRevisionById: nextLastPreviewRevisionById
     }
   })
 }
@@ -220,7 +248,8 @@ export const createDashboardLevel = () => {
       levelsById: { ...prev.levelsById, [id]: nextLevel },
       order: sortIds([...prev.order, id], Object.keys(prev.baseLevelsById)),
       selectedLevelId: id,
-      activeTab: 'overview' as DashboardTab
+      activeTab: 'overview' as DashboardTab,
+      draftRevisionById: { ...prev.draftRevisionById, [id]: 0 }
     }
     return ensureSelected(next)
   })
@@ -248,7 +277,8 @@ export const duplicateSelectedDashboardLevel = () => {
       levelsById: { ...prev.levelsById, [id]: duplicate },
       order: sortIds([...prev.order, id], Object.keys(prev.baseLevelsById)),
       selectedLevelId: id,
-      activeTab: 'overview' as DashboardTab
+      activeTab: 'overview' as DashboardTab,
+      draftRevisionById: { ...prev.draftRevisionById, [id]: 0 }
     }
     return ensureSelected(next)
   })
@@ -260,10 +290,19 @@ export const revertSelectedLevelToBase = () => {
   setState((prev) => {
     const base = prev.baseLevelsById[selected]
     if (base) {
+      const current = prev.levelsById[selected]
+      const changed = !current || serializeLevel(current) !== serializeLevel(base)
+      const nextDraftRevisionById = changed
+        ? {
+            ...prev.draftRevisionById,
+            [selected]: (prev.draftRevisionById[selected] ?? 0) + 1
+          }
+        : prev.draftRevisionById
       return {
         ...prev,
         levelsById: { ...prev.levelsById, [selected]: clone(base) },
-        historyById: { ...prev.historyById, [selected]: { past: [], future: [] } }
+        historyById: { ...prev.historyById, [selected]: { past: [], future: [] } },
+        draftRevisionById: nextDraftRevisionById
       }
     }
     const nextLevels = { ...prev.levelsById }
@@ -271,11 +310,17 @@ export const revertSelectedLevelToBase = () => {
     const nextHistory = { ...prev.historyById }
     delete nextHistory[selected]
     const nextOrder = prev.order.filter((id) => id !== selected)
+    const nextDraftRevisionById = { ...prev.draftRevisionById }
+    delete nextDraftRevisionById[selected]
+    const nextLastPreviewRevisionById = { ...prev.lastPreviewRevisionById }
+    delete nextLastPreviewRevisionById[selected]
     return ensureSelected({
       ...prev,
       levelsById: nextLevels,
       historyById: nextHistory,
-      order: nextOrder
+      order: nextOrder,
+      draftRevisionById: nextDraftRevisionById,
+      lastPreviewRevisionById: nextLastPreviewRevisionById
     })
   })
 }
@@ -290,7 +335,9 @@ export const revertAllDashboardOverrides = () => {
       baseLevelsById,
       order: ids,
       selectedLevelId: ids[0] ?? null,
-      historyById: {}
+      historyById: {},
+      draftRevisionById: createRevisionMap(ids),
+      lastPreviewRevisionById: {}
     }
   })
 }
@@ -318,6 +365,10 @@ export const undoSelectedDashboardLevel = () => {
           past,
           future: [clone(current), ...history.future].slice(0, MAX_HISTORY)
         }
+      },
+      draftRevisionById: {
+        ...prev.draftRevisionById,
+        [selected]: (prev.draftRevisionById[selected] ?? 0) + 1
       }
     }
   })
@@ -340,6 +391,10 @@ export const redoSelectedDashboardLevel = () => {
           past: [...history.past, clone(current)].slice(-MAX_HISTORY),
           future
         }
+      },
+      draftRevisionById: {
+        ...prev.draftRevisionById,
+        [selected]: (prev.draftRevisionById[selected] ?? 0) + 1
       }
     }
   })
@@ -436,11 +491,20 @@ export const importDashboardOverridesJson = (json: string, merge = true) => {
       if (!levelsById[id]) levelsById[id] = clone(mergedOverrides[id])
     })
     const order = sortIds(Object.keys(levelsById), Object.keys(prev.baseLevelsById))
+    const ids = new Set(Object.keys(levelsById))
+    const nextDraftRevisionById = Object.keys(levelsById).reduce((acc, id) => {
+      const previous = prev.levelsById[id]
+      const changed = !previous || serializeLevel(previous) !== serializeLevel(levelsById[id])
+      acc[id] = changed ? (prev.draftRevisionById[id] ?? 0) + 1 : (prev.draftRevisionById[id] ?? 0)
+      return acc
+    }, {} as Record<string, number>)
     return ensureSelected({
       ...prev,
       levelsById,
       order,
-      historyById: {}
+      historyById: {},
+      draftRevisionById: nextDraftRevisionById,
+      lastPreviewRevisionById: pruneRevisionMap(prev.lastPreviewRevisionById, ids)
     })
   })
 
@@ -449,6 +513,27 @@ export const importDashboardOverridesJson = (json: string, merge = true) => {
     rejected,
     validation
   }
+}
+
+export const markLevelPreviewUpToDate = (levelId: string) => {
+  setState((prev) => {
+    if (!prev.levelsById[levelId]) return prev
+    const revision = prev.draftRevisionById[levelId] ?? 0
+    if (prev.lastPreviewRevisionById[levelId] === revision) return prev
+    return {
+      ...prev,
+      lastPreviewRevisionById: {
+        ...prev.lastPreviewRevisionById,
+        [levelId]: revision
+      }
+    }
+  })
+}
+
+export const markSelectedLevelPreviewUpToDate = () => {
+  const selected = state.selectedLevelId
+  if (!selected) return
+  markLevelPreviewUpToDate(selected)
 }
 
 export const isSelectedLevelDirty = () => {

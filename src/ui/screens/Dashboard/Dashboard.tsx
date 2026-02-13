@@ -17,6 +17,7 @@ import {
   duplicateSelectedDashboardLevel,
   exportDashboardOverridesJson,
   importDashboardOverridesJson,
+  markLevelPreviewUpToDate,
   patchSelectedLevel,
   redoSelectedDashboardLevel,
   revertAllDashboardOverrides,
@@ -28,6 +29,7 @@ import {
   undoSelectedDashboardLevel,
   useDashboardEditorState
 } from './dashboardEditorStore'
+import { LevelPreviewModal } from './LevelPreviewModal'
 
 type DashboardProps = {
   onBack: () => void
@@ -128,10 +130,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
   const selectedHistory = selectedLevelId ? historyById[selectedLevelId] : undefined
   const canUndo = Boolean(selectedHistory && selectedHistory.past.length > 0)
   const canRedo = Boolean(selectedHistory && selectedHistory.future.length > 0)
+  const selectedDraftRevision = selectedLevelId ? snapshot.draftRevisionById[selectedLevelId] ?? 0 : 0
+  const lastPreviewRevision = selectedLevelId ? snapshot.lastPreviewRevisionById[selectedLevelId] : undefined
+  const previewIsUpToDate = typeof lastPreviewRevision === 'number' && lastPreviewRevision === selectedDraftRevision
 
   const [waveDayIndex, setWaveDayIndex] = useState(0)
   const [rawJson, setRawJson] = useState('')
   const [rawStatus, setRawStatus] = useState<string | null>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
   const importInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
@@ -150,6 +156,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
       setWaveDayIndex(Math.max(0, selectedLevel.days.length - 1))
     }
   }, [selectedLevel, waveDayIndex])
+
+  useEffect(() => {
+    setPreviewOpen(false)
+  }, [selectedLevelId])
 
   const handleSaveOverrides = () => {
     const result = saveDashboardOverrides()
@@ -942,6 +952,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
                 >
                   Add Pad
                 </button>
+                <button className="btn primary" onClick={() => setPreviewOpen(true)}>Generate Preview</button>
+                <span className={`dashboard-preview-status ${previewIsUpToDate ? 'up' : 'out'}`}>
+                  {previewIsUpToDate ? 'Preview up to date' : 'Preview out of date'}
+                </span>
               </div>
               {selectedLevel.buildingPads.map((pad, index) => (
                 <div key={`${pad.id}_${index}`} className="dashboard-row-card">
@@ -1581,6 +1595,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
           </div>
         </aside>
       </div>
+      <LevelPreviewModal
+        isOpen={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        levelDraft={selectedLevel}
+        revision={selectedDraftRevision}
+        onGenerated={() => markLevelPreviewUpToDate(selectedLevel.id)}
+      />
     </div>
   )
 }
