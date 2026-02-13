@@ -1,5 +1,6 @@
 import { BuildingPad } from '../config/levels'
 import { BUILDING_DEFS } from '../config/buildings'
+import { ENEMY_TRAIT_ICON_LABELS } from '../config/nightContent'
 import { RunBuilding } from '../run/types'
 import { Grid } from './pathfinding'
 import { PAD_SIZE, getPadRect } from './pads'
@@ -312,15 +313,17 @@ export const renderScene = (
       // Structures are rendered by building overlays; keep only health bars/effects here.
     } else {
       const isPlayer = entity.team === 'player'
-      const isElite = entity.tier === 'boss' || entity.tier === 'miniBoss'
+      const isElite = entity.tier === 'boss' || entity.tier === 'miniBoss' || entity.eliteVariant
       const fill = isPlayer
         ? entity.kind === 'hero'
           ? TIER_STYLES.hero.fill
           : '#38bdf8'
         : isElite
-          ? TIER_STYLES[entity.tier].fill
+          ? entity.eliteVariant
+            ? '#f59e0b'
+            : TIER_STYLES[entity.tier].fill
           : TIER_STYLES.normal.fill
-      const stroke = !isPlayer && isElite ? TIER_STYLES[entity.tier].stroke : undefined
+      const stroke = !isPlayer && isElite ? (entity.eliteVariant ? '#fde047' : TIER_STYLES[entity.tier].stroke) : undefined
       ctx.fillStyle = fill
       ctx.beginPath()
       ctx.arc(screen.x, screen.y, entity.radius * cam.zoom, 0, Math.PI * 2)
@@ -359,6 +362,26 @@ export const renderScene = (
     if (label) {
       const size = Math.max(10, 12 * cam.zoom)
       drawTextWithOutline(ctx, label, screen.x, screen.y - (entity.radius + 14) * cam.zoom, size, '#f8fafc', '#0f172a')
+    }
+    if (entity.team === 'enemy' && entity.enemyTraits?.length) {
+      const traits = entity.enemyTraits.slice(0, 2)
+      traits.forEach((traitId, index) => {
+        const token = ENEMY_TRAIT_ICON_LABELS[traitId] ?? traitId.slice(0, 3).toUpperCase()
+        const size = Math.max(8, 10 * cam.zoom)
+        drawTextWithOutline(
+          ctx,
+          token,
+          screen.x,
+          screen.y - (entity.radius + 25 + index * 10) * cam.zoom,
+          size,
+          '#e2e8f0',
+          '#020617'
+        )
+      })
+    }
+    if (entity.team === 'enemy' && entity.eliteVariant) {
+      const size = Math.max(9, 11 * cam.zoom)
+      drawTextWithOutline(ctx, 'ELT', screen.x, screen.y - (entity.radius + 36) * cam.zoom, size, '#fde047', '#020617')
     }
   })
 

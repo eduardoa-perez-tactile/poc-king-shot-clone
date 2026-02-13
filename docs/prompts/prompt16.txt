@@ -1,0 +1,80 @@
+You are Codex working on our Kingshot-like single-player browser RTS (Babylon.js 3D + React UI overlay). Implement a new “Geometric Sci-Fi Minimal” render style inspired by the provided reference image.
+
+GOAL (visual):
+- World looks like a dense, modular grid of cubes/rectangular prisms with hard 90° edges.
+- Dark desaturated bluish/teal metallic base environment.
+- Minimal palette: dark base + bright white emissive + red emissive accents.
+- Visual hierarchy via scale (Stronghold biggest, buildings medium, units small; heroes/bosses larger).
+- Thin emissive light bars/strips + occasional vertical beams (spawn indicators).
+- Subtle bloom and depth of field to emphasize emissive areas.
+
+CONSTRAINTS:
+- Keep geometry primitive-only: Box/Plane/Cylinder only (prefer Box).
+- No complex meshes, no bevels, no textures required.
+- Use instancing/thin instances where possible for performance; avoid per-frame React rerenders.
+- Labels remain 2D (React overlay) or Babylon GUI; but meshes stay simple.
+
+TASKS:
+1) MATERIAL SYSTEM (Babylon PBR)
+- Create a small shared material library:
+  A) baseMetalDark: PBRMaterial with dark bluish/teal albedo, matte/rough look (high roughness), low metallic.
+  B) emissiveWhite: PBRMaterial (or StandardMaterial) with strong emissiveColor (white), minimal albedo.
+  C) emissiveRed: same but emissive red.
+  D) ghostGlass (optional): PBRMaterial with slight transparency (alpha 0.8–0.9) for buildings so user can see behind.
+- Ensure materials are reusable and cached (no per-entity material creation unless needed).
+- Provide helper functions like:
+  - getBaseMaterial(scene)
+  - getEmissiveMaterial(scene, color)
+  - getGhostMaterial(scene)
+
+2) POST-PROCESS LOOK (DefaultRenderingPipeline)
+- Add BABYLON.DefaultRenderingPipeline attached to the main camera.
+- Enable bloom and tune it for emissive highlights (bloom on; moderate weight/threshold; don’t overblow).
+- Enable mild depth of field for “cinematic” feel (small blur; focus around mid-scene).
+- Enable FXAA if needed.
+(Reference: Babylon DefaultRenderingPipeline supports bloom/DOF/FXAA/image processing.) 
+
+3) GEOMETRY RULES (apply across map, buildings, units, indicators)
+- Stronghold:
+  - Single Box mesh, largest scale on map.
+  - Slight emissive edge/strip effect: add 1 thin child box as a “light bar” OR use a second box as a strip (still primitive-only). If you must keep strictly 1 mesh, then use emissive material + GUI overlay ring, but prefer a thin child “strip” box.
+- Buildings (pads):
+  - Use single Box with ghostGlass material (optional) and a thin emissive strip box to indicate level.
+  - Level strip color: white for levels; intensity increases with level.
+- Towers:
+  - Box mesh, taller than other buildings.
+  - Add thin white emissive strip.
+- Units:
+  - Single Box each (Infantry small cube; Cavalry elongated box; Heroes taller box; Miniboss/Boss larger).
+  - Color coding only via emissive accents or albedo tint; keep palette restrained.
+- Obstacles:
+  - Low-height rectangular prisms using baseMetalDark.
+
+4) SPAWN INDICATORS (next-wave border spawns)
+- For each next-wave spawn border point, render a thin vertical beam:
+  - Very thin tall box (or cylinder) with emissiveRed material, optionally with animated emissive intensity (pulse).
+  - Keep in a pool; enable/disable per wave to avoid create/destroy.
+
+5) PERFORMANCE IMPLEMENTATION
+- Batch repeated environment blocks (decorative grid greebles) using thin instances:
+  - Create one source Box mesh “greebleBlock” and thinInstanceAdd with many matrices.
+  - Same for small “light bar” strips if repeated.
+(Reference: Babylon thin instances are optimized vs many separate meshes.)
+
+6) INTEGRATION POINTS
+- Where to apply:
+  - Map scene initialization: set up pipeline + material cache.
+  - Entity factories (Stronghold, Building, Unit, Obstacle, SpawnIndicator): update to use primitives + shared materials.
+- Do not break gameplay logic. Only replace visuals.
+
+DELIVERABLES:
+- Code changes in the Babylon scene setup + entity factories to enforce this style.
+- A “StyleConfig” object with palette + roughness/metallic/emissiveIntensity parameters for quick tweaking.
+- Ensure everything runs with our orthographic RTS camera.
+
+NOTES:
+- Keep DOF subtle; bloom should highlight emissive strips and beams.
+- No textures needed; lighting + emissive should carry the look.
+- Use pooled meshes/VFX; avoid allocating each wave.
+
+IMPLEMENT NOW.

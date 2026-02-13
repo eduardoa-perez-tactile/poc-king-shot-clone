@@ -4,6 +4,8 @@ import { UNIT_DEFS, UnitType } from '../config/units'
 import { BUILDING_DEFS } from '../config/buildings'
 import { getProducerLevelStatMultipliers, isUnitProducerBuilding } from '../game/rules/progression'
 import { getHQBonusHp, getUnitStatMultipliers } from '../run/economy'
+import { getBuffSnapshot } from '../run/nightSystems'
+import { createSeededRng, deriveSeed } from '../run/rng'
 import { getRunLevel } from '../run/runState'
 import { RunState } from '../run/types'
 import { buildGrid, findPath, Grid, worldToCell } from './pathfinding'
@@ -84,8 +86,13 @@ const typeMultiplier = (attacker: UnitType, target: UnitType) => {
 }
 
 const jitter = (pos: Vec2) => ({
-  x: pos.x + (Math.random() - 0.5) * 40,
-  y: pos.y + (Math.random() - 0.5) * 40
+  x: pos.x,
+  y: pos.y
+})
+
+const jitterWithRng = (pos: Vec2, nextFloat: () => number, span = 40) => ({
+  x: pos.x + (nextFloat() - 0.5) * span,
+  y: pos.y + (nextFloat() - 0.5) * span
 })
 
 const DEBUG_BORDER_SPAWNS =
@@ -186,7 +193,7 @@ const createTroopEntity = (
   team: 'player' | 'enemy',
   pos: Vec2,
   squadSize: number,
-  multipliers: { hp: number; attack: number; attackSpeed?: number },
+  multipliers: { hp: number; attack: number; attackSpeed?: number; moveSpeed?: number },
   squadId?: string,
   options?: { ownerBuildingId?: string; ownerBuildingPadId?: string },
   tier: EntityState['tier'] = 'normal'
@@ -207,7 +214,7 @@ const createTroopEntity = (
     maxHp: hp,
     attack,
     range: troop.stats.range,
-    speed: troop.stats.speed,
+    speed: troop.stats.speed * (multipliers.moveSpeed ?? 1),
     cooldown: troop.stats.cooldown / attackSpeed,
     cooldownLeft: 0,
     order: { type: 'stop' },
@@ -361,7 +368,7 @@ const createEliteEntity = (
   eliteId: keyof typeof ELITE_DEFS,
   team: 'player' | 'enemy',
   pos: Vec2,
-  multipliers: { hp: number; attack: number }
+  multipliers: { hp: number; attack: number; moveSpeed?: number }
 ): EntityState => {
   const def = ELITE_DEFS[eliteId]
   const tier = eliteId === 'boss' ? 'boss' : 'miniBoss'
@@ -379,7 +386,7 @@ const createEliteEntity = (
     maxHp: hp,
     attack,
     range: def.range,
-    speed: def.speed,
+    speed: def.speed * (multipliers.moveSpeed ?? 1),
     cooldown: def.cooldown,
     cooldownLeft: 0,
     order: { type: 'stop' },
@@ -387,6 +394,64 @@ const createEliteEntity = (
     path: [],
     buffs: []
   }
+}
+
+const applyEnemyTraits = (
+  entity: EntityState,
+  traitIds: string[] | undefined,
+  traitDefsById: Map<string, NonNullable<CombatDefinition['enemyTraitDefs']>[number]>
+) => {
+  if (!traitIds || traitIds.length === 0) return entity
+  const normalized = traitIds.filter((traitId) => traitDefsById.has(traitId))
+  if (normalized.length === 0) return entity
+  const next: EntityState = {
+    ...entity,
+    enemyTraits: normalized as EntityState['enemyTraits'],
+    targetingPriority: 'DEFAULT',
+    ignoresWalls: false
+  }
+  normalized.forEach((traitId) => {
+    const def = traitDefsById.get(traitId)
+    if (!def) return
+    if (typeof def.effects.rangedDamageTakenMultiplier === 'number') {
+      next.rangedDamageTakenMultiplier = def.effects.rangedDamageTakenMultiplier
+    }
+    if (def.effects.onDeathExplosion) {
+      next.onDeathExplosion = {
+        radius: def.effects.onDeathExplosion.radius,
+        damage: def.effects.onDeathExplosion.damage
+      }
+    }
+    if (def.effects.targetingPriority) {
+      next.targetingPriority = def.effects.targetingPriority
+    }
+    if (def.effects.ignoresWalls) {
+      next.ignoresWalls = true
+    }
+  })
+  return next
+}
+
+const applyEliteVariant = (entity: EntityState, combat: CombatDefinition) => {
+  const config = combat.eliteConfig
+  if (!config || !config.enabled) return entity
+  const nextMaxHp = entity.maxHp * config.hpMultiplier
+  return {
+    ...entity,
+    eliteVariant: true,
+    maxHp: nextMaxHp,
+    hp: nextMaxHp,
+    attack: entity.attack * config.damageMultiplier,
+    speed: entity.speed * (config.moveSpeedMultiplier ?? 1)
+  }
+}
+
+const applyDamageToEntity = (target: EntityState, amount: number, isRanged: boolean) => {
+  const adjusted = isRanged
+    ? amount * (target.rangedDamageTakenMultiplier ?? 1)
+    : amount
+  target.hp -= adjusted
+  return adjusted
 }
 
 const emptyStats = (): CombatStats => ({
@@ -502,11 +567,11 @@ const getActiveWallRects = (entities: EntityState[]) =>
     .map((entity) => getEntityRect(entity))
     .filter((rect): rect is NonNullable<typeof rect> => Boolean(rect))
 
-const buildNavigationGrid = (state: SimState) => {
-  // Dynamic wall blockers are folded into the grid each simulation step.
-  // This keeps A* routing simple while allowing walls to disappear immediately when destroyed.
+const buildNavigationGrids = (state: SimState) => {
+  const withoutWalls = buildGrid(state.combat.map.width, state.combat.map.height, 40, state.combat.map.obstacles)
   const wallRects = getActiveWallRects(state.entities)
-  return buildGrid(state.combat.map.width, state.combat.map.height, 40, [...state.combat.map.obstacles, ...wallRects])
+  const withWalls = buildGrid(state.combat.map.width, state.combat.map.height, 40, [...state.combat.map.obstacles, ...wallRects])
+  return { withWalls, withoutWalls }
 }
 
 const isPathBlocked = (grid: Grid, path: Vec2[]) =>
@@ -514,6 +579,9 @@ const isPathBlocked = (grid: Grid, path: Vec2[]) =>
     const cell = worldToCell(grid, point)
     return Boolean(grid.blocked[cell.y]?.[cell.x])
   })
+
+const gridForEntity = (entity: EntityState, grids: { withWalls: Grid; withoutWalls: Grid }) =>
+  entity.team === 'enemy' && entity.ignoresWalls ? grids.withoutWalls : grids.withWalls
 
 export const createSimState = (
   combat: CombatDefinition,
@@ -559,6 +627,7 @@ export const createSimState = (
 
   const statMultipliers = getUnitStatMultipliers(run)
   const level = getRunLevel(run)
+  const buffs = getBuffSnapshot(level, run)
   run.unitRoster.forEach((squad) => {
     const mult = statMultipliers[squad.type]
     const ownerBuilding =
@@ -580,8 +649,9 @@ export const createSimState = (
         squad.size,
         {
           hp: (1 + mult.hp) * producerMult.hp,
-          attack: (1 + mult.attack) * producerMult.attack,
-          attackSpeed: producerMult.attackSpeed
+          attack: (1 + mult.attack) * producerMult.attack * (squad.type === 'archer' ? buffs.rangedUnitsDamageMultiplier : 1),
+          attackSpeed: producerMult.attackSpeed,
+          moveSpeed: 1
         },
         squad.id,
         {
@@ -598,12 +668,13 @@ export const createSimState = (
     const pad = padById.get(building.padId)
     if (!pad) return
     if (building.id === 'watchtower') {
+      if (combat.towersDisabled) return
       const baseCombat = BUILDING_DEFS.watchtower.combat
       if (!baseCombat) return
       const levelCombat = level.buildings.watchtower.combat
       const perLevel = Math.max(0, building.level - 1)
-      const damage = (levelCombat?.damage ?? baseCombat.damage) * (1 + perLevel * 0.3)
-      const range = levelCombat?.range ?? baseCombat.range
+      const damage = (levelCombat?.damage ?? baseCombat.damage) * (1 + perLevel * 0.3) * buffs.towerDamageMultiplier
+      const range = (levelCombat?.range ?? baseCombat.range) * buffs.towerRangeMultiplier
       const cooldown = Math.max(0.2, (levelCombat?.cooldown ?? baseCombat.cooldown) * (1 - perLevel * 0.06))
       const projectileSpeed = levelCombat?.projectileSpeed ?? baseCombat.projectileSpeed ?? 320
       entities.push(
@@ -626,7 +697,7 @@ export const createSimState = (
       entities.push(
         createWallEntity(
           { x: pad.x, y: pad.y },
-          building.hp,
+          building.hp * buffs.wallHpMultiplier,
           {
             padId: pad.id,
             width: WALL_FOOTPRINT.w,
@@ -638,7 +709,7 @@ export const createSimState = (
     }
   })
 
-  const spawnGrid = buildNavigationGrid({
+  const spawnGrid = buildNavigationGrids({
     time: 0,
     status: 'running',
     entities,
@@ -652,7 +723,7 @@ export const createSimState = (
     bossDefeated: false,
     destroyedWallPadIds: [],
     heroAbilityCooldowns: { q: 0, e: 0 }
-  })
+  }).withWalls
   entities.forEach((entity) => {
     if (entity.team !== 'player' || entity.kind === 'hq') return
     if (isWalkablePosition(spawnGrid, combat, entity.pos, entity.radius)) return
@@ -745,7 +816,7 @@ const stepHeroFromInput = (sim: SimState, dt: number, grid: Grid, input?: Player
   hero.targetId = undefined
 }
 
-const applySeparation = (sim: SimState, grid: Grid, dt: number) => {
+const applySeparation = (sim: SimState, grids: { withWalls: Grid; withoutWalls: Grid }, dt: number) => {
   const candidates = sim.entities
     .map((entity, index) => ({ entity, index }))
     .filter(({ entity }) => entity.hp > 0 && entity.kind !== 'hq' && !entity.isStructure)
@@ -812,6 +883,7 @@ const applySeparation = (sim: SimState, grid: Grid, dt: number) => {
   corrections.forEach((correction, index) => {
     const entity = sim.entities[index]
     if (!entity) return
+    const grid = gridForEntity(entity, grids)
     moveWithCollision(
       entity,
       {
@@ -825,19 +897,31 @@ const applySeparation = (sim: SimState, grid: Grid, dt: number) => {
 }
 
 const findClosestEnemy = (entity: EntityState, entities: EntityState[], range: number) => {
-  let closest: EntityState | undefined
-  let best = Infinity
+  let bestTower: EntityState | undefined
+  let bestTowerDist = Infinity
+  let bestDefault: EntityState | undefined
+  let bestDefaultDist = Infinity
   entities.forEach((other) => {
     if (other.team === entity.team) return
     if (other.hp <= 0) return
-    if (entity.team === 'enemy' && other.kind === 'tower') return
     const d = distance(entity.pos, other.pos)
-    if (d < range && d < best) {
-      best = d
-      closest = other
+    if (d >= range) return
+    if (entity.team === 'enemy' && other.kind === 'tower') {
+      if (d < bestTowerDist) {
+        bestTowerDist = d
+        bestTower = other
+      }
+      return
+    }
+    if (d < bestDefaultDist) {
+      bestDefaultDist = d
+      bestDefault = other
     }
   })
-  return closest
+  if (entity.team === 'enemy' && entity.targetingPriority === 'TOWERS_FIRST') {
+    return bestTower ?? bestDefault
+  }
+  return bestDefault
 }
 
 const findHeroInRange = (entity: EntityState, entities: EntityState[], range: number) => {
@@ -846,24 +930,25 @@ const findHeroInRange = (entity: EntityState, entities: EntityState[], range: nu
   )
 }
 
-const issueDefaultEnemyOrders = (state: SimState, grid: Grid) => {
+const issueDefaultEnemyOrders = (state: SimState, grids: { withWalls: Grid; withoutWalls: Grid }) => {
   const playerHQ = state.entities.find((e) => e.team === 'player' && e.kind === 'hq')
   const hero = state.entities.find((e) => e.team === 'player' && e.kind === 'hero')
   state.entities.forEach((entity) => {
     if (entity.team !== 'enemy') return
+    const navigationGrid = gridForEntity(entity, grids)
     if (entity.order.type === 'stop' || entity.order.type === 'move') {
       if (entity.tier === 'boss' || entity.tier === 'miniBoss') {
         if (hero && distance(entity.pos, hero.pos) <= entity.range + 20) {
           entity.order = { type: 'attack', targetPos: { ...hero.pos }, targetId: hero.id }
           entity.path = []
-          ensurePath(grid, entity, hero.pos)
+          ensurePath(navigationGrid, entity, hero.pos)
           return
         }
       }
       if (playerHQ) {
         entity.order = { type: 'attackMove', targetPos: { ...playerHQ.pos } }
         entity.path = []
-        ensurePath(grid, entity, playerHQ.pos)
+        ensurePath(navigationGrid, entity, playerHQ.pos)
       }
     }
   })
@@ -902,11 +987,11 @@ const tryImmediateAttack = (
       special: attacker.heroSpecial
     })
   } else {
-    target.hp -= dmg
-    registerHitFeedback(target, dmg, time, damageNumbers, attacker.tier === 'boss' || attacker.tier === 'miniBoss')
+    const appliedDamage = applyDamageToEntity(target, dmg, false)
+    registerHitFeedback(target, appliedDamage, time, damageNumbers, attacker.tier === 'boss' || attacker.tier === 'miniBoss')
     addEffect(effects, 'hit', target.pos, 18, '#f97316', time, 0.2)
     addSlashEffect(effects, attacker.pos, target.pos, time)
-    applySplashDamage(entities, attacker.team, attacker.heroSpecial, target, dmg, time, effects, damageNumbers)
+    applySplashDamage(entities, attacker.team, attacker.heroSpecial, target, appliedDamage, time, effects, damageNumbers)
   }
   attacker.cooldownLeft = attacker.cooldown
 }
@@ -915,16 +1000,20 @@ const spawnWave = (sim: SimState) => {
   const wave = sim.combat.waves[sim.waveIndex]
   if (!wave) return
   const enemyMult = sim.combat.enemyModifiers
+  const traitDefsById = new Map((sim.combat.enemyTraitDefs ?? []).map((entry) => [entry.id, entry]))
   const spawnTransforms =
     wave.resolvedSpawnTransforms && wave.resolvedSpawnTransforms.length > 0
       ? wave.resolvedSpawnTransforms
       : [{ position: sim.combat.map.enemySpawn, forward: { x: 0, y: 1 }, edge: 'E' as const }]
   let spawnCursor = 0
+  const waveRng = createSeededRng(
+    deriveSeed(sim.combat.runSeed, 'waveSpawn', sim.combat.dayNumber, wave.id, wave.spawnSeed ?? sim.waveIndex)
+  )
 
   const nextSpawnPosition = () => {
     const transform = spawnTransforms[spawnCursor % spawnTransforms.length]
     spawnCursor += 1
-    return jitter(transform.position)
+    return jitterWithRng(transform.position, waveRng.nextFloat)
   }
 
   if (DEBUG_BORDER_SPAWNS) {
@@ -933,33 +1022,56 @@ const spawnWave = (sim: SimState) => {
     )
   }
 
-  wave.units.forEach((group) => {
-    for (let i = 0; i < group.squads; i += 1) {
-      const size = group.squadSize ?? UNIT_DEFS[group.type].squadSize
-      sim.entities.push(
-        createTroopEntity(
+  if (wave.plannedSpawns && wave.plannedSpawns.length > 0) {
+    wave.plannedSpawns.forEach((spawn) => {
+      const base = createTroopEntity(
+        spawn.enemyTypeId,
+        'enemy',
+        nextSpawnPosition(),
+        spawn.squadSize ?? UNIT_DEFS[spawn.enemyTypeId].squadSize,
+        {
+          hp: enemyMult.hpMultiplier,
+          attack: enemyMult.attackMultiplier,
+          moveSpeed: enemyMult.moveSpeedMultiplier ?? 1
+        },
+        undefined,
+        undefined,
+        'normal'
+      )
+      const withTraits = applyEnemyTraits(base, spawn.traits, traitDefsById)
+      const finalEntity = spawn.isEliteVariant ? applyEliteVariant(withTraits, sim.combat) : withTraits
+      sim.entities.push(finalEntity)
+    })
+  } else {
+    wave.units.forEach((group) => {
+      for (let i = 0; i < group.squads; i += 1) {
+        const size = group.squadSize ?? UNIT_DEFS[group.type].squadSize
+        const base = createTroopEntity(
           group.type,
           'enemy',
           nextSpawnPosition(),
           size,
           {
             hp: enemyMult.hpMultiplier,
-            attack: enemyMult.attackMultiplier
+            attack: enemyMult.attackMultiplier,
+            moveSpeed: enemyMult.moveSpeedMultiplier ?? 1
           },
           undefined,
           undefined,
           'normal'
         )
-      )
-    }
-  })
+        sim.entities.push(base)
+      }
+    })
+  }
   if (wave.elite) {
     const count = Math.max(1, wave.eliteCount ?? 1)
     for (let i = 0; i < count; i += 1) {
       sim.entities.push(
         createEliteEntity(wave.elite, 'enemy', nextSpawnPosition(), {
           hp: enemyMult.hpMultiplier,
-          attack: enemyMult.attackMultiplier
+          attack: enemyMult.attackMultiplier,
+          moveSpeed: enemyMult.moveSpeedMultiplier ?? 1
         })
       )
     }
@@ -983,13 +1095,15 @@ export const stepSim = (
   const stats: CombatStats = { ...state.stats, lostSquads: [...state.stats.lostSquads], lostHeroes: [...state.stats.lostHeroes] }
 
   const sim: SimState = { ...state, time, entities, projectiles, effects, stats, damageNumbers }
-  const grid = buildNavigationGrid(sim)
+  const navigationGrids = buildNavigationGrids(sim)
+  const grid = navigationGrids.withWalls
   sim.entities.forEach((entity) => {
     if (entity.canFly || entity.path.length === 0) return
-    if (isPathBlocked(grid, entity.path)) {
+    const entityGrid = gridForEntity(entity, navigationGrids)
+    if (isPathBlocked(entityGrid, entity.path)) {
       entity.path = []
       if (entity.order.targetPos && entity.speed > 0) {
-        entity.path = findPath(grid, entity.pos, entity.order.targetPos)
+        entity.path = findPath(entityGrid, entity.pos, entity.order.targetPos)
       }
     }
   })
@@ -1013,7 +1127,7 @@ export const stepSim = (
       }
     }
 
-    issueDefaultEnemyOrders(sim, grid)
+    issueDefaultEnemyOrders(sim, navigationGrids)
   }
 
   const entityMap = new Map(entities.map((e) => [e.id, e]))
@@ -1036,7 +1150,7 @@ export const stepSim = (
     }
 
     if (entity.order.type === 'move' && entity.order.targetPos) {
-      ensurePath(grid, entity, entity.order.targetPos)
+      ensurePath(gridForEntity(entity, navigationGrids), entity, entity.order.targetPos)
       moveAlongPath(entity, dt)
     }
 
@@ -1057,12 +1171,12 @@ export const stepSim = (
         if (distance(entity.pos, activeTarget.pos) <= entity.range) {
           tryImmediateAttack(entity, activeTarget, projectiles, effects, damageNumbers, entities, time)
         } else if (entity.speed > 0) {
-          ensurePath(grid, entity, activeTarget.pos)
+          ensurePath(gridForEntity(entity, navigationGrids), entity, activeTarget.pos)
           moveAlongPath(entity, dt)
         }
       } else {
         if (entity.speed > 0) {
-          ensurePath(grid, entity, entity.order.targetPos)
+          ensurePath(gridForEntity(entity, navigationGrids), entity, entity.order.targetPos)
           moveAlongPath(entity, dt)
         }
       }
@@ -1099,7 +1213,7 @@ export const stepSim = (
     }
   })
 
-  applySeparation(sim, grid, dt)
+  applySeparation(sim, navigationGrids, dt)
 
   projectiles.forEach((proj) => {
     const target = entityMap.get(proj.targetId)
@@ -1109,13 +1223,13 @@ export const stepSim = (
     }
     const dist = distance(proj.pos, target.pos)
     if (dist < 6) {
-      target.hp -= proj.damage
+      const appliedDamage = applyDamageToEntity(target, proj.damage, true)
       const source = proj.sourceId ? entityMap.get(proj.sourceId) : undefined
       const emphasis = source ? source.tier === 'boss' || source.tier === 'miniBoss' : false
-      registerHitFeedback(target, proj.damage, time, damageNumbers, emphasis)
+      registerHitFeedback(target, appliedDamage, time, damageNumbers, emphasis)
       const special = source?.heroSpecial ?? proj.special
       if (special) {
-        applySplashDamage(entities, source?.team ?? proj.team, special, target, proj.damage, time, effects, damageNumbers)
+        applySplashDamage(entities, source?.team ?? proj.team, special, target, appliedDamage, time, effects, damageNumbers)
       }
       addEffect(effects, 'hit', target.pos, 16, '#38bdf8', time, 0.2)
       proj.speed = 0
@@ -1141,9 +1255,18 @@ export const stepSim = (
   })
   sim.damageNumbers = activeNumbers
 
-  const alive = entities.filter((entity) => entity.hp > 0)
   entities.forEach((entity) => {
     if (entity.hp > 0) return
+    if (entity.team === 'enemy' && entity.onDeathExplosion) {
+      const explosion = entity.onDeathExplosion
+      entities.forEach((other) => {
+        if (other.team !== 'player' || other.hp <= 0 || other.isStructure || other.kind === 'hq') return
+        if (distance(other.pos, entity.pos) > explosion.radius) return
+        other.hp -= explosion.damage
+        registerHitFeedback(other, explosion.damage, time, damageNumbers, true)
+      })
+      addEffect(effects, 'aoe', entity.pos, explosion.radius, '#f97316', time, 0.28)
+    }
     if (entity.kind === 'wall' && entity.structurePadId && !sim.destroyedWallPadIds.includes(entity.structurePadId)) {
       sim.destroyedWallPadIds = [...sim.destroyedWallPadIds, entity.structurePadId]
     }
@@ -1162,6 +1285,7 @@ export const stepSim = (
     }
   })
 
+  const alive = entities.filter((entity) => entity.hp > 0)
   sim.entities = alive
   stats.time = time
 
@@ -1318,7 +1442,7 @@ export const issueOrder = (state: SimState, ids: string[], order: Order, grid: G
 export const createGridForCombat = (combat: CombatDefinition) =>
   buildGrid(combat.map.width, combat.map.height, 40, combat.map.obstacles)
 
-export const createGridForState = (state: SimState) => buildNavigationGrid(state)
+export const createGridForState = (state: SimState) => buildNavigationGrids(state).withWalls
 
 export const buildCombatResult = (state: SimState): CombatResult => {
   const hq = state.entities.find((entity) => entity.kind === 'hq')

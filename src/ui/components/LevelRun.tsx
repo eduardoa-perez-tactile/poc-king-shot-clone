@@ -2,11 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BuildingId, BUILDING_DEFS } from '../../config/buildings'
 import { ELITE_DEFS } from '../../config/elites'
 import { HERO_RECRUIT_DEFS, HeroRecruitId } from '../../config/heroes'
+import { ENEMY_TRAIT_ICON_LABELS, NightModifierId, PerkId } from '../../config/nightContent'
 import { getLevelById } from '../../config/levels'
 import { UnitType, UNIT_DEFS } from '../../config/units'
-import { getBuildingUpgradeCost, getHQBonusHp, getIncomeBreakdown, getSquadCap, getUnitCost, getUnitPurchaseCap } from '../../run/economy'
+import { getHQBonusHp, getIncomeBreakdown, getSquadCap, getUnitCost, getUnitPurchaseCap } from '../../run/economy'
+import { getEnemyTraitDefs, getPerkDefs, getPerkOffersForNight, getAllowedNightModifiersForNight, getNightModifierDefs } from '../../run/nightSystems'
 import {
   canBuySquadFromBuilding,
+  getBuildingUpgradeCostForRun,
   getBuildingLevelCapForStrongholdLevel,
   getBuildingUnlockLevelForLevel,
   getPadUnlockLevelForRunLevel,
@@ -24,11 +27,14 @@ import type { CanvasHandle, CanvasTelemetry } from './CanvasLayer'
 import { AppShell } from './hud/AppShell'
 import { TopBar } from './hud/TopBar'
 import { Panel } from './hud/Panel'
-import { NextBattleIntelPanel, type NextBattleIntelEntry } from './hud/NextBattleIntelPanel'
+import { NextBattleIntelPanel, type NextBattleIntelEntry, type NextBattleIntelWaveEntry } from './hud/NextBattleIntelPanel'
 import { EntityCard } from './hud/EntityCard'
 import { BuildOptionCard } from './hud/BuildOptionCard'
 import { AbilityButton } from './hud/AbilityButton'
 import { DayEndModal } from './hud/DayEndModal'
+import { NightSetupModal } from './hud/NightSetupModal'
+import { PerkChoiceModal } from './hud/PerkChoiceModal'
+import { NightDebugPanel } from './hud/NightDebugPanel'
 import { Toasts } from './hud/Toasts'
 import { SettingsDialog } from './hud/SettingsDialog'
 import { MiniMap } from './hud/MiniMap'
@@ -89,8 +95,11 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
     buySquad,
     summonHero,
     upgradeStronghold,
-    startCombat,
+    startCombatWithNightModifier,
     resolveCombat,
+    selectPerk,
+    rerollRunSeed,
+    setDebugOverrides,
     startNewDay
   } = useRunStore()
 
@@ -105,6 +114,8 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
   const [telemetry, setTelemetry] = useState<CanvasTelemetry | null>(null)
   const [eliteWarnings, setEliteWarnings] = useState<Array<{ id: string; message: string }>>([])
   const [intelOpen, setIntelOpen] = useState(false)
+  const [nightSetupOpen, setNightSetupOpen] = useState(false)
+  const [resolvedPerkDay, setResolvedPerkDay] = useState<number | null>(null)
   const canvasRef = useRef<CanvasHandle | null>(null)
   const isMobile = useMediaQuery('(max-width: 639px)')
 
@@ -114,6 +125,21 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
 
   const combatDefinition = useMemo(() => buildCombatDefinition(activeRun), [activeRun])
   const nextBattlePreview = combatDefinition.nextBattlePreview
+  const nightModifierDefs = useMemo(() => getNightModifierDefs(level), [level])
+  const allowedNightModifiers = useMemo(
+    () => getAllowedNightModifiersForNight(level, activeRun.dayNumber),
+    [activeRun.dayNumber, level]
+  )
+  const perkDefs = useMemo(() => getPerkDefs(level), [level])
+  const perkMaxCount = level.perkMaxCount ?? 5
+  const perkCount = useMemo(
+    () => Object.values(activeRun.perks).reduce((sum, entry) => sum + Math.max(0, entry.stacks ?? 0), 0),
+    [activeRun.perks]
+  )
+  const perkOffers = useMemo(
+    () => getPerkOffersForNight(level, activeRun, activeRun.dayNumber),
+    [activeRun, level]
+  )
   const squadCap = getSquadCap(activeRun)
   const dayIncome = activeRun.lastIncome ?? getIncomeBreakdown(activeRun, 0)
   const strongholdLevel = activeRun.strongholdLevel
@@ -124,6 +150,11 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
     unlockedBuildingTypes.length > 0
       ? `Unlocked: ${unlockedBuildingTypes.map((id) => BUILDING_DEFS[id].name).join(', ')} · Max Lv${getBuildingLevelCapForStrongholdLevel(level, strongholdLevel, 'gold_mine')}`
       : `Stronghold Lv${strongholdLevel}`
+  const traitDefs = useMemo(() => getEnemyTraitDefs(level), [level])
+  const traitNameById = useMemo(
+    () => new Map(traitDefs.map((entry) => [entry.id, ENEMY_TRAIT_ICON_LABELS[entry.id] ?? entry.name])),
+    [traitDefs]
+  )
 
   const intelEntries = useMemo<NextBattleIntelEntry[]>(() => {
     const ids = nextBattlePreview?.previewEnemyTypesDistinct ?? []
@@ -158,6 +189,23 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
       })
       .filter((entry): entry is NextBattleIntelEntry => Boolean(entry))
   }, [level.enemies.catalog, nextBattlePreview?.previewEnemyTypesDistinct])
+
+  const intelWaveEntries = useMemo<NextBattleIntelWaveEntry[]>(() => {
+    const waves = nextBattlePreview?.previewWaves ?? []
+    return waves.map((wave) => ({
+      id: wave.id,
+      spawnEdges: wave.spawnEdges,
+      enemyNames: wave.enemyTypes.map((id) => UNIT_DEFS[id as UnitType]?.name ?? ELITE_DEFS[id as keyof typeof ELITE_DEFS]?.name ?? id),
+      traitLabels: wave.traitIds.map((id) => traitNameById.get(id) ?? id),
+      hasEliteVariant: (combatDefinition.eliteConfig?.announceInIntel ?? true) ? wave.hasEliteVariant : false
+    }))
+  }, [combatDefinition.eliteConfig?.announceInIntel, nextBattlePreview?.previewWaves, traitNameById])
+
+  const perkChoicePending =
+    runPhase === 'day_end' &&
+    perkOffers.length > 0 &&
+    perkCount < perkMaxCount &&
+    resolvedPerkDay !== activeRun.dayNumber
 
   const buildingByPad = useMemo(() => {
     return new Map(
@@ -194,8 +242,19 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
   useEffect(() => {
     if (runPhase !== 'build') {
       setIntelOpen(false)
+      setNightSetupOpen(false)
     }
   }, [runPhase])
+
+  useEffect(() => {
+    if (runPhase !== 'day_end') {
+      setResolvedPerkDay(null)
+    }
+  }, [runPhase])
+
+  useEffect(() => {
+    setResolvedPerkDay(null)
+  }, [activeRun.dayNumber])
 
   const addToast = useCallback((message: string, variant: 'default' | 'danger' | 'success' = 'default') => {
     uiActions.pushToast({ message, variant, duration: 2400 })
@@ -251,7 +310,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
       )
       return
     }
-    const cost = getBuildingUpgradeCost(building.id, building.level + 1)
+    const cost = getBuildingUpgradeCostForRun(activeRun, padId, level)
     if (activeRun.gold < cost) {
       addToast('Not enough gold.', 'danger')
       return
@@ -352,7 +411,13 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
       ? `Wave ${Math.min(telemetry.waveIndex + 1, telemetry.waveCount)}/${telemetry.waveCount}`
       : undefined
 
-  const inputBlocked = runPhase === 'day_end' || runPhase === 'battle_cry' || settingsOpen || pauseOpen
+  const inputBlocked =
+    runPhase === 'day_end' ||
+    runPhase === 'battle_cry' ||
+    settingsOpen ||
+    pauseOpen ||
+    nightSetupOpen ||
+    perkChoicePending
 
   const goal = level.goals[0]
   const goalProgressRaw = goal ? activeRun.goalsProgress[goal.id] : 0
@@ -374,7 +439,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
         const nextEffects = isMax
           ? capLockedMessage
           : describeLevelEffects(activeBuilding.id, nextLevel) || 'No bonuses.'
-        const upgradeCostValue = isMax ? 0 : getBuildingUpgradeCost(activeBuilding.id, activeBuilding.level + 1)
+        const upgradeCostValue = isMax ? 0 : getBuildingUpgradeCostForRun(activeRun, activePad.id, level)
         const upgradeCostLabel = isMax ? 'Max' : `${upgradeCostValue} gold`
         const upgradeDisabled = runPhase !== 'build' || isMax || activeRun.gold < upgradeCostValue
         const upgradeTooltip = isMax
@@ -743,6 +808,32 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
     upgradeStronghold()
   }
 
+  const handleBattleCry = useCallback(() => {
+    if (runPhase !== 'build') {
+      addToast(runPhase === 'battle_cry' ? 'Battle cry in progress.' : 'Already in combat.', 'default')
+      return
+    }
+    setNightSetupOpen(true)
+  }, [addToast, runPhase])
+
+  const handleNightSetupConfirm = useCallback((modifierId?: string) => {
+    setNightSetupOpen(false)
+    startCombatWithNightModifier(modifierId as NightModifierId | undefined)
+  }, [startCombatWithNightModifier])
+
+  const handlePerkPick = useCallback((perkId: string) => {
+    selectPerk(perkId as PerkId)
+    setResolvedPerkDay(activeRun.dayNumber)
+  }, [activeRun.dayNumber, selectPerk])
+
+  const handleStartNextDay = useCallback(() => {
+    if (perkChoicePending) {
+      addToast('Choose a perk before starting the next day.', 'default')
+      return
+    }
+    startNewDay()
+  }, [addToast, perkChoicePending, startNewDay])
+
   const handleComplete = useCallback((result: CombatResult) => {
     resolveCombat({
       victory: result.victory,
@@ -935,7 +1026,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
           <Tooltip
             content={
               runPhase === 'build'
-                ? 'Start the combat wave.'
+                ? 'Choose a night modifier, then start combat.'
                 : runPhase === 'battle_cry'
                   ? 'Battle cry in progress...'
                   : 'Unavailable during combat.'
@@ -948,17 +1039,13 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
                   ? `bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-500 text-slate-950 shadow-glow ${reduceMotion ? '' : 'battle-glow battle-shine'}`
                   : 'bg-surface/80 text-muted border border-white/10'
               ].join(' ')}
-              onClick={() =>
-                runPhase === 'build'
-                  ? startCombat()
-                  : addToast(runPhase === 'battle_cry' ? 'Battle cry in progress.' : 'Already in combat.', 'default')
-              }
+              onClick={handleBattleCry}
               disabled={runPhase !== 'build'}
               whileHover={reduceMotion ? {} : { scale: 1.02 }}
               whileTap={reduceMotion ? {} : { scale: 0.98 }}
               transition={{ duration: reduceMotion ? 0 : 0.18 }}
             >
-              Battle Cry
+              Prepare Night
             </motion.button>
           </Tooltip>
         </div>
@@ -971,17 +1058,53 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
           progressLabel={goal?.label ?? 'Mission progress'}
           progressValue={progressValue}
           progressTarget={progressTarget}
-          onNextDay={startNewDay}
+          onNextDay={handleStartNextDay}
         />
       )}
+
+      <NightSetupModal
+        open={nightSetupOpen}
+        dayNumber={activeRun.dayNumber}
+        modifiers={allowedNightModifiers}
+        initialSelection={activeRun.activeNightModifier}
+        allowNone
+        onCancel={() => setNightSetupOpen(false)}
+        onConfirm={handleNightSetupConfirm}
+      />
+
+      <PerkChoiceModal
+        open={perkChoicePending}
+        dayNumber={activeRun.dayNumber}
+        offers={perkOffers}
+        perkCount={perkCount}
+        perkMaxCount={perkMaxCount}
+        onPick={handlePerkPick}
+      />
 
       <NextBattleIntelPanel
         open={intelOpen}
         dayNumber={activeRun.dayNumber}
         previewEdges={nextBattlePreview?.previewEdges ?? []}
         enemies={intelEntries}
+        waves={intelWaveEntries}
+        hasEliteWarning={(combatDefinition.eliteConfig?.announceInIntel ?? true) ? nextBattlePreview?.hasEliteVariantWarning : false}
         onOpenChange={setIntelOpen}
       />
+
+      {(runPhase === 'build' || runPhase === 'day_end') && (
+        <NightDebugPanel
+          runSeed={activeRun.runSeed}
+          modifierIds={nightModifierDefs.map((entry) => entry.id)}
+          perkIds={perkDefs.map((entry) => entry.id)}
+          traitIds={traitDefs.map((entry) => entry.id)}
+          forceNightModifierId={activeRun.debugOverrides?.forceNightModifierId}
+          forcePerkId={activeRun.debugOverrides?.forcePerkId}
+          forceEnemyTraitId={activeRun.debugOverrides?.forceEnemyTraitId}
+          forceEliteVariant={activeRun.debugOverrides?.forceEliteVariant}
+          onRerollSeed={rerollRunSeed}
+          onSetOverride={setDebugOverrides}
+        />
+      )}
 
       {pauseOpen && (
         <div className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center bg-black/70 px-4">

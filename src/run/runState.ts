@@ -1,4 +1,5 @@
 import { BuildingId, BUILDING_DEFS } from '../config/buildings'
+import { NightModifierId, PerkId } from '../config/nightContent'
 import { HeroRecruitId, HERO_RECRUIT_DEFS } from '../config/heroes'
 import { getDayPlan, getLevelById, LevelDefinition, LevelGoal, HeroRuntime } from '../config/levels'
 import { UnitType, UNIT_DEFS } from '../config/units'
@@ -8,6 +9,8 @@ import {
   isUnitProducerBuilding
 } from '../game/rules/progression'
 import { IncomeBreakdown, MetaState, RunBuilding, RunHero, RunPhase, RunSquad, RunState } from './types'
+import { buildNightPlan, getBuffSnapshot, getNightModifierById, getPerkById } from './nightSystems'
+import { deriveSeed } from './rng'
 import {
   getBuildingPurchaseCost,
   getBuildingUpgradeCost,
@@ -29,6 +32,7 @@ const HERO_ID = (() => {
 })()
 
 const DAY_END_BONUS_GOLD = 20
+const isDevRuntime = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV)
 const PRODUCER_SPAWN_OFFSETS = [
   { x: -70, y: -60 },
   { x: 0, y: -72 },
@@ -175,7 +179,7 @@ const addProducerSquads = (
       ownerBuildingLevel: buildingLevel
     })
   }
-  if (import.meta.env.DEV && (buildingId === 'barracks' || buildingId === 'range') && spawnCount > 0) {
+  if (isDevRuntime && (buildingId === 'barracks' || buildingId === 'range') && spawnCount > 0) {
     console.debug(`[ProducerSpawn] ${buildingId}@${padId} spawned ${spawnCount} squad(s) at level ${buildingLevel}.`)
   }
   return { ...run, unitRoster: nextRoster }
@@ -207,6 +211,7 @@ const applyProducerAutoSpawnOnUpgrade = (
 export const createRunState = (levelId: string): RunState => {
   const level = getLevelById(levelId)
   if (!level) throw new Error(`Unknown level: ${levelId}`)
+  const levelSeed = level.metadata.seed ?? deriveSeed(0x9e3779b9, level.id)
   const minStrongholdForStart = level.startingBuildings.reduce((acc, building) => {
     const buildingLevel = getBuildingUnlockLevelForLevel(level, building.id)
     const padLevel = getPadUnlockLevelForRunLevel(level, building.padId)
@@ -215,6 +220,7 @@ export const createRunState = (levelId: string): RunState => {
   const initialStronghold = Math.min(getStrongholdMaxLevelForLevel(level), minStrongholdForStart)
   const baseRun: RunState = {
     levelId: level.id,
+    runSeed: levelSeed >>> 0,
     dayNumber: 1,
     daysSurvived: 0,
     gold: level.startGold,
@@ -232,13 +238,20 @@ export const createRunState = (levelId: string): RunState => {
     hqHpByDay: {},
     lastIncome: undefined,
     heroProgress: { hp: 0, attack: 0 },
-    difficultyScaling: 1
+    difficultyScaling: 1,
+    activeNightModifier: undefined,
+    perks: {},
+    nextNightPlan: undefined,
+    debugOverrides: {}
   }
   const withInitialProducerSquads = baseRun.buildings.reduce((acc, building) => {
     if (!isUnitProducerBuilding(building.id)) return acc
     return applyProducerAutoSpawnOnBuild(acc, level, building.id, building.padId, building.level)
   }, baseRun)
-  return withInitialProducerSquads
+  return {
+    ...withInitialProducerSquads,
+    nextNightPlan: buildNightPlan(level, withInitialProducerSquads, getDayPlan(level, withInitialProducerSquads.dayNumber).waves)
+  }
 }
 
 export const addBuilding = (run: RunState, id: BuildingId, padId: string): RunState => {
@@ -315,7 +328,10 @@ export const getDayRewardGold = (level: LevelDefinition, dayNumber: number) => {
 }
 
 export const applyDayEndRewards = (run: RunState, level: LevelDefinition): { run: RunState; breakdown: IncomeBreakdown } => {
-  const reward = getDayRewardGold(level, run.dayNumber)
+  const baseReward = getDayRewardGold(level, run.dayNumber)
+  const buffs = getBuffSnapshot(level, run)
+  const scaledReward = Math.floor(baseReward * buffs.rewardMultiplierFromNight * buffs.goldRewardMultiplier + buffs.endOfNightBonusGold)
+  const reward = Math.max(0, scaledReward)
   const breakdown = getIncomeBreakdown(run, reward)
   const gold = run.gold + breakdown.total
   return {
@@ -375,8 +391,17 @@ export const canUpgradeBuilding = (run: RunState, padId: string) => {
   if (!isBuildingUnlockedAtStrongholdForLevel(level, run.strongholdLevel, current.id)) return false
   const cap = getBuildingLevelCapForStrongholdLevel(level, run.strongholdLevel, current.id)
   if (current.level >= cap) return false
-  const cost = getBuildingUpgradeCost(current.id, current.level + 1)
+  const buffs = getBuffSnapshot(level, run)
+  const cost = Math.max(0, Math.floor(getBuildingUpgradeCost(current.id, current.level + 1) * buffs.buildingUpgradeCostMultiplier))
   return run.gold >= cost
+}
+
+export const getBuildingUpgradeCostForRun = (run: RunState, padId: string, levelDef?: LevelDefinition) => {
+  const level = levelDef ?? getRunLevel(run)
+  const current = run.buildings.find((building) => building.padId === padId)
+  if (!current) return 0
+  const buffs = getBuffSnapshot(level, run)
+  return Math.max(0, Math.floor(getBuildingUpgradeCost(current.id, current.level + 1) * buffs.buildingUpgradeCostMultiplier))
 }
 
 export const canBuildBuilding = (run: RunState, id: BuildingId) => {
@@ -454,6 +479,57 @@ export const summonHero = (
 }
 
 export const nextDayNumber = (run: RunState) => run.dayNumber + 1
+
+export const setActiveNightModifier = (run: RunState, modifierId?: NightModifierId): RunState => ({
+  ...run,
+  activeNightModifier: modifierId
+})
+
+export const clearActiveNightModifier = (run: RunState): RunState => ({
+  ...run,
+  activeNightModifier: undefined
+})
+
+export const applyNightGoldStartPenalty = (run: RunState, level: LevelDefinition): RunState => {
+  const modifierId = run.debugOverrides?.forceNightModifierId ?? run.activeNightModifier
+  if (!modifierId) return run
+  const modifier = getNightModifierById(level, modifierId)
+  const penalty = Math.max(0, Math.floor(modifier?.effects.goldStartPenalty ?? 0))
+  if (penalty <= 0) return run
+  return {
+    ...run,
+    gold: Math.max(0, run.gold - penalty)
+  }
+}
+
+export const applyPerkSelection = (run: RunState, level: LevelDefinition, perkId: PerkId): RunState => {
+  const perkLimit = Math.max(1, Math.floor(level.perkMaxCount ?? 5))
+  const taken = Object.values(run.perks).reduce((sum, entry) => sum + Math.max(0, Math.floor(entry.stacks ?? 0)), 0)
+  if (taken >= perkLimit) return run
+  const def = getPerkById(level, perkId)
+  if (!def) return run
+  const current = run.perks[perkId]?.stacks ?? 0
+  const maxStacks = def.maxStacks ?? 1
+  if (current >= maxStacks) return run
+  return {
+    ...run,
+    perks: {
+      ...run.perks,
+      [perkId]: { stacks: current + 1 }
+    }
+  }
+}
+
+export const getTotalPerkSelections = (run: RunState) =>
+  Object.values(run.perks).reduce((sum, entry) => sum + Math.max(0, Math.floor(entry.stacks ?? 0)), 0)
+
+export const setNextNightPlan = (run: RunState, level?: LevelDefinition): RunState => {
+  const runLevel = level ?? getRunLevel(run)
+  return {
+    ...run,
+    nextNightPlan: buildNightPlan(runLevel, run, getDayPlan(runLevel, run.dayNumber).waves)
+  }
+}
 
 export const markBossDefeated = (run: RunState, dayNumber: number) => {
   if (run.bossDefeatedDays.includes(dayNumber)) return run

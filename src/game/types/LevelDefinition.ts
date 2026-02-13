@@ -3,6 +3,19 @@ import { BuildingId, BUILDING_DEFS } from '../../config/buildings'
 import { EliteId, ELITE_DEFS } from '../../config/elites'
 import { UnitType, UNIT_DEFS } from '../../config/units'
 import {
+  DEFAULT_ELITE_CONFIG,
+  DEFAULT_ENEMY_TRAITS,
+  DEFAULT_NIGHT_MODIFIERS,
+  DEFAULT_PERKS,
+  EliteConfig,
+  EnemyTraitDef,
+  EnemyTraitId,
+  NightModifierDef,
+  NightModifierId,
+  PerkDef,
+  PerkId
+} from '../../config/nightContent'
+import {
   DEFAULT_PAD_CONSTRAINTS,
   DEFAULT_PRODUCER_DEFAULTS,
   PadConstraintRules,
@@ -16,6 +29,16 @@ import {
   isBuildingAllowedOnPad,
   isBuildingAllowedOnPadType
 } from '../rules/progression'
+
+export type {
+  EliteConfig,
+  EnemyTraitDef,
+  EnemyTraitId,
+  NightModifierDef,
+  NightModifierId,
+  PerkDef,
+  PerkId
+} from '../../config/nightContent'
 
 export interface WaveUnitGroup {
   type: UnitType
@@ -40,6 +63,14 @@ export type SpawnPointCount = number | SpawnPointCountRange
 export interface DayWave {
   id: string
   units: WaveUnitGroup[]
+  traits?: EnemyTraitId[]
+  eliteChance?: number
+  groups?: Array<{
+    enemyTypeId: UnitType
+    count: number
+    traits?: EnemyTraitId[]
+    eliteChance?: number
+  }>
   spawnTimeSec?: number
   elite?: EliteId
   eliteCount?: number
@@ -234,6 +265,14 @@ export interface LevelDefinition {
   dayRewardScale?: number
   heroLoadout: HeroLoadout
   bossId?: EliteId
+  nightModifiers?: NightModifierDef[]
+  allowedNightModifiersByNight?: Record<number, NightModifierId[]>
+  perks?: PerkDef[]
+  perkPool?: PerkId[]
+  perkChoicesPerNight?: number
+  perkMaxCount?: number
+  enemyTraits?: EnemyTraitDef[]
+  eliteConfig?: EliteConfig
   buildingPads: BuildingPad[]
   startingBuildings: { id: BuildingId; level: number; padId: string }[]
   goals: LevelGoal[]
@@ -249,7 +288,7 @@ export interface LevelDefinition {
   }
 }
 
-export const LEVEL_DEFINITION_VERSION = 5
+export const LEVEL_DEFINITION_VERSION = 6
 
 type JsonSchema = Record<string, unknown>
 
@@ -322,7 +361,15 @@ export const LEVEL_DEFINITION_SCHEMA: JsonSchema = {
       }
     },
     buildingPads: { type: 'array' },
-    days: { type: 'array' }
+    days: { type: 'array' },
+    nightModifiers: { type: 'array' },
+    allowedNightModifiersByNight: { type: 'object' },
+    perks: { type: 'array' },
+    perkPool: { type: 'array' },
+    perkChoicesPerNight: { type: 'number', minimum: 1 },
+    perkMaxCount: { type: 'number', minimum: 1 },
+    enemyTraits: { type: 'array' },
+    eliteConfig: { type: 'object' }
   }
 }
 
@@ -542,6 +589,17 @@ export const createDefaultLevelDefinition = (id = DEFAULT_LEVEL_ID): LevelDefini
     dayRewardScale: 5,
     heroLoadout: DEFAULT_HERO_LOADOUT,
     bossId: 'boss',
+    nightModifiers: DEFAULT_NIGHT_MODIFIERS.map((entry) => ({ ...entry, effects: { ...entry.effects } })),
+    allowedNightModifiersByNight: {},
+    perks: DEFAULT_PERKS.map((entry) => ({ ...entry, effects: { ...entry.effects } })),
+    perkPool: DEFAULT_PERKS.map((entry) => entry.id),
+    perkChoicesPerNight: 3,
+    perkMaxCount: 5,
+    enemyTraits: DEFAULT_ENEMY_TRAITS.map((entry) => ({ ...entry, effects: { ...entry.effects } })),
+    eliteConfig: {
+      ...DEFAULT_ELITE_CONFIG,
+      outline: { ...DEFAULT_ELITE_CONFIG.outline }
+    },
     buildingPads: [],
     startingBuildings: [],
     goals: [
@@ -815,6 +873,193 @@ const migrateModifiers = (legacy: Record<string, unknown>, fallback: LevelDefini
   }
 }
 
+const normalizeNightModifier = (value: Record<string, unknown>, fallback?: NightModifierDef): NightModifierDef => {
+  const effects = asObject(value.effects)
+  return {
+    id: asString(value.id, fallback?.id ?? ''),
+    name: asString(value.name, fallback?.name ?? 'Night Modifier'),
+    description: asString(value.description, fallback?.description ?? ''),
+    rewardMultiplier: clampNonNegative(asNumber(value.rewardMultiplier, fallback?.rewardMultiplier ?? 1), 1),
+    effects: {
+      enemyCountMultiplier:
+        typeof effects.enemyCountMultiplier === 'number'
+          ? Math.max(-0.95, effects.enemyCountMultiplier)
+          : fallback?.effects.enemyCountMultiplier,
+      enemyMoveSpeedMultiplier:
+        typeof effects.enemyMoveSpeedMultiplier === 'number'
+          ? Math.max(-0.95, effects.enemyMoveSpeedMultiplier)
+          : fallback?.effects.enemyMoveSpeedMultiplier,
+      enemyHpMultiplier:
+        typeof effects.enemyHpMultiplier === 'number'
+          ? Math.max(-0.95, effects.enemyHpMultiplier)
+          : fallback?.effects.enemyHpMultiplier,
+      towersDisabled:
+        typeof effects.towersDisabled === 'boolean' ? effects.towersDisabled : fallback?.effects.towersDisabled,
+      goldStartPenalty:
+        typeof effects.goldStartPenalty === 'number'
+          ? clampNonNegative(effects.goldStartPenalty, 0)
+          : fallback?.effects.goldStartPenalty,
+      addExtraSpawnBorder:
+        typeof effects.addExtraSpawnBorder === 'boolean'
+          ? effects.addExtraSpawnBorder
+          : fallback?.effects.addExtraSpawnBorder
+    },
+    icon: asString(value.icon, fallback?.icon ?? '')
+  }
+}
+
+const migrateNightModifiers = (legacy: Record<string, unknown>, fallback: LevelDefinition): NightModifierDef[] => {
+  const raw = asArray<unknown>(legacy.nightModifiers, fallback.nightModifiers ?? DEFAULT_NIGHT_MODIFIERS)
+  if (raw.length === 0) {
+    return DEFAULT_NIGHT_MODIFIERS.map((entry) => ({ ...entry, effects: { ...entry.effects } }))
+  }
+  return raw
+    .map((entry, index) => normalizeNightModifier(asObject(entry), (fallback.nightModifiers ?? DEFAULT_NIGHT_MODIFIERS)[index]))
+    .filter((entry) => entry.id.trim().length > 0)
+}
+
+const migrateAllowedNightModifiersByNight = (
+  legacy: Record<string, unknown>,
+  fallback: LevelDefinition,
+  nightModifiers: NightModifierDef[]
+): Record<number, NightModifierId[]> => {
+  const fallbackMap = fallback.allowedNightModifiersByNight ?? {}
+  const raw = asObject(legacy.allowedNightModifiersByNight)
+  const allowedIds = new Set(nightModifiers.map((entry) => entry.id))
+  const next: Record<number, NightModifierId[]> = {}
+  Object.keys(raw).forEach((nightKey) => {
+    const night = Math.max(1, Math.floor(asNumber(Number(nightKey), 1)))
+    const ids = asArray<string>(raw[nightKey], [])
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0 && allowedIds.has(id))
+    next[night] = Array.from(new Set(ids))
+  })
+  if (Object.keys(next).length > 0) return next
+  return Object.keys(fallbackMap).reduce<Record<number, NightModifierId[]>>((acc, key) => {
+    const night = Math.max(1, Math.floor(Number(key)))
+    const ids = (fallbackMap[night] ?? fallbackMap[Number(key)] ?? []).filter((id) => allowedIds.has(id))
+    if (ids.length > 0) acc[night] = Array.from(new Set(ids))
+    return acc
+  }, {})
+}
+
+const normalizePerk = (value: Record<string, unknown>, fallback?: PerkDef): PerkDef => {
+  const effects = asObject(value.effects)
+  return {
+    id: asString(value.id, fallback?.id ?? ''),
+    name: asString(value.name, fallback?.name ?? 'Perk'),
+    description: asString(value.description, fallback?.description ?? ''),
+    maxStacks:
+      typeof value.maxStacks === 'number'
+        ? Math.max(1, Math.floor(value.maxStacks))
+        : fallback?.maxStacks,
+    effects: {
+      towerRangeMultiplier:
+        typeof effects.towerRangeMultiplier === 'number' ? effects.towerRangeMultiplier : fallback?.effects.towerRangeMultiplier,
+      towerDamageMultiplier:
+        typeof effects.towerDamageMultiplier === 'number' ? effects.towerDamageMultiplier : fallback?.effects.towerDamageMultiplier,
+      goldRewardMultiplier:
+        typeof effects.goldRewardMultiplier === 'number' ? effects.goldRewardMultiplier : fallback?.effects.goldRewardMultiplier,
+      buildingUpgradeCostMultiplier:
+        typeof effects.buildingUpgradeCostMultiplier === 'number'
+          ? effects.buildingUpgradeCostMultiplier
+          : fallback?.effects.buildingUpgradeCostMultiplier,
+      rangedUnitsDamageMultiplier:
+        typeof effects.rangedUnitsDamageMultiplier === 'number'
+          ? effects.rangedUnitsDamageMultiplier
+          : fallback?.effects.rangedUnitsDamageMultiplier,
+      wallHpMultiplier:
+        typeof effects.wallHpMultiplier === 'number' ? effects.wallHpMultiplier : fallback?.effects.wallHpMultiplier,
+      endOfNightBonusGoldPerStrongholdLevel:
+        typeof effects.endOfNightBonusGoldPerStrongholdLevel === 'number'
+          ? effects.endOfNightBonusGoldPerStrongholdLevel
+          : fallback?.effects.endOfNightBonusGoldPerStrongholdLevel
+    },
+    icon: asString(value.icon, fallback?.icon ?? '')
+  }
+}
+
+const migratePerks = (legacy: Record<string, unknown>, fallback: LevelDefinition): PerkDef[] => {
+  const raw = asArray<unknown>(legacy.perks, fallback.perks ?? DEFAULT_PERKS)
+  if (raw.length === 0) {
+    return DEFAULT_PERKS.map((entry) => ({ ...entry, effects: { ...entry.effects } }))
+  }
+  return raw
+    .map((entry, index) => normalizePerk(asObject(entry), (fallback.perks ?? DEFAULT_PERKS)[index]))
+    .filter((entry) => entry.id.trim().length > 0)
+}
+
+const migratePerkPool = (legacy: Record<string, unknown>, fallback: LevelDefinition, perks: PerkDef[]): PerkId[] => {
+  const allowed = new Set(perks.map((entry) => entry.id))
+  const source = asArray<string>(
+    legacy.perkPool,
+    (fallback.perkPool && fallback.perkPool.length > 0 ? fallback.perkPool : perks.map((entry) => entry.id))
+  )
+  const normalized = source.map((id) => id.trim()).filter((id) => id.length > 0 && allowed.has(id))
+  return Array.from(new Set(normalized))
+}
+
+const normalizeEnemyTrait = (value: Record<string, unknown>, fallback?: EnemyTraitDef): EnemyTraitDef => {
+  const effects = asObject(value.effects)
+  const onDeathExplosion = asObject(effects.onDeathExplosion)
+  return {
+    id: asString(value.id, fallback?.id ?? ''),
+    name: asString(value.name, fallback?.name ?? 'Trait'),
+    description: asString(value.description, fallback?.description ?? ''),
+    icon: asString(value.icon, fallback?.icon ?? ''),
+    effects: {
+      rangedDamageTakenMultiplier:
+        typeof effects.rangedDamageTakenMultiplier === 'number'
+          ? clampNonNegative(effects.rangedDamageTakenMultiplier, 1)
+          : fallback?.effects.rangedDamageTakenMultiplier,
+      onDeathExplosion:
+        typeof onDeathExplosion.radius === 'number' && typeof onDeathExplosion.damage === 'number'
+          ? {
+              radius: clampNonNegative(onDeathExplosion.radius, 0),
+              damage: clampNonNegative(onDeathExplosion.damage, 0)
+            }
+          : fallback?.effects.onDeathExplosion,
+      targetingPriority:
+        effects.targetingPriority === 'TOWERS_FIRST' || effects.targetingPriority === 'DEFAULT'
+          ? effects.targetingPriority
+          : fallback?.effects.targetingPriority,
+      ignoresWalls: typeof effects.ignoresWalls === 'boolean' ? effects.ignoresWalls : fallback?.effects.ignoresWalls
+    }
+  }
+}
+
+const migrateEnemyTraits = (legacy: Record<string, unknown>, fallback: LevelDefinition): EnemyTraitDef[] => {
+  const raw = asArray<unknown>(legacy.enemyTraits, fallback.enemyTraits ?? DEFAULT_ENEMY_TRAITS)
+  if (raw.length === 0) {
+    return DEFAULT_ENEMY_TRAITS.map((entry) => ({ ...entry, effects: { ...entry.effects } }))
+  }
+  return raw
+    .map((entry, index) => normalizeEnemyTrait(asObject(entry), (fallback.enemyTraits ?? DEFAULT_ENEMY_TRAITS)[index]))
+    .filter((entry) => entry.id.trim().length > 0)
+}
+
+const migrateEliteConfig = (legacy: Record<string, unknown>, fallback: LevelDefinition): EliteConfig => {
+  const value = asObject(legacy.eliteConfig)
+  const outline = asObject(value.outline)
+  const fallbackConfig = fallback.eliteConfig ?? DEFAULT_ELITE_CONFIG
+  return {
+    enabled: typeof value.enabled === 'boolean' ? value.enabled : fallbackConfig.enabled,
+    hpMultiplier: clampNonNegative(asNumber(value.hpMultiplier, fallbackConfig.hpMultiplier), fallbackConfig.hpMultiplier),
+    damageMultiplier: clampNonNegative(asNumber(value.damageMultiplier, fallbackConfig.damageMultiplier), fallbackConfig.damageMultiplier),
+    moveSpeedMultiplier:
+      typeof value.moveSpeedMultiplier === 'number'
+        ? clampNonNegative(value.moveSpeedMultiplier, fallbackConfig.moveSpeedMultiplier ?? 1)
+        : fallbackConfig.moveSpeedMultiplier,
+    outline: {
+      enabled: typeof outline.enabled === 'boolean' ? outline.enabled : fallbackConfig.outline.enabled,
+      color: outline.color === 'YELLOW' ? 'YELLOW' : fallbackConfig.outline.color
+    },
+    announceInIntel:
+      typeof value.announceInIntel === 'boolean' ? value.announceInIntel : fallbackConfig.announceInIntel,
+    icon: asString(value.icon, fallbackConfig.icon ?? '')
+  }
+}
+
 const migrateHeroLoadout = (legacy: Record<string, unknown>, fallback: LevelDefinition, hero: LevelHeroTuning): HeroLoadout => {
   const base = fallback.heroLoadout
   const raw = asObject(legacy.heroLoadout)
@@ -975,7 +1220,20 @@ const migrateSpawnPointsPerEdge = (raw: unknown): SpawnPointCount | undefined =>
   return { min, max }
 }
 
-const migrateDays = (legacy: Record<string, unknown>, fallback: LevelDefinition): DayPlan[] => {
+const migrateTraitIds = (raw: unknown, traitIds: Set<string>): EnemyTraitId[] | undefined => {
+  const entries = asArray<string>(raw, [])
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0 && traitIds.has(entry))
+  if (entries.length === 0) return undefined
+  return Array.from(new Set(entries))
+}
+
+const migrateDays = (
+  legacy: Record<string, unknown>,
+  fallback: LevelDefinition,
+  enemyTraits: EnemyTraitDef[]
+): DayPlan[] => {
+  const traitIds = new Set(enemyTraits.map((entry) => entry.id))
   const rawDays = asArray<unknown>(legacy.days, fallback.days as unknown[])
   return rawDays.map((rawDay, index) => {
     const day = asObject(rawDay)
@@ -988,6 +1246,17 @@ const migrateDays = (legacy: Record<string, unknown>, fallback: LevelDefinition)
         })(),
         squads: clampNonNegative(asNumber(unit.squads, 1), 1),
         squadSize: typeof unit.squadSize === 'number' ? clampNonNegative(unit.squadSize, 1) : undefined
+      })),
+      traits: migrateTraitIds(wave.traits, traitIds),
+      eliteChance: typeof wave.eliteChance === 'number' ? Math.min(1, clampNonNegative(wave.eliteChance, 0)) : undefined,
+      groups: asArray<Record<string, unknown>>(wave.groups, []).map((group) => ({
+        enemyTypeId: (() => {
+          const type = asString(group.enemyTypeId, 'infantry')
+          return UNIT_DEFS[type as UnitType] ? (type as UnitType) : 'infantry'
+        })(),
+        count: clampNonNegative(asNumber(group.count, 1), 1),
+        traits: migrateTraitIds(group.traits, traitIds),
+        eliteChance: typeof group.eliteChance === 'number' ? Math.min(1, clampNonNegative(group.eliteChance, 0)) : undefined
       })),
       spawnTimeSec: typeof wave.spawnTimeSec === 'number' ? clampNonNegative(wave.spawnTimeSec, 0) : undefined,
       elite: (() => {
@@ -1061,6 +1330,12 @@ export const migrateLevelDefinition = (input: unknown): LevelDefinition => {
   const rawStronghold = migrateStronghold(legacy, fallback)
   const hero = migrateHero(legacy, fallback)
   const heroLoadout = migrateHeroLoadout(legacy, fallback, hero)
+  const nightModifiers = migrateNightModifiers(legacy, fallback)
+  const perks = migratePerks(legacy, fallback)
+  const enemyTraits = migrateEnemyTraits(legacy, fallback)
+  const eliteConfig = migrateEliteConfig(legacy, fallback)
+  const allowedNightModifiersByNight = migrateAllowedNightModifiersByNight(legacy, fallback, nightModifiers)
+  const perkPool = migratePerkPool(legacy, fallback, perks)
   const buildingPads = migrateBuildingPads(legacy, fallback)
   const normalizedPadUnlockLevels: Record<string, number> = {}
   buildingPads.forEach((pad) => {
@@ -1098,10 +1373,18 @@ export const migrateLevelDefinition = (input: unknown): LevelDefinition => {
       if (typeof legacy.bossId === 'string' && ELITE_DEFS[legacy.bossId as EliteId]) return legacy.bossId as EliteId
       return 'boss'
     })(),
+    nightModifiers,
+    allowedNightModifiersByNight,
+    perks,
+    perkPool,
+    perkChoicesPerNight: clampNonNegative(asNumber(legacy.perkChoicesPerNight, fallback.perkChoicesPerNight ?? 3), 3),
+    perkMaxCount: clampNonNegative(asNumber(legacy.perkMaxCount, fallback.perkMaxCount ?? 5), 5),
+    enemyTraits,
+    eliteConfig,
     buildingPads,
     startingBuildings: migrateStartingBuildings(legacy, fallback),
     goals: migrateGoals(legacy, fallback),
-    days: migrateDays(legacy, fallback),
+    days: migrateDays(legacy, fallback, enemyTraits),
     map: migrateMap(legacy, fallback)
   }
   return migrated
@@ -1301,6 +1584,95 @@ export const validateLevelDefinition = (level: LevelDefinition): LevelValidation
     }
   })
 
+  const nightModifierIds = new Set<string>()
+  ;(level.nightModifiers ?? []).forEach((entry, index) => {
+    if (!entry.id.trim()) {
+      pushIssue(issues, 'error', `nightModifiers.${index}.id`, 'Night modifier id is required.')
+      return
+    }
+    if (nightModifierIds.has(entry.id)) {
+      pushIssue(issues, 'error', `nightModifiers.${index}.id`, `Duplicate night modifier id "${entry.id}".`)
+    }
+    nightModifierIds.add(entry.id)
+    if (entry.rewardMultiplier < 1) {
+      pushIssue(issues, 'warning', `nightModifiers.${index}.rewardMultiplier`, 'Reward multiplier is expected to be >= 1.')
+    }
+  })
+
+  Object.keys(level.allowedNightModifiersByNight ?? {}).forEach((nightKey) => {
+    const night = Number(nightKey)
+    if (!Number.isFinite(night) || night < 1) {
+      pushIssue(issues, 'error', `allowedNightModifiersByNight.${nightKey}`, 'Night key must be a positive number.')
+      return
+    }
+    const ids = (level.allowedNightModifiersByNight ?? {})[night] ?? []
+    ids.forEach((id, index) => {
+      if (!nightModifierIds.has(id)) {
+        pushIssue(
+          issues,
+          'error',
+          `allowedNightModifiersByNight.${nightKey}.${index}`,
+          `Unknown night modifier "${id}".`
+        )
+      }
+    })
+  })
+
+  const perkIds = new Set<string>()
+  ;(level.perks ?? []).forEach((entry, index) => {
+    if (!entry.id.trim()) {
+      pushIssue(issues, 'error', `perks.${index}.id`, 'Perk id is required.')
+      return
+    }
+    if (perkIds.has(entry.id)) {
+      pushIssue(issues, 'error', `perks.${index}.id`, `Duplicate perk id "${entry.id}".`)
+    }
+    perkIds.add(entry.id)
+  })
+  ;(level.perkPool ?? []).forEach((perkId, index) => {
+    if (!perkIds.has(perkId)) {
+      pushIssue(issues, 'error', `perkPool.${index}`, `Unknown perk "${perkId}".`)
+    }
+  })
+  if ((level.perkChoicesPerNight ?? 3) < 1) {
+    pushIssue(issues, 'error', 'perkChoicesPerNight', 'perkChoicesPerNight must be >= 1.')
+  }
+  if ((level.perkMaxCount ?? 5) < 1) {
+    pushIssue(issues, 'error', 'perkMaxCount', 'perkMaxCount must be >= 1.')
+  }
+
+  const enemyTraitIds = new Set<string>()
+  ;(level.enemyTraits ?? []).forEach((trait, index) => {
+    if (!trait.id.trim()) {
+      pushIssue(issues, 'error', `enemyTraits.${index}.id`, 'Enemy trait id is required.')
+      return
+    }
+    if (enemyTraitIds.has(trait.id)) {
+      pushIssue(issues, 'error', `enemyTraits.${index}.id`, `Duplicate enemy trait id "${trait.id}".`)
+    }
+    enemyTraitIds.add(trait.id)
+    if (
+      trait.effects.rangedDamageTakenMultiplier !== undefined &&
+      (trait.effects.rangedDamageTakenMultiplier < 0 || trait.effects.rangedDamageTakenMultiplier > 1)
+    ) {
+      pushIssue(
+        issues,
+        'warning',
+        `enemyTraits.${index}.effects.rangedDamageTakenMultiplier`,
+        'rangedDamageTakenMultiplier is expected to be in [0, 1].'
+      )
+    }
+  })
+
+  if (level.eliteConfig && level.eliteConfig.enabled) {
+    if (level.eliteConfig.hpMultiplier < 1) {
+      pushIssue(issues, 'warning', 'eliteConfig.hpMultiplier', 'Elite HP multiplier is expected to be >= 1.')
+    }
+    if (level.eliteConfig.damageMultiplier < 1) {
+      pushIssue(issues, 'warning', 'eliteConfig.damageMultiplier', 'Elite damage multiplier is expected to be >= 1.')
+    }
+  }
+
   level.days.forEach((day, dayIndex) => {
     if (day.day <= 0) {
       pushIssue(issues, 'error', `days.${dayIndex}.day`, 'Day number must be >= 1.')
@@ -1356,6 +1728,24 @@ export const validateLevelDefinition = (level: LevelDefinition): LevelValidation
           )
         }
       }
+      wave.traits?.forEach((traitId, traitIndex) => {
+        if (!enemyTraitIds.has(traitId)) {
+          pushIssue(
+            issues,
+            'error',
+            `days.${dayIndex}.waves.${waveIndex}.traits.${traitIndex}`,
+            `Unknown enemy trait "${traitId}".`
+          )
+        }
+      })
+      if (wave.eliteChance !== undefined && (wave.eliteChance < 0 || wave.eliteChance > 1)) {
+        pushIssue(
+          issues,
+          'error',
+          `days.${dayIndex}.waves.${waveIndex}.eliteChance`,
+          'eliteChance must be in range [0, 1].'
+        )
+      }
       wave.units.forEach((unit, unitIndex) => {
         if (!UNIT_DEFS[unit.type]) {
           pushIssue(
@@ -1375,6 +1765,50 @@ export const validateLevelDefinition = (level: LevelDefinition): LevelValidation
         }
         if (unit.squads < 1) {
           pushIssue(issues, 'error', `days.${dayIndex}.waves.${waveIndex}.units.${unitIndex}.squads`, 'Squad count must be >= 1.')
+        }
+      })
+      wave.groups?.forEach((group, groupIndex) => {
+        if (!UNIT_DEFS[group.enemyTypeId]) {
+          pushIssue(
+            issues,
+            'error',
+            `days.${dayIndex}.waves.${waveIndex}.groups.${groupIndex}.enemyTypeId`,
+            `Unknown enemy type "${group.enemyTypeId}".`
+          )
+        }
+        if (!enemyCatalog.has(group.enemyTypeId)) {
+          pushIssue(
+            issues,
+            'error',
+            `days.${dayIndex}.waves.${waveIndex}.groups.${groupIndex}.enemyTypeId`,
+            `Wave group references "${group.enemyTypeId}" but it is not in enemy catalog.`
+          )
+        }
+        if (group.count < 1) {
+          pushIssue(
+            issues,
+            'error',
+            `days.${dayIndex}.waves.${waveIndex}.groups.${groupIndex}.count`,
+            'Group count must be >= 1.'
+          )
+        }
+        group.traits?.forEach((traitId, traitIndex) => {
+          if (!enemyTraitIds.has(traitId)) {
+            pushIssue(
+              issues,
+              'error',
+              `days.${dayIndex}.waves.${waveIndex}.groups.${groupIndex}.traits.${traitIndex}`,
+              `Unknown enemy trait "${traitId}".`
+            )
+          }
+        })
+        if (group.eliteChance !== undefined && (group.eliteChance < 0 || group.eliteChance > 1)) {
+          pushIssue(
+            issues,
+            'error',
+            `days.${dayIndex}.waves.${waveIndex}.groups.${groupIndex}.eliteChance`,
+            'eliteChance must be in range [0, 1].'
+          )
         }
       })
     })

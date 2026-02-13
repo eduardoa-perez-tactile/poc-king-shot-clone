@@ -8,6 +8,7 @@ import {
 } from '../config/rendering'
 import { BuildingPad } from '../config/levels'
 import { RunState } from '../run/types'
+import { buildNightPlan, getBuffSnapshot, getEliteConfigForLevel, getEnemyTraitDefs } from '../run/nightSystems'
 import { PAD_SIZE } from './pads'
 import { CombatDefinition, CombatWave, Rect, Vec2 } from './types'
 import { buildNextBattlePreview, resolveCombatWaveSpawns } from './waveSpawns'
@@ -179,21 +180,44 @@ const preprocessCombatMap = (
 export const buildCombatDefinition = (run: RunState): CombatDefinition => {
   const level = getRunLevel(run)
   const dayPlan = getRunDayPlan(run)
+  const buffs = getBuffSnapshot(level, run)
+  const plan = run.nextNightPlan && run.nextNightPlan.nightIndex === run.dayNumber
+    ? run.nextNightPlan
+    : buildNightPlan(level, run, dayPlan.waves)
+
   const lastDay = Math.max(...level.days.map((day) => day.day))
   const miniBossAfterWave = dayPlan.miniBossAfterWave ?? 2
   const suppressDayOneMiniBoss = level.minibossRules.suppressDay1MiniBoss && run.dayNumber === 1
   const miniBossId: EliteId = dayPlan.miniBossId ?? 'miniBoss'
   const bossId: EliteId = level.bossId ?? 'boss'
-  let waves: CombatWave[] = dayPlan.waves.map((wave) => ({
-    id: wave.id,
-    units: wave.units,
-    spawnTimeSec: wave.spawnTimeSec,
-    elite: wave.elite,
-    eliteCount: wave.eliteCount,
-    spawnEdges: wave.spawnEdges,
-    spawnPointsPerEdge: wave.spawnPointsPerEdge,
-    spawnPadding: wave.spawnPadding
-  }))
+
+  let waves: CombatWave[] = plan.waves.map((wave) => {
+    const unitCounts = new Map<string, { squads: number; squadSize?: number }>()
+    wave.spawns.forEach((spawn) => {
+      const current = unitCounts.get(spawn.enemyTypeId)
+      if (!current) {
+        unitCounts.set(spawn.enemyTypeId, { squads: 1, squadSize: spawn.squadSize })
+        return
+      }
+      unitCounts.set(spawn.enemyTypeId, { ...current, squads: current.squads + 1 })
+    })
+    return {
+      id: wave.id,
+      units: Array.from(unitCounts.entries()).map(([type, value]) => ({
+        type: type as CombatWave['units'][number]['type'],
+        squads: value.squads,
+        squadSize: value.squadSize
+      })),
+      spawnTimeSec: wave.spawnTimeSec,
+      elite: wave.legacyEliteId as EliteId | undefined,
+      eliteCount: wave.legacyEliteCount,
+      spawnEdges: wave.spawnEdges,
+      spawnPointsPerEdge: wave.spawnPointsPerEdge,
+      spawnPadding: wave.spawnPadding,
+      plannedSpawns: wave.spawns.map((spawn) => ({ ...spawn })),
+      spawnSeed: wave.spawnSeed
+    }
+  })
 
   if (!suppressDayOneMiniBoss && miniBossAfterWave > 0 && waves.length >= miniBossAfterWave) {
     const insertIndex = Math.min(waves.length, miniBossAfterWave)
@@ -219,10 +243,10 @@ export const buildCombatDefinition = (run: RunState): CombatDefinition => {
   const map = preprocessCombatMap(
     level.map,
     level.buildingPads,
-    `${level.id}:${run.dayNumber}`,
+    `${run.runSeed}:map:${run.dayNumber}`,
     level.map.obstacleDensityMultiplier
   )
-  const spawnSeed = `${level.metadata.seed ?? level.id}:${run.dayNumber}`
+  const spawnSeed = `${run.runSeed}:spawns:${run.dayNumber}`
   const resolvedWaves = resolveCombatWaveSpawns(waves, map, spawnSeed)
   const nextBattlePreview = buildNextBattlePreview(resolvedWaves, map)
 
@@ -234,12 +258,21 @@ export const buildCombatDefinition = (run: RunState): CombatDefinition => {
 
   return {
     dayNumber: run.dayNumber,
+    runSeed: run.runSeed,
+    nightIndex: run.dayNumber,
     hero: getHeroRuntime(run),
+    towersDisabled: buffs.towersDisabled,
+    enemyTraitDefs: getEnemyTraitDefs(level),
+    eliteConfig: getEliteConfigForLevel(level),
     map,
     waves: resolvedWaves,
     waveMode: dayPlan.waveMode ?? 'sequential',
     waveDelaySec: dayPlan.waveDelaySec ?? 5,
-    enemyModifiers: dayPlan.enemyModifiers ?? { hpMultiplier: 1, attackMultiplier: 1 },
+    enemyModifiers: {
+      hpMultiplier: (dayPlan.enemyModifiers?.hpMultiplier ?? 1) * buffs.enemyHpMultiplier,
+      attackMultiplier: dayPlan.enemyModifiers?.attackMultiplier ?? 1,
+      moveSpeedMultiplier: buffs.enemyMoveSpeedMultiplier
+    },
     hqBaseHp: getStrongholdHqBaseHp(run.strongholdLevel),
     nextBattlePreview
   }

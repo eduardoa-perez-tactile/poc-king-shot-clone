@@ -13,8 +13,10 @@ import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial'
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture'
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight'
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight'
+import { HighlightLayer } from '@babylonjs/core/Layers/highlightLayer'
 import { PAD_SIZE } from './pads'
 import { BUILDING_DEFS } from '../config/buildings'
+import { ENEMY_TRAIT_ICON_LABELS } from '../config/nightContent'
 import { VISUAL_MODE } from '../config/rendering'
 import type { BuildingPad } from '../config/levels'
 import type { RunBuilding } from '../run/types'
@@ -48,6 +50,10 @@ const BUILDING_LABEL_FONT = 112
 const BUILDING_LABEL_SCALE = 3.1
 const UNIT_LABEL_FONT = 124
 const UNIT_LABEL_SCALE = 2.6
+const TRAIT_ICON_FONT = 102
+const TRAIT_ICON_SCALE = 1.45
+const ELITE_ICON_FONT = 98
+const ELITE_ICON_SCALE = 1.7
 const INVASION_MARKER_HEIGHT = 28
 const INVASION_MARKER_RADIUS = 7
 const DEBUG_SHOW_SPAWN_POINTS =
@@ -297,6 +303,9 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   hemi.intensity = 0.75
   const dir = new DirectionalLight('dir', new Vector3(-0.4, -1, -0.2), scene)
   dir.intensity = 0.6
+  const eliteHighlight = new HighlightLayer('elite_highlight', scene)
+  eliteHighlight.innerGlow = false
+  eliteHighlight.outerGlow = true
 
   const groundMaterial = createMaterial(scene, Color3.FromHexString('#0b1220'), 0.2)
   const groundGrid = createGroundGridTexture(scene)
@@ -350,6 +359,8 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   const specialMeshes = new Map<string, SpecialUnitVisual>()
   const primitiveUnitMeshes = new Map<string, UnitPrimitiveVisual>()
   const labelMeshes = new Map<string, LabelMesh>()
+  const traitIconMeshes = new Map<string, LabelMesh>()
+  const eliteIconMeshes = new Map<string, LabelMesh>()
   const damageLabels: LabelMesh[] = []
   const selectionRings: Mesh[] = []
   const rangeRings: Mesh[] = []
@@ -531,6 +542,24 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     return entry
   }
 
+  const ensureTraitIcon = (id: string) => {
+    if (traitIconMeshes.has(id)) return traitIconMeshes.get(id)!
+    const { mesh, texture } = createLabel(scene, `trait_icon_${id}`)
+    mesh.scaling = new Vector3(TRAIT_ICON_SCALE, TRAIT_ICON_SCALE, TRAIT_ICON_SCALE)
+    const entry = { mesh, texture, text: '' }
+    traitIconMeshes.set(id, entry)
+    return entry
+  }
+
+  const ensureEliteIcon = (id: string) => {
+    if (eliteIconMeshes.has(id)) return eliteIconMeshes.get(id)!
+    const { mesh, texture } = createLabel(scene, `elite_icon_${id}`)
+    mesh.scaling = new Vector3(ELITE_ICON_SCALE, ELITE_ICON_SCALE, ELITE_ICON_SCALE)
+    const entry = { mesh, texture, text: '' }
+    eliteIconMeshes.set(id, entry)
+    return entry
+  }
+
   const ensureSpecialMesh = (entity: EntityState) => {
     const existing = specialMeshes.get(entity.id)
     if (existing) return existing
@@ -566,7 +595,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
       if (entity.kind === 'tower' || entity.kind === 'wall') return null
       return ensurePrimitiveUnitMesh(entity)
     }
-    if (entity.kind !== 'hero' && entity.kind !== 'elite' && entity.kind !== 'hq') return null
+    if (entity.kind !== 'hero' && entity.kind !== 'elite' && entity.kind !== 'hq' && !entity.eliteVariant) return null
     return ensureSpecialMesh(entity)
   }
 
@@ -759,6 +788,56 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     })
   }
 
+  const updateTraitIcons = (sim: SimState) => {
+    if (primitiveMode) {
+      traitIconMeshes.forEach((entry) => entry.mesh.setEnabled(false))
+      return
+    }
+    const activeKeys = new Set<string>()
+    sim.entities.forEach((entity) => {
+      if (entity.team !== 'enemy' || entity.hp <= 0) return
+      const traits = (entity.enemyTraits ?? []).slice(0, 2)
+      traits.forEach((traitId, index) => {
+        const key = `${entity.id}_${index}`
+        const entry = ensureTraitIcon(key)
+        activeKeys.add(key)
+        const label = ENEMY_TRAIT_ICON_LABELS[traitId] ?? traitId.slice(0, 3).toUpperCase()
+        if (entry.text !== label) {
+          drawLabel(entry.texture, label, '#f8fafc', TRAIT_ICON_FONT)
+          entry.text = label
+        }
+        entry.mesh.position = new Vector3(entity.pos.x, entity.radius + 15 + index * 5.2, entity.pos.y)
+        entry.mesh.setEnabled(true)
+      })
+    })
+    traitIconMeshes.forEach((entry, key) => {
+      if (!activeKeys.has(key)) entry.mesh.setEnabled(false)
+    })
+  }
+
+  const updateEliteIcons = (sim: SimState) => {
+    if (primitiveMode) {
+      eliteIconMeshes.forEach((entry) => entry.mesh.setEnabled(false))
+      return
+    }
+    const activeIds = new Set<string>()
+    sim.entities.forEach((entity) => {
+      if (entity.team !== 'enemy' || entity.hp <= 0 || !entity.eliteVariant) return
+      const entry = ensureEliteIcon(entity.id)
+      activeIds.add(entity.id)
+      if (entry.text !== 'ELT') {
+        drawLabel(entry.texture, 'ELT', '#fde047', ELITE_ICON_FONT)
+        entry.text = 'ELT'
+      }
+      const traitOffset = Math.min(2, entity.enemyTraits?.length ?? 0) * 5.2
+      entry.mesh.position = new Vector3(entity.pos.x, entity.radius + 21 + traitOffset, entity.pos.y)
+      entry.mesh.setEnabled(true)
+    })
+    eliteIconMeshes.forEach((entry, id) => {
+      if (!activeIds.has(id)) entry.mesh.setEnabled(false)
+    })
+  }
+
   const updateDamageNumbers = (sim: SimState) => {
     const numbers = sim.damageNumbers
     numbers.forEach((entry, index) => {
@@ -862,6 +941,8 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
           ? selectionBossMaterial
           : entity.tier === 'miniBoss'
             ? selectionMiniBossMaterial
+            : entity.eliteVariant
+              ? selectionMiniBossMaterial
             : entity.kind === 'hero'
               ? selectionHeroMaterial
               : selectionMaterial
@@ -911,6 +992,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
 
   const updateEntityVisuals = (sim: SimState) => {
     if (primitiveMode) {
+      eliteHighlight.removeAllMeshes()
       const activeIds = new Set<string>()
       sim.entities.forEach((entity) => {
         const visual = createEntityVisual(entity)
@@ -928,6 +1010,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
       return
     }
 
+    eliteHighlight.removeAllMeshes()
     const activeIds = new Set<string>()
     sim.entities.forEach((entity) => {
       const visual = createEntityVisual(entity)
@@ -947,6 +1030,9 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
       visual.materials.forEach((mat) => {
         mat.emissiveColor = isHit ? Color3.White() : (mat.diffuseColor ?? Color3.White()).scale(0.25)
       })
+      if (entity.eliteVariant && sim.combat.eliteConfig?.outline.enabled) {
+        eliteHighlight.addMesh(visual.primary, Color3.FromHexString('#facc15'))
+      }
       visual.setEnabled(true)
     })
     specialMeshes.forEach((mesh, id) => {
@@ -1071,6 +1157,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
           entity.kind === 'hq' ||
           entity.kind === 'hero' ||
           entity.kind === 'elite' ||
+          entity.eliteVariant ||
           entity.kind === 'tower' ||
           entity.kind === 'wall'
         ) {
@@ -1108,6 +1195,8 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     updateInvasionIndicators(input.overlays.nextBattlePreview, input.phase, input.sim.time)
     updateHqHover(input.sim, input.overlays.hoveredHq)
     updateLabels(input.sim, Boolean(input.options?.showLabels))
+    updateTraitIcons(input.sim)
+    updateEliteIcons(input.sim)
     updateDamageNumbers(input.sim)
     updateVfx(input.sim)
   }
