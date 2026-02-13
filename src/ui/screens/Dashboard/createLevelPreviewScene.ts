@@ -32,6 +32,8 @@ export interface LevelPreviewSceneController {
   scene: Scene
   regenerate: (levelConfig: LevelDefinition, options?: LevelPreviewOptions) => void
   fitToBounds: () => void
+  rotateY: (deltaRadians: number) => void
+  zoom: (factor: number) => void
   dispose: () => void
 }
 
@@ -70,6 +72,8 @@ const GAMEPLAY_ISO_ALPHA = -Math.PI / 4
 const GAMEPLAY_ISO_BETA = 0.95532
 const LABEL_TEXTURE_WIDTH = 640
 const LABEL_TEXTURE_HEIGHT = 320
+const MIN_ORTHO_HALF_HEIGHT = 40
+const MAX_ORTHO_HALF_HEIGHT = 2600
 
 const resolveOptions = (options?: LevelPreviewOptions): PreviewOptionsResolved => ({ ...DEFAULT_OPTIONS, ...options })
 
@@ -299,6 +303,16 @@ export const createLevelPreviewScene = ({ canvas, levelConfig, options }: Create
   const labelMaterialCache = new Map<string, StandardMaterial>()
   let activeBounds = computeBounds(levelConfig)
 
+  const applyOrthoHalfHeight = (halfHeight: number) => {
+    const aspect = engine.getRenderWidth() / Math.max(1, engine.getRenderHeight())
+    const resolvedHalfHeight = Math.min(MAX_ORTHO_HALF_HEIGHT, Math.max(MIN_ORTHO_HALF_HEIGHT, halfHeight))
+    const resolvedHalfWidth = resolvedHalfHeight * Math.max(0.1, aspect)
+    camera.orthoLeft = -resolvedHalfWidth
+    camera.orthoRight = resolvedHalfWidth
+    camera.orthoBottom = -resolvedHalfHeight
+    camera.orthoTop = resolvedHalfHeight
+  }
+
   const fitToBounds = () => {
     const bounds = normalizeBounds(activeBounds)
     const centerX = (bounds.minX + bounds.maxX) * 0.5
@@ -310,14 +324,20 @@ export const createLevelPreviewScene = ({ canvas, levelConfig, options }: Create
     const halfWidth = width * 0.5 + CAMERA_PADDING
     const halfDepth = depth * 0.5 + CAMERA_PADDING
     const orthoHalfHeight = Math.max(halfDepth, halfWidth / Math.max(0.1, aspect))
-    const orthoHalfWidth = orthoHalfHeight * Math.max(0.1, aspect)
-
-    camera.orthoLeft = -orthoHalfWidth
-    camera.orthoRight = orthoHalfWidth
-    camera.orthoBottom = -orthoHalfHeight
-    camera.orthoTop = orthoHalfHeight
+    applyOrthoHalfHeight(orthoHalfHeight)
     camera.radius = Math.max(width, depth) * 1.6
     camera.target = new Vector3(centerX, 0, centerZ)
+  }
+
+  const rotateY = (deltaRadians: number) => {
+    if (!Number.isFinite(deltaRadians)) return
+    camera.alpha += deltaRadians
+  }
+
+  const zoom = (factor: number) => {
+    if (!Number.isFinite(factor) || factor <= 0) return
+    const currentHalfHeight = Math.max(1, Math.abs(camera.orthoTop))
+    applyOrthoHalfHeight(currentHalfHeight * factor)
   }
 
   const disposeGenerated = () => {
@@ -562,6 +582,8 @@ export const createLevelPreviewScene = ({ canvas, levelConfig, options }: Create
     scene,
     regenerate,
     fitToBounds,
+    rotateY,
+    zoom,
     dispose: () => {
       engine.stopRenderLoop()
       disposeGenerated()

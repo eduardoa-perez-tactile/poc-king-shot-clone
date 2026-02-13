@@ -17,6 +17,10 @@ const DEFAULT_OPTIONS: Required<LevelPreviewOptions> = {
   showPaths: false
 }
 
+const ROTATION_STEP_RADIANS = Math.PI / 10
+const ZOOM_IN_FACTOR = 0.85
+const ZOOM_OUT_FACTOR = 1.18
+
 export const LevelPreviewModal: React.FC<LevelPreviewModalProps> = ({
   isOpen,
   onClose,
@@ -110,6 +114,10 @@ export const LevelPreviewModal: React.FC<LevelPreviewModalProps> = ({
         <div className="level-preview-controls">
           <button className="btn primary" onClick={() => runRegenerate()}>Regenerate</button>
           <button className="btn" onClick={() => previewRef.current?.fitToBounds()}>Fit</button>
+          <button className="btn" onClick={() => previewRef.current?.rotateY(-ROTATION_STEP_RADIANS)}>Rotate Left</button>
+          <button className="btn" onClick={() => previewRef.current?.rotateY(ROTATION_STEP_RADIANS)}>Rotate Right</button>
+          <button className="btn" onClick={() => previewRef.current?.zoom(ZOOM_IN_FACTOR)}>Zoom In</button>
+          <button className="btn" onClick={() => previewRef.current?.zoom(ZOOM_OUT_FACTOR)}>Zoom Out</button>
           <button className="btn ghost" onClick={onClose}>Close</button>
           <label className="level-preview-toggle">
             <input
