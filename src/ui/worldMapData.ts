@@ -24,16 +24,7 @@ export type WorldTileDef = {
 }
 
 export const WORLD_TILES: WorldTileDef[] = [
-  { index: 0, biome: 'grass', position: { x: -6, y: 0, z: -4 }, size: { w: 4.6, h: 3.4 }, height: 0.7 },
-  { index: 1, biome: 'grass', position: { x: -1, y: 0, z: -4 }, size: { w: 4.6, h: 3.4 }, height: 0.62 },
-  { index: 2, biome: 'desert', position: { x: 4, y: 0, z: -4 }, size: { w: 4.6, h: 3.4 }, height: 0.54 },
-  { index: 3, biome: 'desert', position: { x: 9, y: 0, z: -4 }, size: { w: 4.6, h: 3.4 }, height: 0.52 },
-  { index: 4, biome: 'swamp', position: { x: -8, y: 0, z: 0 }, size: { w: 4.6, h: 3.4 }, height: 0.72 },
-  { index: 5, biome: 'grass', position: { x: -3, y: 0, z: 0 }, size: { w: 4.6, h: 3.4 }, height: 0.66 },
-  { index: 6, biome: 'desert', position: { x: 2, y: 0, z: 0 }, size: { w: 4.6, h: 3.4 }, height: 0.58 },
-  { index: 7, biome: 'swamp', position: { x: 7, y: 0, z: 0 }, size: { w: 4.6, h: 3.4 }, height: 0.75 },
-  { index: 8, biome: 'snow', position: { x: -5, y: 0, z: 4 }, size: { w: 4.6, h: 3.4 }, height: 0.8 },
-  { index: 9, biome: 'snow', position: { x: 0, y: 0, z: 4 }, size: { w: 4.6, h: 3.4 }, height: 0.88 }
+  { index: 0, biome: 'grass', position: { x: 0, y: 0, z: 0 }, size: { w: 18, h: 10 }, height: 0.2 }
 ]
 
 export const WORLD_MISSIONS: MissionNodeDef[] = [
@@ -42,8 +33,8 @@ export const WORLD_MISSIONS: MissionNodeDef[] = [
     levelId: 'level_1',
     name: 'Frontier Dawn',
     biome: 'grass',
-    tileIndex: 5,
-    position: { x: -3, y: 0.95, z: 0 },
+    tileIndex: 0,
+    position: { x: -5, y: 0.55, z: 0 },
     unlocks: ['iron_reprisal'],
     start: true,
     difficulty: 1,
@@ -54,8 +45,8 @@ export const WORLD_MISSIONS: MissionNodeDef[] = [
     levelId: 'level_2',
     name: 'Iron Reprisal',
     biome: 'desert',
-    tileIndex: 6,
-    position: { x: 2, y: 0.92, z: 0 },
+    tileIndex: 0,
+    position: { x: 0, y: 0.55, z: 0 },
     unlocks: ['last_rampart'],
     difficulty: 3,
     waves: 10
@@ -65,8 +56,8 @@ export const WORLD_MISSIONS: MissionNodeDef[] = [
     levelId: 'level_3',
     name: 'Last Rampart',
     biome: 'snow',
-    tileIndex: 8,
-    position: { x: -5, y: 1.05, z: 4 },
+    tileIndex: 0,
+    position: { x: 5, y: 0.55, z: 0 },
     unlocks: [],
     difficulty: 5,
     waves: 14
