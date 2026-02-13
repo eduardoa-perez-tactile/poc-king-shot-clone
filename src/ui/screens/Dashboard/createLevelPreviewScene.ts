@@ -66,6 +66,10 @@ const PAD_ALPHA = 0.72
 const OBSTACLE_HEIGHT = 16
 const SPAWN_MARKER_RADIUS = 18
 const CAMERA_PADDING = 96
+const GAMEPLAY_ISO_ALPHA = -Math.PI / 4
+const GAMEPLAY_ISO_BETA = 0.95532
+const LABEL_TEXTURE_WIDTH = 640
+const LABEL_TEXTURE_HEIGHT = 320
 
 const resolveOptions = (options?: LevelPreviewOptions): PreviewOptionsResolved => ({ ...DEFAULT_OPTIONS, ...options })
 
@@ -271,7 +275,7 @@ export const createLevelPreviewScene = ({ canvas, levelConfig, options }: Create
   const scene = new Scene(engine)
   scene.clearColor = new Color4(0.04, 0.07, 0.13, 1)
 
-  const camera = new ArcRotateCamera('level_preview_camera', -Math.PI / 4.6, 0.98, 260, new Vector3(0, 0, 0), scene)
+  const camera = new ArcRotateCamera('level_preview_camera', GAMEPLAY_ISO_ALPHA, GAMEPLAY_ISO_BETA, 260, new Vector3(0, 0, 0), scene)
   camera.mode = BabylonCamera.ORTHOGRAPHIC_CAMERA
   camera.minZ = 1
   camera.maxZ = 2200
@@ -346,7 +350,9 @@ export const createLevelPreviewScene = ({ canvas, levelConfig, options }: Create
     const cached = labelMaterialCache.get(text)
     if (cached) return cached
     const lines = text.split('\n').filter((entry) => entry.trim().length > 0)
-    const texture = trackTexture(new DynamicTexture(`preview_label_${labelMaterialCache.size}`, { width: 384, height: 192 }, scene, true))
+    const texture = trackTexture(
+      new DynamicTexture(`preview_label_${labelMaterialCache.size}`, { width: LABEL_TEXTURE_WIDTH, height: LABEL_TEXTURE_HEIGHT }, scene, true)
+    )
     texture.hasAlpha = true
     const size = texture.getSize()
     const ctx = texture.getContext()
@@ -360,8 +366,8 @@ export const createLevelPreviewScene = ({ canvas, levelConfig, options }: Create
     ctx.textBaseline = 'middle'
     lines.forEach((line, index) => {
       const y = size.height * ((index + 1) / (lines.length + 1))
-      ctx.font = "bold 38px 'Space Mono', monospace"
-      ctx.lineWidth = 6
+      ctx.font = "bold 56px 'Space Mono', monospace"
+      ctx.lineWidth = 8
       ctx.strokeStyle = '#020617'
       ctx.strokeText(line, size.width / 2, y)
       ctx.fillStyle = '#e2e8f0'
@@ -432,10 +438,10 @@ export const createLevelPreviewScene = ({ canvas, levelConfig, options }: Create
       const label = resolvePadLabel(pad, unlockLevel)
       const lines = label.split('\n')
       const maxChars = Math.max(...lines.map((line) => line.length))
-      const width = Math.max(30, maxChars * 2.5)
-      const height = Math.max(12, lines.length * 7)
+      const width = Math.max(PAD_SIZE.w * 1.65, maxChars * 6.8)
+      const height = Math.max(PAD_SIZE.h * 1.05, lines.length * 21)
       const mesh = trackMesh(MeshBuilder.CreatePlane(`preview_pad_label_${index}`, { width, height }, scene))
-      mesh.position = new Vector3(pad.x, PAD_HEIGHT + 12, pad.y)
+      mesh.position = new Vector3(pad.x, PAD_HEIGHT + 16, pad.y)
       mesh.billboardMode = Mesh.BILLBOARDMODE_ALL
       mesh.material = createLabelMaterial(label)
       expanded = expandBounds(expanded, pad.x, pad.y, width * 0.5, height * 0.5)
