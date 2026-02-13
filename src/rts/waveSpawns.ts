@@ -1,4 +1,5 @@
 import type { SpawnEdge, SpawnEdgeConfig } from '../config/levels'
+import type { EnemyTraitId } from '../config/nightContent'
 import type { CombatDefinition, CombatWave, NextBattlePreview, SpawnTransform, Vec2 } from './types'
 import { inferSpawnEdgeFromPoint, resolveSpawnTransforms } from './spawnResolver'
 
@@ -72,13 +73,49 @@ const pushDistinct = (target: string[], value: string) => {
 export const buildNextBattlePreview = (waves: CombatWave[], map: CombatDefinition['map']): NextBattlePreview => {
   const previewEdges: SpawnEdge[] = []
   const previewEnemyTypesDistinct: string[] = []
+  const previewTraitIdsDistinct: EnemyTraitId[] = []
+  const previewWaves: NextBattlePreview['previewWaves'] = []
   const previewSpawnTransforms: SpawnTransform[] = []
   const seenTransforms = new Set<string>()
   const legacy = getLegacySpawnTransform(map)
+  let hasEliteVariantWarning = false
 
   waves.forEach((wave) => {
+    const waveEnemyTypes: string[] = []
+    const waveTraitIds: EnemyTraitId[] = []
+    const waveEdges: SpawnEdge[] = []
+    const waveHasElite = Boolean(
+      wave.plannedSpawns?.some((spawn) => spawn.isEliteVariant) ||
+      (typeof wave.eliteChance === 'number' && wave.eliteChance > 0) ||
+      wave.groups?.some((group) => (group.eliteChance ?? 0) > 0)
+    )
+    if (waveHasElite) hasEliteVariantWarning = true
     wave.units.forEach((unit) => pushDistinct(previewEnemyTypesDistinct, unit.type))
+    wave.units.forEach((unit) => pushDistinct(waveEnemyTypes, unit.type))
     if (wave.elite) pushDistinct(previewEnemyTypesDistinct, wave.elite)
+
+    wave.traits?.forEach((traitId) => {
+      pushDistinct(previewTraitIdsDistinct, traitId)
+      pushDistinct(waveTraitIds, traitId)
+    })
+    wave.groups?.forEach((group) => {
+      pushDistinct(previewEnemyTypesDistinct, group.enemyTypeId)
+      pushDistinct(waveEnemyTypes, group.enemyTypeId)
+      group.traits?.forEach((traitId) => {
+        pushDistinct(previewTraitIdsDistinct, traitId)
+        pushDistinct(waveTraitIds, traitId)
+      })
+      if ((group.eliteChance ?? 0) > 0) hasEliteVariantWarning = true
+    })
+    wave.plannedSpawns?.forEach((spawn) => {
+      pushDistinct(previewEnemyTypesDistinct, spawn.enemyTypeId)
+      pushDistinct(waveEnemyTypes, spawn.enemyTypeId)
+      spawn.traits.forEach((traitId) => {
+        pushDistinct(previewTraitIdsDistinct, traitId)
+        pushDistinct(waveTraitIds, traitId)
+      })
+      if (spawn.isEliteVariant) hasEliteVariantWarning = true
+    })
 
     const transforms = wave.resolvedSpawnTransforms && wave.resolvedSpawnTransforms.length > 0
       ? wave.resolvedSpawnTransforms
@@ -86,10 +123,19 @@ export const buildNextBattlePreview = (waves: CombatWave[], map: CombatDefinitio
 
     transforms.forEach((transform) => {
       pushDistinct(previewEdges, transform.edge)
+      pushDistinct(waveEdges, transform.edge)
       const key = `${transform.edge}:${Math.round(transform.position.x)}:${Math.round(transform.position.y)}`
       if (seenTransforms.has(key)) return
       seenTransforms.add(key)
       previewSpawnTransforms.push(transform)
+    })
+
+    previewWaves.push({
+      id: wave.id,
+      enemyTypes: waveEnemyTypes,
+      traitIds: waveTraitIds,
+      hasEliteVariant: waveHasElite,
+      spawnEdges: waveEdges.length > 0 ? waveEdges : [legacy.edge]
     })
   })
 
@@ -99,6 +145,9 @@ export const buildNextBattlePreview = (waves: CombatWave[], map: CombatDefinitio
   return {
     previewEdges,
     previewEnemyTypesDistinct,
+    previewTraitIdsDistinct,
+    previewWaves,
+    hasEliteVariantWarning,
     previewSpawnTransforms
   }
 }

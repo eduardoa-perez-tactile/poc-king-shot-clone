@@ -1,6 +1,8 @@
 import { BuildingId } from '../config/buildings'
+import { EnemyTraitId, NightModifierId, PerkId } from '../config/nightContent'
 import { HeroRecruitId } from '../config/heroes'
 import { UnitType } from '../config/units'
+import { SpawnEdge, SpawnEdgeConfig, SpawnPointCount } from '../config/levels'
 
 export type RunPhase = 'build' | 'battle_cry' | 'combat' | 'day_end' | 'win' | 'lose'
 
@@ -47,8 +49,55 @@ export interface IncomeBreakdown {
   buildingTotal: number
 }
 
+export interface NightPlanSpawn {
+  enemyTypeId: UnitType
+  squadSize?: number
+  traits: EnemyTraitId[]
+  isEliteVariant: boolean
+  eliteRoll: number
+}
+
+export interface NightPlanWave {
+  id: string
+  spawnTimeSec?: number
+  spawnEdges?: SpawnEdgeConfig[]
+  spawnPointsPerEdge?: SpawnPointCount
+  spawnPadding?: number
+  spawnSeed: string
+  spawns: NightPlanSpawn[]
+  legacyEliteId?: string
+  legacyEliteCount?: number
+}
+
+export interface NextNightIntelWave {
+  id: string
+  spawnEdges: SpawnEdge[]
+  enemyTypes: string[]
+  traits: EnemyTraitId[]
+  hasEliteVariant: boolean
+}
+
+export interface NightPlan {
+  nightIndex: number
+  rewardMultiplierPreview: number
+  spawnEdges: SpawnEdge[]
+  enemyTypesDistinct: string[]
+  traitIdsDistinct: EnemyTraitId[]
+  hasEliteWarning: boolean
+  waves: NightPlanWave[]
+  intel: NextNightIntelWave[]
+}
+
+export interface RunDebugOverrides {
+  forceNightModifierId?: NightModifierId
+  forcePerkId?: PerkId
+  forceEnemyTraitId?: EnemyTraitId
+  forceEliteVariant?: boolean
+}
+
 export interface RunState {
   levelId: string
+  runSeed: number
   dayNumber: number
   daysSurvived: number
   gold: number
@@ -65,6 +114,10 @@ export interface RunState {
   hqHpByDay: Record<number, number>
   lastIncome?: IncomeBreakdown
   difficultyScaling?: number
+  activeNightModifier?: NightModifierId
+  perks: Record<PerkId, { stacks: number }>
+  nextNightPlan?: NightPlan
+  debugOverrides?: RunDebugOverrides
 }
 
 export interface MetaState {

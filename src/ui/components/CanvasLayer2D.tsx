@@ -488,6 +488,8 @@ export const CanvasLayer2D = React.memo(
                 if (wave?.elite) {
                   const message = wave.elite === 'boss' ? 'BOSS WAVE!' : 'Mini Boss Approaching!'
                   onEliteWarningRef.current?.(message)
+                } else if (wave?.plannedSpawns?.some((spawn) => spawn.isEliteVariant)) {
+                  onEliteWarningRef.current?.('Elite variants incoming!')
                 }
               }
               lastWaveIndexRef.current = next.waveIndex

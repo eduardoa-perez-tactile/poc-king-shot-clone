@@ -1,13 +1,16 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { getLevelById, getLevels } from '../config/levels'
+import { EnemyTraitId, NightModifierId, PerkId } from '../config/nightContent'
 import { HERO_RECRUIT_DEFS, HeroRecruitId } from '../config/heroes'
 import { UnitType } from '../config/units'
 import { isBuildingAllowedOnPad } from '../game/rules/progression'
 import { loadSave, saveGame, clearSave } from '../storage/runSave'
-import { getBuildingPurchaseCost, getBuildingUpgradeCost, getUnitCost } from './economy'
+import { getBuildingPurchaseCost, getUnitCost } from './economy'
 import {
   addBuilding,
   applyDayEndRewards,
+  applyNightGoldStartPenalty,
+  applyPerkSelection,
   areGoalsComplete,
   buySquad,
   canBuildBuilding,
@@ -16,6 +19,7 @@ import {
   canUpgradeStronghold,
   createInitialMeta,
   createRunState,
+  getBuildingUpgradeCostForRun,
   getBuildingUnlockLevelForLevel,
   getPadUnlockLevelForRunLevel,
   getRunLevel,
@@ -27,6 +31,8 @@ import {
   respawnDestroyedWallsAtDayStart,
   resetBuildingPurchaseCounts,
   resetBuildingHp,
+  setActiveNightModifier,
+  setNextNightPlan,
   summonHero,
   upgradeStronghold,
   upgradeBuilding
@@ -35,6 +41,7 @@ import { getBuildingMaxHp } from './economy'
 import { MetaState, RunPhase, RunState } from './types'
 import { BuildingId } from '../config/buildings'
 import type { PlayerPositionSnapshot } from '../rts/types'
+import { deriveSeed } from './rng'
 
 export interface CombatOutcome {
   victory: boolean
@@ -60,7 +67,11 @@ interface RunStore {
   summonHero: (heroId: HeroRecruitId, spawnPos?: { x: number; y: number }, spawnPadId?: string) => void
   upgradeStronghold: () => void
   startCombat: () => void
+  startCombatWithNightModifier: (modifierId?: NightModifierId) => void
   resolveCombat: (outcome: CombatOutcome) => void
+  selectPerk: (perkId: PerkId) => void
+  rerollRunSeed: () => void
+  setDebugOverrides: (overrides: { forceNightModifierId?: NightModifierId; forcePerkId?: PerkId; forceEnemyTraitId?: EnemyTraitId; forceEliteVariant?: boolean }) => void
   startNewDay: () => void
   unlockLevel: (levelId: string) => void
   clearAll: () => void
@@ -139,28 +150,28 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       { ...addBuilding(activeRun, id, padId), gold: activeRun.gold - cost },
       level
     )
-    setActiveRun(next)
+    setActiveRun(setNextNightPlan(next, level))
   }
 
   const upgradeBuildingAction = (padId: string) => {
     if (!activeRun || runPhase !== 'build') return
     const current = activeRun.buildings.find((building) => building.padId === padId)
     if (!current) return
-    const cost = getBuildingUpgradeCost(current.id, current.level + 1)
+    const cost = getBuildingUpgradeCostForRun(activeRun, padId)
     if (activeRun.gold < cost) return
     if (!canUpgradeBuilding(activeRun, padId)) return
     const next = recomputeGoalsProgress(
       { ...upgradeBuilding(activeRun, padId), gold: activeRun.gold - cost },
       getRunLevel(activeRun)
     )
-    setActiveRun(next)
+    setActiveRun(setNextNightPlan(next, getRunLevel(activeRun)))
   }
 
   const upgradeStrongholdAction = () => {
     if (!activeRun || runPhase !== 'build') return
     if (!canUpgradeStronghold(activeRun)) return
     const next = recomputeGoalsProgress(upgradeStronghold(activeRun), getRunLevel(activeRun))
-    setActiveRun(next)
+    setActiveRun(setNextNightPlan(next, getRunLevel(activeRun)))
   }
 
   const buySquadAction = (type: UnitType, spawnPos?: { x: number; y: number }, spawnPadId?: string) => {
@@ -171,7 +182,7 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       { ...buySquad(activeRun, type, spawnPos, spawnPadId), gold: activeRun.gold - cost },
       getRunLevel(activeRun)
     )
-    setActiveRun(next)
+    setActiveRun(setNextNightPlan(next, getRunLevel(activeRun)))
   }
 
   const summonHeroAction = (heroId: HeroRecruitId, spawnPos?: { x: number; y: number }, spawnPadId?: string) => {
@@ -185,11 +196,32 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       { ...updated, gold: activeRun.gold - def.cost },
       getRunLevel(activeRun)
     )
-    setActiveRun(next)
+    setActiveRun(setNextNightPlan(next, getRunLevel(activeRun)))
   }
 
   const startCombat = () => {
     if (!activeRun || runPhase !== 'build') return
+    const level = getRunLevel(activeRun)
+    const withPenalty = applyNightGoldStartPenalty(activeRun, level)
+    const planned = setNextNightPlan(withPenalty, level)
+    setActiveRun(planned)
+    setRunPhase('battle_cry')
+    if (battleCryTimeoutRef.current) {
+      window.clearTimeout(battleCryTimeoutRef.current)
+    }
+    battleCryTimeoutRef.current = window.setTimeout(() => {
+      setRunPhase((phase) => (phase === 'battle_cry' ? 'combat' : phase))
+      battleCryTimeoutRef.current = null
+    }, 450)
+  }
+
+  const startCombatWithNightModifier = (modifierId?: NightModifierId) => {
+    if (!activeRun || runPhase !== 'build') return
+    const level = getRunLevel(activeRun)
+    const withModifier = setActiveNightModifier(activeRun, modifierId)
+    const withPenalty = applyNightGoldStartPenalty(withModifier, level)
+    const planned = setNextNightPlan(withPenalty, level)
+    setActiveRun(planned)
     setRunPhase('battle_cry')
     if (battleCryTimeoutRef.current) {
       window.clearTimeout(battleCryTimeoutRef.current)
@@ -228,7 +260,9 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const healedBuildings = outcome.victory ? resetBuildingHp(runWithDays) : runWithDays
     const wallsMarked = markDestroyedWallsForDay(healedBuildings, outcome.destroyedWallPadIds ?? [])
     const paid = outcome.victory ? applyDayEndRewards(wallsMarked, level) : { run: wallsMarked, breakdown: undefined }
-    const next = recomputeGoalsProgress(paid.run, level)
+    const cleared = { ...paid.run, activeNightModifier: undefined }
+    const withPlan = setNextNightPlan(cleared, level)
+    const next = recomputeGoalsProgress(withPlan, level)
     setActiveRun(next)
     setLastCombat(outcome)
     if (outcome.victory) {
@@ -273,8 +307,46 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       heroProgress: { hp: heroProgress.hp + growth.hp, attack: heroProgress.attack + growth.attack }
     }
     const withRespawnedWalls = respawnDestroyedWallsAtDayStart(next)
-    setActiveRun(resetBuildingPurchaseCounts(withRespawnedWalls))
+    const reset = resetBuildingPurchaseCounts(withRespawnedWalls)
+    setActiveRun(setNextNightPlan(reset, level))
     setRunPhase('build')
+  }
+
+  const selectPerkAction = (perkId: PerkId) => {
+    if (!activeRun || runPhase !== 'day_end') return
+    const level = getRunLevel(activeRun)
+    const withPerk = applyPerkSelection(activeRun, level, perkId)
+    setActiveRun(setNextNightPlan(withPerk, level))
+  }
+
+  const rerollRunSeed = () => {
+    if (!activeRun) return
+    const level = getRunLevel(activeRun)
+    const nextSeed = deriveSeed(activeRun.runSeed, 'reroll', Date.now(), activeRun.dayNumber)
+    const next = setNextNightPlan({ ...activeRun, runSeed: nextSeed >>> 0 }, level)
+    setActiveRun(next)
+  }
+
+  const setDebugOverridesAction = (overrides: {
+    forceNightModifierId?: NightModifierId
+    forcePerkId?: PerkId
+    forceEnemyTraitId?: EnemyTraitId
+    forceEliteVariant?: boolean
+  }) => {
+    if (!activeRun) return
+    const level = getRunLevel(activeRun)
+    const merged = {
+      ...(activeRun.debugOverrides ?? {}),
+      ...overrides
+    }
+    const next = setNextNightPlan(
+      {
+        ...activeRun,
+        debugOverrides: merged
+      },
+      level
+    )
+    setActiveRun(next)
   }
 
   const unlockLevel = (levelId: string) => {
@@ -307,7 +379,11 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     summonHero: summonHeroAction,
     upgradeStronghold: upgradeStrongholdAction,
     startCombat,
+    startCombatWithNightModifier,
     resolveCombat,
+    selectPerk: selectPerkAction,
+    rerollRunSeed,
+    setDebugOverrides: setDebugOverridesAction,
     startNewDay,
     unlockLevel,
     clearAll
@@ -391,5 +467,22 @@ const normalizeRun = (run: RunState | null): RunState | null => {
   }, 1)
   const strongholdLevel = Math.min(getStrongholdMaxLevelForLevel(level), Math.max(run.strongholdLevel ?? 1, minStronghold))
   const strongholdUpgradeInProgress = run.strongholdUpgradeInProgress ?? null
-  return { ...run, buildings, unitRoster, heroProgress, heroRoster, strongholdLevel, strongholdUpgradeInProgress }
+  const runSeed = typeof run.runSeed === 'number' ? run.runSeed >>> 0 : (level.metadata.seed ?? deriveSeed(0x9e3779b9, run.levelId))
+  const normalized: RunState = {
+    ...run,
+    buildings,
+    unitRoster,
+    heroProgress,
+    heroRoster,
+    strongholdLevel,
+    strongholdUpgradeInProgress,
+    runSeed,
+    perks: run.perks ?? {},
+    activeNightModifier: run.activeNightModifier,
+    debugOverrides: run.debugOverrides ?? {}
+  }
+  if (!normalized.nextNightPlan || normalized.nextNightPlan.nightIndex !== normalized.dayNumber) {
+    return setNextNightPlan(normalized, level)
+  }
+  return normalized
 }

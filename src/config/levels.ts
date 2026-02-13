@@ -23,6 +23,13 @@ export type {
   LevelGoal,
   LevelMetadata,
   LevelModifiers,
+  NightModifierDef,
+  NightModifierId,
+  PerkDef,
+  PerkId,
+  EnemyTraitDef,
+  EnemyTraitId,
+  EliteConfig,
   LevelStrongholdTuning,
   LevelValidationIssue,
   LevelValidationResult,
@@ -631,6 +638,10 @@ export const getDayPlan = (level: LevelDefinition, dayNumber: number): DayPlan =
       units: wave.units.map((unit) => ({
         ...unit,
         squads: Math.max(1, Math.round(unit.squads * scale))
+      })),
+      groups: wave.groups?.map((group) => ({
+        ...group,
+        count: Math.max(1, Math.round(group.count * scale))
       }))
     }))
   }

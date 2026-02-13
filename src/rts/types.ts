@@ -1,4 +1,5 @@
 import { HeroRuntime, SpawnEdge, SpawnEdgeConfig, SpawnPointCount } from '../config/levels'
+import { EliteConfig, EnemyTraitDef, EnemyTraitId } from '../config/nightContent'
 import { EliteId } from '../config/elites'
 import { HeroRecruitId } from '../config/heroes'
 import { UnitType } from '../config/units'
@@ -73,6 +74,12 @@ export interface EntityState {
   structureSize?: { w: number; h: number }
   projectileSpeed?: number
   projectileType?: string
+  enemyTraits?: EnemyTraitId[]
+  rangedDamageTakenMultiplier?: number
+  onDeathExplosion?: { radius: number; damage: number }
+  targetingPriority?: 'DEFAULT' | 'TOWERS_FIRST'
+  ignoresWalls?: boolean
+  eliteVariant?: boolean
 }
 
 export interface PlayerPositionSnapshot {
@@ -108,6 +115,23 @@ export interface SpawnTransform {
 export interface CombatWave {
   id: string
   units: WaveUnitGroup[]
+  traits?: EnemyTraitId[]
+  eliteChance?: number
+  groups?: Array<{
+    enemyTypeId: UnitType
+    count: number
+    squadSize?: number
+    traits?: EnemyTraitId[]
+    eliteChance?: number
+  }>
+  plannedSpawns?: Array<{
+    enemyTypeId: UnitType
+    squadSize?: number
+    traits: EnemyTraitId[]
+    isEliteVariant: boolean
+    eliteRoll: number
+  }>
+  spawnSeed?: string
   spawnTimeSec?: number
   elite?: EliteId
   eliteCount?: number
@@ -120,12 +144,26 @@ export interface CombatWave {
 export interface NextBattlePreview {
   previewEdges: SpawnEdge[]
   previewEnemyTypesDistinct: string[]
+  previewTraitIdsDistinct: EnemyTraitId[]
+  previewWaves: Array<{
+    id: string
+    enemyTypes: string[]
+    traitIds: EnemyTraitId[]
+    hasEliteVariant: boolean
+    spawnEdges: SpawnEdge[]
+  }>
+  hasEliteVariantWarning: boolean
   previewSpawnTransforms: SpawnTransform[]
 }
 
 export interface CombatDefinition {
   dayNumber: number
+  runSeed: number
   hero: HeroRuntime
+  towersDisabled?: boolean
+  nightIndex?: number
+  enemyTraitDefs?: EnemyTraitDef[]
+  eliteConfig?: EliteConfig
   map: {
     width: number
     height: number
@@ -140,6 +178,7 @@ export interface CombatDefinition {
   enemyModifiers: {
     hpMultiplier: number
     attackMultiplier: number
+    moveSpeedMultiplier?: number
   }
   hqBaseHp: number
   nextBattlePreview?: NextBattlePreview
