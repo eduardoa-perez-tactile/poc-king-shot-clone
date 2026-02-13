@@ -1,23 +1,26 @@
 import React, { useState } from 'react'
 import { useRunStore } from '../run/store'
 import { MainMenu } from './components/MainMenu'
-import { LevelSelect } from './components/LevelSelect'
+import { WorldMapMissionSelect } from './components/WorldMapMissionSelect'
 import { LevelRun } from './components/LevelRun'
 import { WinScreen } from './components/WinScreen'
 import { LoseScreen } from './components/LoseScreen'
 import { Dashboard } from './screens/Dashboard/Dashboard'
 import { clearPlaytestLevel, isPlaytestReturnEnabled, setPlaytestLevel } from '../game/runtime/playtest'
 import { validateLevelDefinition } from '../game/types/LevelDefinition'
+import { WORLD_MISSIONS } from './worldMapData'
+import { applyMissionResult, clearWorldProgression, loadWorldProgression, saveWorldProgression } from './worldProgression'
 
-type Scene = 'mainMenu' | 'levelSelect' | 'dashboard' | 'run'
+type Scene = 'mainMenu' | 'worldMap' | 'dashboard' | 'run'
 
 export const App: React.FC = () => {
   const [scene, setScene] = useState<Scene>('mainMenu')
+  const [currentMissionId, setCurrentMissionId] = useState<string | null>(null)
   const [runSource, setRunSource] = useState<'normal' | 'dashboard'>('normal')
   const { activeRun, runPhase, startRun, abandonRun, retryRun, clearAll } = useRunStore()
   const dashboardEnabled = import.meta.env.DEV || new URLSearchParams(window.location.search).get('dev') === '1'
 
-  const handlePlay = () => setScene('levelSelect')
+  const handlePlay = () => setScene('worldMap')
   const handleContinue = () => {
     if (!activeRun) return
     setRunSource(isPlaytestReturnEnabled() ? 'dashboard' : 'normal')
@@ -26,6 +29,26 @@ export const App: React.FC = () => {
   const handleReset = () => {
     clearPlaytestLevel()
     clearAll()
+    clearWorldProgression()
+    setCurrentMissionId(null)
+  }
+
+  const returnToWorldMap = (completed: boolean) => {
+    if (activeRun && runSource === 'normal') {
+      const missionId = currentMissionId ?? WORLD_MISSIONS.find((mission) => mission.levelId === activeRun.levelId)?.id
+      if (missionId) {
+        const nextProgression = applyMissionResult(loadWorldProgression(), WORLD_MISSIONS, {
+          missionId,
+          completed,
+          score: activeRun.daysSurvived
+        })
+        saveWorldProgression(nextProgression)
+      }
+    }
+
+    abandonRun()
+    setCurrentMissionId(null)
+    setScene('worldMap')
   }
 
   if (scene === 'mainMenu') {
@@ -50,6 +73,7 @@ export const App: React.FC = () => {
           if (!validation.isValid && !force) return
           setPlaytestLevel(level, true)
           setRunSource('dashboard')
+          setCurrentMissionId(null)
           startRun(level.id)
           setScene('run')
         }}
@@ -57,13 +81,14 @@ export const App: React.FC = () => {
     )
   }
 
-  if (scene === 'levelSelect') {
+  if (scene === 'worldMap') {
     return (
-      <LevelSelect
+      <WorldMapMissionSelect
         onBack={() => setScene('mainMenu')}
-        onStart={(levelId) => {
+        onStart={(missionId, levelId) => {
           clearPlaytestLevel()
           setRunSource('normal')
+          setCurrentMissionId(missionId)
           startRun(levelId)
           setScene('run')
         }}
@@ -88,13 +113,14 @@ export const App: React.FC = () => {
     return (
       <WinScreen
         onLevelSelect={() => {
-          abandonRun()
           if (runSource === 'dashboard') {
             clearPlaytestLevel()
+            setCurrentMissionId(null)
+            abandonRun()
             setScene('dashboard')
             return
           }
-          setScene('levelSelect')
+          returnToWorldMap(true)
         }}
       />
     )
@@ -108,13 +134,14 @@ export const App: React.FC = () => {
           setScene('run')
         }}
         onLevelSelect={() => {
-          abandonRun()
           if (runSource === 'dashboard') {
             clearPlaytestLevel()
+            setCurrentMissionId(null)
+            abandonRun()
             setScene('dashboard')
             return
           }
-          setScene('levelSelect')
+          returnToWorldMap(false)
         }}
       />
     )
@@ -125,13 +152,15 @@ export const App: React.FC = () => {
       onExit={() => {
         clearPlaytestLevel()
         setRunSource('normal')
+        setCurrentMissionId(null)
         abandonRun()
-        setScene('levelSelect')
+        setScene('worldMap')
       }}
       onBackToDashboard={
         runSource === 'dashboard'
           ? () => {
               clearPlaytestLevel()
+              setCurrentMissionId(null)
               abandonRun()
               setScene('dashboard')
             }

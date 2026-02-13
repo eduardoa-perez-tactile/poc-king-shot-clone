@@ -1,0 +1,106 @@
+You are implementing the MISSION SELECT “WORLD MAP” flow for our Kingshot-like game (Babylon.js 3D scene + React UI overlay). This is NOT the in-mission battle map. Build a minimal Thronefall-inspired world map: a 3D diorama board with clickable mission nodes, unlock progression, and a mission details panel.
+
+TECH / ARCHITECTURE
+- Engine: Babylon.js (orthographic RTS camera style is fine) for the 3D world map scene.
+- UI: React overlay for panels/buttons/text. NO per-frame React rerenders.
+- Input: Babylon raycast picking for nodes/regions; forward picked node id to UI state.
+- Performance: reuse meshes/materials, thin instances for tiles, no heavy geometry.
+- Add a new scene/state: WorldMapScene (Mission Select).
+
+USER FLOW
+Main Menu -> “Missions” -> WorldMapScene -> click mission node -> details panel -> Start Mission -> loads MapScene for that mission.
+
+WORLD MAP VISUAL (MINIMAL DIORAMA)
+- Create a board composed of 9–12 large “region tiles” (rectangles or hexes; rectangles are fine).
+- Each tile has a simple biome color/material (e.g., grass, desert, snow, swamp) + optional small decal/label.
+- Tiles are arranged in a readable grid/cluster (not a flat UI image; it is a 3D scene).
+- Optional: subtle height variance per biome tile (±0.1–0.3 units) for diorama feel, but keep it simple.
+
+MISSION NODES
+- Each mission corresponds to exactly one node placed on a tile.
+- Node visuals: simple cylinder/sphere + billboard label (mission name) + state indicator ring.
+- Node states:
+  - LOCKED: greyed material, not clickable (or click shows “Locked”).
+  - AVAILABLE: normal bright material, clickable.
+  - COMPLETED: distinct material + small badge/star icon mesh; store best score if available.
+- Implement a “king marker” token (small cone/capsule) that moves (lerp) to the last selected mission node position (cosmetic only).
+
+PROGRESSION / UNLOCKING (MINIMAL)
+- Store world progression in a save object (localStorage is fine):
+  - completedMissionIds: string[]
+  - bestScoreByMissionId: Record<string, number>
+- Each mission has unlock rules via adjacency graph:
+  - mission.unlocks: string[]
+- Initial available missions: those with no prerequisites OR explicitly flagged start=true.
+- When a mission is completed in MapScene, return to WorldMapScene and:
+  - mark it completed
+  - unlock missions in its unlock list
+  - persist save
+
+DATA MODEL
+Create a static mission list (JSON or TS module), e.g.:
+type MissionNodeDef = {
+  id: string
+  name: string
+  biome: "grass"|"desert"|"snow"|"swamp"
+  tileIndex: number
+  position: { x:number, y:number, z:number } // on board
+  unlocks: string[]
+  difficulty: 1|2|3|4|5
+  waves: number
+}
+Also create tiles:
+type WorldTileDef = { index:number, biome:string, position:{x,y,z}, size:{w,h}, height:number }
+
+BABYLON IMPLEMENTATION DETAILS
+- WorldMapScene creates:
+  - ground/board root
+  - thin-instanced tiles meshes (or instanced boxes) using a few shared materials by biome
+  - mission node meshes (one per mission)
+  - billboard GUI (Babylon GUI or custom plane+dynamic texture) for mission labels; keep cheap
+  - king marker mesh
+- Picking:
+  - On pointer down, pick mission node meshes; identify mission id via metadata.
+  - If AVAILABLE/COMPLETED -> set selectedMissionId.
+  - If LOCKED -> show locked message in UI panel.
+- Camera:
+  - Simple ortho camera angled down; allow pan/zoom with mouse (no rotation needed).
+  - Clamp zoom and pan within board bounds.
+
+REACT UI OVERLAY (MISSION DETAILS PANEL)
+- Right-side panel that updates only on selection changes:
+  - Mission name
+  - Difficulty (stars or number)
+  - Waves count
+  - State (Locked/Available/Completed)
+  - Best score if completed
+  - Buttons:
+    - Start (enabled only if AVAILABLE or COMPLETED)
+    - Back to Main Menu
+- If mission is locked, show “Complete X to unlock” if prerequisites exist (derive from graph if you store prerequisites; otherwise just “Locked”).
+
+INTEGRATION WITH EXISTING FLOW
+- Add routing/state machine entry for WorldMapScene.
+- On Start:
+  - set currentMissionId and load MapScene with that mission’s level data.
+- On return from MapScene:
+  - pass mission result (completed:boolean, score:number) back to world map controller to update save/unlocks.
+
+QUALITY / UX
+- Clear state readability:
+  - Locked nodes: dim + padlock icon (simple mesh or text)
+  - Available nodes: bright + pulsing emissive (optional)
+  - Completed nodes: gold tint + star badge
+- Add hover highlight on node (outline or scale up slightly).
+
+DELIVERABLES
+1) WorldMapScene.ts: creates tiles, nodes, marker, camera, picking.
+2) worldMapData.ts: tiles + missions definitions.
+3) worldProgression.ts: load/save progression; compute node states.
+4) MissionSelectPanel.tsx: React UI overlay for selected mission.
+5) GameState integration: MainMenu button -> WorldMapScene; Start -> MapScene; Return -> update progression.
+
+CONSTRAINTS
+- Do not introduce heavy assets. Use primitives.
+- No per-frame React rerenders. Update UI only on selection/progression changes.
+- Keep code modular and readable.
