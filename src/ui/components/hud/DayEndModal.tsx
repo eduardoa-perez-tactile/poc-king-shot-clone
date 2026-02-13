@@ -13,8 +13,9 @@ export const DayEndModal: React.FC<{
   progressLabel: string
   progressValue: number
   progressTarget: number
+  ctaLabel?: string
   onNextDay: () => void
-}> = ({ dayNumber, breakdown, progressLabel, progressValue, progressTarget, onNextDay }) => {
+}> = ({ dayNumber, breakdown, progressLabel, progressValue, progressTarget, ctaLabel, onNextDay }) => {
   const reduceMotion = useMotionSettings()
   return (
     <motion.div
@@ -69,7 +70,7 @@ export const DayEndModal: React.FC<{
         </div>
         <div className="mt-6 flex justify-end">
           <Button variant="primary" size="lg" onClick={onNextDay}>
-            Start Next Day
+            {ctaLabel ?? 'Start Next Day'}
           </Button>
         </div>
       </motion.div>

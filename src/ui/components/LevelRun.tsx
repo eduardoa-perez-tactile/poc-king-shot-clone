@@ -60,6 +60,7 @@ const SQUAD_SPAWN_OFFSETS = [
   { x: 0, y: 80 },
   { x: 90, y: 70 }
 ]
+const DAY_END_TO_PERK_TRANSITION_MS = 180
 
 const describeEffects = (id: BuildingId) => {
   const def = BUILDING_DEFS[id]
@@ -116,6 +117,8 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
   const [intelOpen, setIntelOpen] = useState(false)
   const [nightSetupOpen, setNightSetupOpen] = useState(false)
   const [resolvedPerkDay, setResolvedPerkDay] = useState<number | null>(null)
+  const [perkModalStage, setPerkModalStage] = useState<'idle' | 'handoff' | 'open'>('idle')
+  const perkHandoffTimeoutRef = useRef<number | null>(null)
   const canvasRef = useRef<CanvasHandle | null>(null)
   const isMobile = useMediaQuery('(max-width: 639px)')
 
@@ -206,6 +209,8 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
     perkOffers.length > 0 &&
     perkCount < perkMaxCount &&
     resolvedPerkDay !== activeRun.dayNumber
+  const dayEndModalVisible = runPhase === 'day_end' && (perkModalStage === 'idle' || !perkChoicePending)
+  const perkModalVisible = perkChoicePending && perkModalStage === 'open'
 
   const buildingByPad = useMemo(() => {
     return new Map(
@@ -255,6 +260,31 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
   useEffect(() => {
     setResolvedPerkDay(null)
   }, [activeRun.dayNumber])
+
+  useEffect(() => {
+    if (runPhase !== 'day_end') {
+      if (perkHandoffTimeoutRef.current) {
+        window.clearTimeout(perkHandoffTimeoutRef.current)
+        perkHandoffTimeoutRef.current = null
+      }
+      setPerkModalStage('idle')
+      return
+    }
+    if (!perkChoicePending) {
+      if (perkHandoffTimeoutRef.current) {
+        window.clearTimeout(perkHandoffTimeoutRef.current)
+        perkHandoffTimeoutRef.current = null
+      }
+      setPerkModalStage('idle')
+    }
+  }, [perkChoicePending, runPhase])
+
+  useEffect(() => () => {
+    if (perkHandoffTimeoutRef.current) {
+      window.clearTimeout(perkHandoffTimeoutRef.current)
+      perkHandoffTimeoutRef.current = null
+    }
+  }, [])
 
   const addToast = useCallback((message: string, variant: 'default' | 'danger' | 'success' = 'default') => {
     uiActions.pushToast({ message, variant, duration: 2400 })
@@ -828,11 +858,23 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
 
   const handleStartNextDay = useCallback(() => {
     if (perkChoicePending) {
-      addToast('Choose a perk before starting the next day.', 'default')
+      if (perkModalStage !== 'idle') return
+      setPerkModalStage('handoff')
+      if (reduceMotion) {
+        setPerkModalStage('open')
+        return
+      }
+      if (perkHandoffTimeoutRef.current) {
+        window.clearTimeout(perkHandoffTimeoutRef.current)
+      }
+      perkHandoffTimeoutRef.current = window.setTimeout(() => {
+        perkHandoffTimeoutRef.current = null
+        setPerkModalStage('open')
+      }, DAY_END_TO_PERK_TRANSITION_MS)
       return
     }
     startNewDay()
-  }, [addToast, perkChoicePending, startNewDay])
+  }, [perkChoicePending, perkModalStage, reduceMotion, startNewDay])
 
   const handleComplete = useCallback((result: CombatResult) => {
     resolveCombat({
@@ -1051,16 +1093,19 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
         </div>
       </div>
 
-      {runPhase === 'day_end' && (
-        <DayEndModal
-          dayNumber={activeRun.dayNumber}
-          breakdown={dayIncome}
-          progressLabel={goal?.label ?? 'Mission progress'}
-          progressValue={progressValue}
-          progressTarget={progressTarget}
-          onNextDay={handleStartNextDay}
-        />
-      )}
+      <AnimatePresence>
+        {dayEndModalVisible && (
+          <DayEndModal
+            dayNumber={activeRun.dayNumber}
+            breakdown={dayIncome}
+            progressLabel={goal?.label ?? 'Mission progress'}
+            progressValue={progressValue}
+            progressTarget={progressTarget}
+            ctaLabel={perkChoicePending ? 'Continue to Perk Choice' : 'Start Next Day'}
+            onNextDay={handleStartNextDay}
+          />
+        )}
+      </AnimatePresence>
 
       <NightSetupModal
         open={nightSetupOpen}
@@ -1073,7 +1118,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
       />
 
       <PerkChoiceModal
-        open={perkChoicePending}
+        open={perkModalVisible}
         dayNumber={activeRun.dayNumber}
         offers={perkOffers}
         perkCount={perkCount}
