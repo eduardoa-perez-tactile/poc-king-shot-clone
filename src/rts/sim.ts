@@ -188,6 +188,14 @@ const hashId = (id: string) => {
   return hash >>> 0
 }
 
+const getDefaultHudOffsetY = (radius: number, tier: EntityState['tier'], kind: EntityState['kind']) => {
+  if (kind === 'hero') return radius * 2.2
+  if (tier === 'boss') return radius * 2
+  if (tier === 'miniBoss') return radius * 1.9
+  if (kind === 'hq') return radius * 1.9
+  return radius * 1.7
+}
+
 const createTroopEntity = (
   type: UnitType,
   team: 'player' | 'enemy',
@@ -195,19 +203,23 @@ const createTroopEntity = (
   squadSize: number,
   multipliers: { hp: number; attack: number; attackSpeed?: number; moveSpeed?: number },
   squadId?: string,
-  options?: { ownerBuildingId?: string; ownerBuildingPadId?: string },
+  options?: { ownerBuildingId?: string; ownerBuildingPadId?: string; level?: number },
   tier: EntityState['tier'] = 'normal'
 ): EntityState => {
   const troop = UNIT_DEFS[type]
   const hp = troop.stats.hp * squadSize * multipliers.hp
   const attack = troop.stats.attack * squadSize * multipliers.attack
   const attackSpeed = Math.max(0.2, multipliers.attackSpeed ?? 1)
+  const radius = 14
   return {
     id: ENTITY_ID(),
     team,
     kind: type,
+    typeName: troop.name,
+    level: Math.max(1, Math.floor(options?.level ?? 1)),
     pos: { ...pos },
-    radius: 14,
+    radius,
+    hudOffsetY: getDefaultHudOffsetY(radius, tier, type),
     tier,
     idLabel: getIdLabel(type, tier),
     hp,
@@ -228,12 +240,15 @@ const createTroopEntity = (
   }
 }
 
-const createHQ = (pos: Vec2, hp: number): EntityState => ({
+const createHQ = (pos: Vec2, hp: number, level = 1): EntityState => ({
   id: ENTITY_ID(),
   team: 'player',
   kind: 'hq',
+  typeName: 'Stronghold',
+  level: Math.max(1, Math.floor(level)),
   pos: { ...pos },
   radius: 24,
+  hudOffsetY: getDefaultHudOffsetY(24, 'normal', 'hq'),
   tier: 'normal',
   idLabel: '',
   hp,
@@ -254,6 +269,7 @@ const createTowerEntity = (
   hp: number,
   options: {
     padId: string
+    level?: number
     range: number
     damage: number
     cooldown: number
@@ -264,8 +280,11 @@ const createTowerEntity = (
   id: ENTITY_ID(),
   team: 'player',
   kind: 'tower',
+  typeName: 'Watchtower',
+  level: Math.max(1, Math.floor(options.level ?? 1)),
   pos: { ...pos },
   radius: 20,
+  hudOffsetY: getDefaultHudOffsetY(20, 'normal', 'tower'),
   tier: 'normal',
   idLabel: getIdLabel('tower', 'normal'),
   hp,
@@ -291,6 +310,7 @@ const createWallEntity = (
   hp: number,
   options: {
     padId: string
+    level?: number
     width: number
     height: number
     rotation: number
@@ -300,12 +320,16 @@ const createWallEntity = (
   const isVertical = Math.abs(Math.sin(normalizedRotation)) > 0.707
   const width = isVertical ? options.height : options.width
   const height = isVertical ? options.width : options.height
+  const radius = Math.max(width, height) * 0.25
   return {
     id: ENTITY_ID(),
     team: 'player',
     kind: 'wall',
+    typeName: 'Wall',
+    level: Math.max(1, Math.floor(options.level ?? 1)),
     pos: { ...pos },
-    radius: Math.max(width, height) * 0.25,
+    radius,
+    hudOffsetY: getDefaultHudOffsetY(radius, 'normal', 'wall'),
     tier: 'normal',
     idLabel: getIdLabel('wall', 'normal'),
     hp,
@@ -333,36 +357,43 @@ const createHeroEntity = (
     heroName?: string
     heroDescription?: string
     heroInstanceId?: string
+    level?: number
     heroSpecial?: EntityState['heroSpecial']
     canFly?: boolean
     radius?: number
   }
-): EntityState => ({
-  id: ENTITY_ID(),
-  team: 'player',
-  kind: 'hero',
-  pos: { ...pos },
-  radius: options?.radius ?? 18,
-  tier: 'hero',
-  idLabel: getIdLabel('hero', 'hero'),
-  hp: stats.hp,
-  maxHp: stats.hp,
-  attack: stats.attack,
-  range: stats.range,
-  speed: stats.speed,
-  cooldown: stats.cooldown,
-  cooldownLeft: 0,
-  order: { type: 'stop' },
-  targetId: undefined,
-  path: [],
-  buffs: [],
-  heroId: options?.heroId,
-  heroName: options?.heroName,
-  heroDescription: options?.heroDescription,
-  heroInstanceId: options?.heroInstanceId,
-  heroSpecial: options?.heroSpecial,
-  canFly: options?.canFly
-})
+): EntityState => {
+  const radius = options?.radius ?? 18
+  return {
+    id: ENTITY_ID(),
+    team: 'player',
+    kind: 'hero',
+    typeName: options?.heroName ?? 'Hero',
+    level: Math.max(1, Math.floor(options?.level ?? 1)),
+    pos: { ...pos },
+    radius,
+    hudOffsetY: getDefaultHudOffsetY(radius, 'hero', 'hero'),
+    tier: 'hero',
+    idLabel: getIdLabel('hero', 'hero'),
+    hp: stats.hp,
+    maxHp: stats.hp,
+    attack: stats.attack,
+    range: stats.range,
+    speed: stats.speed,
+    cooldown: stats.cooldown,
+    cooldownLeft: 0,
+    order: { type: 'stop' },
+    targetId: undefined,
+    path: [],
+    buffs: [],
+    heroId: options?.heroId,
+    heroName: options?.heroName,
+    heroDescription: options?.heroDescription,
+    heroInstanceId: options?.heroInstanceId,
+    heroSpecial: options?.heroSpecial,
+    canFly: options?.canFly
+  }
+}
 
 const createEliteEntity = (
   eliteId: keyof typeof ELITE_DEFS,
@@ -378,8 +409,11 @@ const createEliteEntity = (
     id: ENTITY_ID(),
     team,
     kind: 'elite',
+    typeName: def.name,
+    level: tier === 'boss' ? 5 : 3,
     pos: { ...pos },
     radius: def.radius,
+    hudOffsetY: getDefaultHudOffsetY(def.radius, tier, 'elite'),
     tier,
     idLabel: getIdLabel('elite', tier),
     hp,
@@ -439,6 +473,7 @@ const applyEliteVariant = (entity: EntityState, combat: CombatDefinition) => {
   return {
     ...entity,
     eliteVariant: true,
+    level: Math.max(1, entity.level + 1),
     maxHp: nextMaxHp,
     hp: nextMaxHp,
     attack: entity.attack * config.damageMultiplier,
@@ -590,7 +625,7 @@ export const createSimState = (
 ): SimState => {
   const entities: EntityState[] = []
   const hqHp = combat.hqBaseHp + getHQBonusHp(run)
-  entities.push(createHQ(combat.map.playerHQ, hqHp))
+  entities.push(createHQ(combat.map.playerHQ, hqHp, run.strongholdLevel))
 
   const heroStats = combat.hero.stats
   const heroHp = options?.heroHp ?? heroStats.hp
@@ -630,8 +665,9 @@ export const createSimState = (
   const buffs = getBuffSnapshot(level, run)
   run.unitRoster.forEach((squad) => {
     const mult = statMultipliers[squad.type]
-    const ownerBuilding =
-      (squad.ownerBuildingPadId && run.buildings.find((building) => building.padId === squad.ownerBuildingPadId)) ?? null
+    const ownerBuilding = squad.ownerBuildingPadId
+      ? run.buildings.find((building) => building.padId === squad.ownerBuildingPadId) ?? null
+      : null
     const ownerBuildingId = squad.ownerBuildingId ?? ownerBuilding?.id
     const ownerBuildingLevel = squad.ownerBuildingLevel ?? ownerBuilding?.level ?? 1
     const producerMult =
@@ -656,7 +692,8 @@ export const createSimState = (
         squad.id,
         {
           ownerBuildingId,
-          ownerBuildingPadId: squad.ownerBuildingPadId
+          ownerBuildingPadId: squad.ownerBuildingPadId,
+          level: ownerBuildingLevel
         }
       )
     )
@@ -683,6 +720,7 @@ export const createSimState = (
           building.hp,
           {
             padId: pad.id,
+            level: building.level,
             range,
             damage,
             cooldown,
@@ -700,6 +738,7 @@ export const createSimState = (
           building.hp * buffs.wallHpMultiplier,
           {
             padId: pad.id,
+            level: building.level,
             width: WALL_FOOTPRINT.w,
             height: WALL_FOOTPRINT.h,
             rotation: pad.rotation ?? 0
