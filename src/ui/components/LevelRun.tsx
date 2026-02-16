@@ -1026,6 +1026,9 @@ export const LevelRun: React.FC<{
   }, [tutorialManager])
 
   const handleTutorialSkip = useCallback(() => {
+    const confirmed = window.confirm('Skip tutorial and return to mission select?')
+    if (!confirmed) return
+
     if (tutorialManager) {
       tutorialManager.skip()
     } else {
