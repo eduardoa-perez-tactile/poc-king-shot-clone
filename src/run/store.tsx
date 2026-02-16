@@ -232,6 +232,29 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }, 450)
   }
 
+  const completeLevel = (next: RunState, level = getRunLevel(next)) => {
+    setRunPhase('win')
+    setActiveRun(next)
+    setMeta((prev) => {
+      const completed = prev.completedLevels.includes(level.id)
+        ? prev.completedLevels
+        : [...prev.completedLevels, level.id]
+      const best = Math.max(prev.bestCompletion[level.id] ?? 0, next.daysSurvived)
+      let unlockedLevels = prev.unlockedLevels
+      const levelIndex = levelIndexById(level.id)
+      const nextLevel = levelIndex >= 0 ? getLevelByIndex(levelIndex + 1) : null
+      if (nextLevel && !unlockedLevels.includes(nextLevel.id)) {
+        unlockedLevels = [...unlockedLevels, nextLevel.id]
+      }
+      return {
+        ...prev,
+        completedLevels: completed,
+        bestCompletion: { ...prev.bestCompletion, [level.id]: best },
+        unlockedLevels
+      }
+    })
+  }
+
   const resolveCombat = (outcome: CombatOutcome) => {
     if (!activeRun) return
     if (battleCryTimeoutRef.current) {
@@ -263,11 +286,16 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const cleared = { ...paid.run, activeNightModifier: undefined }
     const withPlan = setNextNightPlan(cleared, level)
     const next = recomputeGoalsProgress(withPlan, level)
-    setActiveRun(next)
     setLastCombat(outcome)
     if (outcome.victory) {
+      if (areGoalsComplete(next, level)) {
+        completeLevel(next, level)
+        return
+      }
+      setActiveRun(next)
       setRunPhase('day_end')
     } else {
+      setActiveRun(next)
       setRunPhase('lose')
     }
   }
@@ -277,26 +305,7 @@ export const RunProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const level = getRunLevel(activeRun)
     let next = recomputeGoalsProgress(activeRun, level)
     if (areGoalsComplete(next, level)) {
-      setRunPhase('win')
-      setActiveRun(next)
-      setMeta((prev) => {
-        const completed = prev.completedLevels.includes(level.id)
-          ? prev.completedLevels
-          : [...prev.completedLevels, level.id]
-        const best = Math.max(prev.bestCompletion[level.id] ?? 0, next.daysSurvived)
-        let unlockedLevels = prev.unlockedLevels
-        const levelIndex = levelIndexById(level.id)
-        const nextLevel = levelIndex >= 0 ? getLevelByIndex(levelIndex + 1) : null
-        if (nextLevel && !unlockedLevels.includes(nextLevel.id)) {
-          unlockedLevels = [...unlockedLevels, nextLevel.id]
-        }
-        return {
-          ...prev,
-          completedLevels: completed,
-          bestCompletion: { ...prev.bestCompletion, [level.id]: best },
-          unlockedLevels
-        }
-      })
+      completeLevel(next, level)
       return
     }
     const growth = level.heroLoadout.growthPerDay ?? { hp: 0, attack: 0 }

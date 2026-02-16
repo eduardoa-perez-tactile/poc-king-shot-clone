@@ -1,0 +1,102 @@
+You are working in the Kingshot-like browser RTS roguelike project.
+
+Goal
+Replace the current 3D health bar with a clean 2D in-game unit HUD rendered in the React overlay (NOT in 3D). Each unit shows a small 2D rectangle “nameplate” positioned right above the unit on screen, containing:
+- Unit display name (type)
+- Level (e.g. “Lv 2”)
+- HP numeric (e.g. “34/50”)
+Optionally include a tiny horizontal fill bar inside the rectangle, but the primary requirement is name + level + hp text in a 2D rectangle.
+
+Constraints
+- Babylon.js renders the world (orthographic RTS camera).
+- React is the UI overlay. Avoid per-frame React re-renders across the entire app.
+- Use raycasting for selection; HUD must not block world interactions unless explicitly intended.
+- Must be performant with many units: prefer DOM nodes or a single canvas overlay with batched drawing; no expensive layout thrash.
+
+Implementation Tasks
+
+1) Data model / unit interface
+Ensure each unit entity exposes:
+- id: string
+- typeName: string (display label)
+- level: number
+- hp: number
+- hpMax: number
+- isAlive: boolean
+- mesh: Babylon Mesh (or a TransformNode) used for world position
+- hudOffsetY: number (optional per-unit vertical offset)
+Add a helper:
+- getHudWorldPosition(): Vector3
+  - returns mesh.getAbsolutePosition() + (0, hudOffsetY, 0)
+Default hudOffsetY based on unit size (heroes larger).
+
+2) Project world position to screen coordinates
+Create a utility that projects a world point to screen pixel coords using the current camera + engine viewport:
+- Input: worldPos (Vector3), camera, scene, engine
+- Output: { x, y, onScreen, depth }
+Use Babylon projection APIs:
+- BABYLON.Vector3.Project(worldPos, BABYLON.Matrix.Identity(), scene.getTransformMatrix(), camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight()))
+Notes:
+- Orthographic camera supported; projection still works.
+- onScreen = depth in [0..1] and x/y inside viewport bounds.
+- Handle hidden units behind camera or off-screen by not rendering HUD.
+
+3) HUD rendering approach (pick one; implement the default)
+Default: DOM “absolute positioned” React elements updated imperatively (no global re-render).
+- Create a UnitHudLayer component that renders a container div (position: absolute; inset: 0; pointer-events: none;).
+- Inside, maintain a Map<unitId, HTMLElement> for nameplates created once and reused.
+- On each frame (scene.onBeforeRenderObservable or onAfterRenderObservable), update transforms for visible units:
+  - el.style.transform = `translate3d(${x}px, ${y}px, 0)`
+  - Use translate centered above unit: `translate3d(${x}px, ${y}px, 0) translate(-50%, -100%)`
+- Update text content only when (hp, hpMax, level, typeName) changes; keep a cached last values per unit to avoid DOM writes each frame.
+- Do NOT set React state every frame.
+
+Alternative (optional): single Canvas2D overlay and draw all nameplates each frame. Only implement if DOM approach is too slow.
+
+4) UnitHudLayer lifecycle & pooling
+- On units spawn: ensure a HUD element exists in the pool for that unitId.
+- On units despawn/death: hide element (display: none) and optionally recycle; remove from DOM if desired.
+- Keep pointer-events: none so clicking still hits the 3D world.
+
+5) Styling requirements (clean rectangle)
+Implement a minimal style:
+- background: rgba(0,0,0,0.55)
+- border: 1px solid rgba(255,255,255,0.15)
+- border-radius: 6px
+- padding: 2px 6px
+- font: 11px/1.2 system-ui
+- color: #fff
+- white-space: nowrap
+Layout inside:
+- Top row: “{typeName}  Lv {level}”
+- Bottom row: “{hp}/{hpMax}”
+Optional mini bar:
+- A small bar row with fill = hp/hpMax.
+
+6) Integration points
+- Hook UnitHudLayer into the MapScene overlay root (same layer as selection UI).
+- Ensure it has access to:
+  - scene, camera, engine
+  - unitManager (list/iterable of active units)
+- Use a stable “getActiveUnits()” method so you can iterate without allocations each frame (reuse arrays if needed).
+
+7) Edge cases
+- If unit is selected: optionally add a subtle highlight border (but keep simple).
+- If unit is off-screen: hide HUD.
+- If unit hp <= 0 or not alive: hide HUD.
+- Clamp HUD within viewport (optional). If implementing, clamp x/y to [margin..width-margin].
+
+Deliverables
+- New file: ui/UnitHudLayer.tsx (or similar)
+- New util: ui/projectWorldToScreen.ts
+- Update unit entities to expose typeName, level, hp, hpMax, mesh reference, and hudOffsetY.
+- Remove/disable old 3D health bar component/mesh generation.
+
+Acceptance Criteria
+- No 3D health bar meshes remain.
+- Every visible alive unit shows a 2D rectangle above it with name, level, and hp.
+- HUD follows units smoothly with camera movement (orthographic).
+- No per-frame React state updates; updates are done via imperative DOM writes with caching.
+- Performance remains stable with many units (no significant GC spikes).
+
+Now implement it.
