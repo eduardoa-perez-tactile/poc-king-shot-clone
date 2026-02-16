@@ -18,6 +18,7 @@ export type DashboardTab =
   | 'units'
   | 'pads'
   | 'waves'
+  | 'night_meta'
   | 'enemies'
   | 'bosses'
   | 'validation'

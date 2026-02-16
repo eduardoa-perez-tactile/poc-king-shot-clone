@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { BUILDING_DEFS } from '../../../config/buildings'
 import { ELITE_DEFS } from '../../../config/elites'
+import { DEFAULT_ELITE_CONFIG, DEFAULT_ENEMY_TRAITS, DEFAULT_NIGHT_MODIFIERS, DEFAULT_PERKS, EnemyTraitId, NightModifierId, PerkId } from '../../../config/nightContent'
 import { UNIT_DEFS, UnitType } from '../../../config/units'
-import { LevelDefinition, validateLevelDefinition } from '../../../game/types/LevelDefinition'
+import { DayWave, LevelDefinition, validateLevelDefinition } from '../../../game/types/LevelDefinition'
 import {
   PadType,
   buildPadUnlockLevelsFromByLevel,
@@ -50,6 +51,7 @@ const TABS: Array<{ id: DashboardTab; label: string }> = [
   { id: 'units', label: 'Units' },
   { id: 'pads', label: 'Pads & Build Slots' },
   { id: 'waves', label: 'Waves & Enemies' },
+  { id: 'night_meta', label: 'Night Meta' },
   { id: 'enemies', label: 'Enemy Catalog' },
   { id: 'bosses', label: 'Boss Rules' },
   { id: 'validation', label: 'Validation & Diff' },
@@ -88,6 +90,37 @@ const parseNumberInput = (value: string, fallback: number) => {
   const next = Number(value)
   return Number.isFinite(next) ? next : fallback
 }
+
+const parseOptionalNumberInput = (value: string): number | undefined => {
+  const normalized = value.trim()
+  if (!normalized) return undefined
+  const next = Number(normalized)
+  return Number.isFinite(next) ? next : undefined
+}
+
+const parseCsvList = (value: string) =>
+  Array.from(
+    new Set(
+      value
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0)
+    )
+  )
+
+const normalizeWaveGroups = (wave: DayWave) =>
+  (wave.groups && wave.groups.length > 0
+    ? wave.groups
+    : wave.units.map((group) => ({
+        enemyTypeId: group.type,
+        count: group.squads
+      })))
+    .map((group) => ({
+      enemyTypeId: group.enemyTypeId,
+      count: Math.max(1, Math.floor(group.count)),
+      traits: group.traits ?? [],
+      eliteChance: group.eliteChance
+    }))
 
 const downloadJson = (filename: string, content: string) => {
   const blob = new Blob([content], { type: 'application/json' })
@@ -251,6 +284,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
   }
 
   const currentDay = selectedLevel.days[waveDayIndex]
+  const nightModifiers = selectedLevel.nightModifiers ?? []
+  const perks = selectedLevel.perks ?? []
+  const enemyTraits = selectedLevel.enemyTraits ?? []
+  const nightModifierIds = nightModifiers.map((entry) => entry.id)
+  const perkIds = perks.map((entry) => entry.id)
+  const enemyTraitIds = enemyTraits.map((entry) => entry.id)
+  const availableNightIndices = Array.from(
+    new Set(selectedLevel.days.map((day) => Math.max(1, Math.floor(day.day))))
+  ).sort((a, b) => a - b)
 
   return (
     <div className="screen dashboard-screen">
@@ -1191,128 +1233,320 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
                 </div>
               )}
 
-              {currentDay?.waves.map((wave, waveIndex) => (
-                <div key={`${wave.id}_${waveIndex}`} className="dashboard-row-card">
-                  <div className="button-row">
-                    <input
-                      value={wave.id}
-                      onChange={(event) =>
-                        patchSelectedLevel((level) => {
-                          const days = level.days.slice()
-                          const waves = days[waveDayIndex].waves.slice()
-                          waves[waveIndex] = { ...waves[waveIndex], id: event.target.value }
-                          days[waveDayIndex] = { ...days[waveDayIndex], waves }
-                          return { ...level, days }
-                        })
-                      }
-                    />
-                    <button
-                      className="btn"
-                      onClick={() =>
-                        patchSelectedLevel((level) => {
-                          const days = level.days.slice()
-                          const waves = days[waveDayIndex].waves.slice()
-                          waves.splice(waveIndex + 1, 0, {
-                            ...waves[waveIndex],
-                            id: `${waves[waveIndex].id}_copy`
+              {currentDay?.waves.map((wave, waveIndex) => {
+                const normalizedGroups = normalizeWaveGroups(wave)
+                const usingAdvancedGroups = Array.isArray(wave.groups) && wave.groups.length > 0
+                return (
+                  <div key={`${wave.id}_${waveIndex}`} className="dashboard-row-card">
+                    <div className="button-row">
+                      <input
+                        value={wave.id}
+                        onChange={(event) =>
+                          patchSelectedLevel((level) => {
+                            const days = level.days.slice()
+                            const waves = days[waveDayIndex].waves.slice()
+                            waves[waveIndex] = { ...waves[waveIndex], id: event.target.value }
+                            days[waveDayIndex] = { ...days[waveDayIndex], waves }
+                            return { ...level, days }
                           })
-                          days[waveDayIndex] = { ...days[waveDayIndex], waves }
-                          return { ...level, days }
-                        })
-                      }
-                    >
-                      Duplicate Wave
-                    </button>
-                    <button
-                      className="btn ghost"
-                      onClick={() =>
-                        patchSelectedLevel((level) => {
-                          const days = level.days.slice()
-                          const waves = days[waveDayIndex].waves.filter((_, index) => index !== waveIndex)
-                          days[waveDayIndex] = { ...days[waveDayIndex], waves }
-                          return { ...level, days }
-                        })
-                      }
-                    >
-                      Remove Wave
-                    </button>
-                  </div>
-                  {wave.units.map((group, groupIndex) => (
-                    <div key={`${wave.id}_${groupIndex}`} className="dashboard-inline-grid">
-                      <label>
-                        <span className="muted">Enemy Type</span>
-                        <select
-                          value={group.type}
-                          onChange={(event) =>
-                            patchSelectedLevel((level) => {
-                              const days = level.days.slice()
-                              const waves = days[waveDayIndex].waves.slice()
-                              const units = waves[waveIndex].units.slice()
-                              units[groupIndex] = { ...units[groupIndex], type: event.target.value as UnitType }
-                              waves[waveIndex] = { ...waves[waveIndex], units }
-                              days[waveDayIndex] = { ...days[waveDayIndex], waves }
-                              return { ...level, days }
+                        }
+                      />
+                      <button
+                        className="btn"
+                        onClick={() =>
+                          patchSelectedLevel((level) => {
+                            const days = level.days.slice()
+                            const waves = days[waveDayIndex].waves.slice()
+                            waves.splice(waveIndex + 1, 0, {
+                              ...waves[waveIndex],
+                              id: `${waves[waveIndex].id}_copy`
                             })
-                          }
-                        >
-                          {Object.keys(UNIT_DEFS).map((unitType) => (
-                            <option key={unitType} value={unitType}>{unitType}</option>
-                          ))}
-                        </select>
-                      </label>
+                            days[waveDayIndex] = { ...days[waveDayIndex], waves }
+                            return { ...level, days }
+                          })
+                        }
+                      >
+                        Duplicate Wave
+                      </button>
+                      <button
+                        className="btn ghost"
+                        onClick={() =>
+                          patchSelectedLevel((level) => {
+                            const days = level.days.slice()
+                            const waves = days[waveDayIndex].waves.filter((_, index) => index !== waveIndex)
+                            days[waveDayIndex] = { ...days[waveDayIndex], waves }
+                            return { ...level, days }
+                          })
+                        }
+                      >
+                        Remove Wave
+                      </button>
+                    </div>
+
+                    <div className="dashboard-inline-grid">
                       <label>
-                        <span className="muted">Count</span>
+                        <span className="muted">Wave Traits (comma separated IDs)</span>
                         <input
-                          value={group.squads}
+                          value={(wave.traits ?? []).join(',')}
                           onChange={(event) =>
                             patchSelectedLevel((level) => {
                               const days = level.days.slice()
                               const waves = days[waveDayIndex].waves.slice()
-                              const units = waves[waveIndex].units.slice()
-                              units[groupIndex] = { ...units[groupIndex], squads: parseNumberInput(event.target.value, group.squads) }
-                              waves[waveIndex] = { ...waves[waveIndex], units }
+                              waves[waveIndex] = {
+                                ...waves[waveIndex],
+                                traits: parseCsvList(event.target.value).filter((id): id is EnemyTraitId => enemyTraitIds.includes(id))
+                              }
                               days[waveDayIndex] = { ...days[waveDayIndex], waves }
                               return { ...level, days }
                             })
                           }
                         />
                       </label>
+                      <label>
+                        <span className="muted">Wave Elite Chance (0..1)</span>
+                        <input
+                          value={wave.eliteChance ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const days = level.days.slice()
+                              const waves = days[waveDayIndex].waves.slice()
+                              waves[waveIndex] = {
+                                ...waves[waveIndex],
+                                eliteChance: parseOptionalNumberInput(event.target.value)
+                              }
+                              days[waveDayIndex] = { ...days[waveDayIndex], waves }
+                              return { ...level, days }
+                            })
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="dashboard-row-card">
+                      <h3>Legacy Spawn Units</h3>
+                      <div className="muted">Used when advanced groups are empty.</div>
+                      {wave.units.map((group, groupIndex) => (
+                        <div key={`${wave.id}_${groupIndex}`} className="dashboard-inline-grid">
+                          <label>
+                            <span className="muted">Enemy Type</span>
+                            <select
+                              value={group.type}
+                              onChange={(event) =>
+                                patchSelectedLevel((level) => {
+                                  const days = level.days.slice()
+                                  const waves = days[waveDayIndex].waves.slice()
+                                  const units = waves[waveIndex].units.slice()
+                                  units[groupIndex] = { ...units[groupIndex], type: event.target.value as UnitType }
+                                  waves[waveIndex] = { ...waves[waveIndex], units }
+                                  days[waveDayIndex] = { ...days[waveDayIndex], waves }
+                                  return { ...level, days }
+                                })
+                              }
+                            >
+                              {Object.keys(UNIT_DEFS).map((unitType) => (
+                                <option key={unitType} value={unitType}>{unitType}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            <span className="muted">Count</span>
+                            <input
+                              value={group.squads}
+                              onChange={(event) =>
+                                patchSelectedLevel((level) => {
+                                  const days = level.days.slice()
+                                  const waves = days[waveDayIndex].waves.slice()
+                                  const units = waves[waveIndex].units.slice()
+                                  units[groupIndex] = { ...units[groupIndex], squads: parseNumberInput(event.target.value, group.squads) }
+                                  waves[waveIndex] = { ...waves[waveIndex], units }
+                                  days[waveDayIndex] = { ...days[waveDayIndex], waves }
+                                  return { ...level, days }
+                                })
+                              }
+                            />
+                          </label>
+                          <button
+                            className="btn ghost"
+                            onClick={() =>
+                              patchSelectedLevel((level) => {
+                                const days = level.days.slice()
+                                const waves = days[waveDayIndex].waves.slice()
+                                const units = waves[waveIndex].units.filter((_, index) => index !== groupIndex)
+                                waves[waveIndex] = { ...waves[waveIndex], units }
+                                days[waveDayIndex] = { ...days[waveDayIndex], waves }
+                                return { ...level, days }
+                              })
+                            }
+                          >
+                            Remove Legacy Group
+                          </button>
+                        </div>
+                      ))}
                       <button
-                        className="btn ghost"
+                        className="btn"
                         onClick={() =>
                           patchSelectedLevel((level) => {
                             const days = level.days.slice()
                             const waves = days[waveDayIndex].waves.slice()
-                            const units = waves[waveIndex].units.filter((_, index) => index !== groupIndex)
-                            waves[waveIndex] = { ...waves[waveIndex], units }
+                            waves[waveIndex] = {
+                              ...waves[waveIndex],
+                              units: [...waves[waveIndex].units, { type: 'infantry', squads: 1 }]
+                            }
                             days[waveDayIndex] = { ...days[waveDayIndex], waves }
                             return { ...level, days }
                           })
                         }
                       >
-                        Remove Group
+                        Add Legacy Group
                       </button>
                     </div>
-                  ))}
-                  <button
-                    className="btn"
-                    onClick={() =>
-                      patchSelectedLevel((level) => {
-                        const days = level.days.slice()
-                        const waves = days[waveDayIndex].waves.slice()
-                        waves[waveIndex] = {
-                          ...waves[waveIndex],
-                          units: [...waves[waveIndex].units, { type: 'infantry', squads: 1 }]
-                        }
-                        days[waveDayIndex] = { ...days[waveDayIndex], waves }
-                        return { ...level, days }
-                      })
-                    }
-                  >
-                    Add Spawn Group
-                  </button>
-                </div>
-              ))}
+
+                    <div className="dashboard-row-card">
+                      <h3>Advanced Spawn Groups</h3>
+                      <div className="muted">
+                        These groups support traits and elite chance per enemy group.
+                        {usingAdvancedGroups ? '' : ' Currently using legacy groups as fallback preview.'}
+                      </div>
+                      <div className="button-row">
+                        <button
+                          className="btn"
+                          onClick={() =>
+                            patchSelectedLevel((level) => {
+                              const days = level.days.slice()
+                              const waves = days[waveDayIndex].waves.slice()
+                              waves[waveIndex] = {
+                                ...waves[waveIndex],
+                                groups: normalizeWaveGroups(waves[waveIndex])
+                              }
+                              days[waveDayIndex] = { ...days[waveDayIndex], waves }
+                              return { ...level, days }
+                            })
+                          }
+                        >
+                          Copy Legacy Units to Groups
+                        </button>
+                        <button
+                          className="btn"
+                          onClick={() =>
+                            patchSelectedLevel((level) => {
+                              const days = level.days.slice()
+                              const waves = days[waveDayIndex].waves.slice()
+                              const groups = normalizeWaveGroups(waves[waveIndex])
+                              groups.push({ enemyTypeId: 'infantry', count: 1, traits: [], eliteChance: undefined })
+                              waves[waveIndex] = { ...waves[waveIndex], groups }
+                              days[waveDayIndex] = { ...days[waveDayIndex], waves }
+                              return { ...level, days }
+                            })
+                          }
+                        >
+                          Add Advanced Group
+                        </button>
+                      </div>
+
+                      {normalizedGroups.map((group, groupIndex) => (
+                        <div key={`${wave.id}_advanced_${groupIndex}`} className="dashboard-inline-grid">
+                          <label>
+                            <span className="muted">Enemy Type</span>
+                            <select
+                              value={group.enemyTypeId}
+                              onChange={(event) =>
+                                patchSelectedLevel((level) => {
+                                  const days = level.days.slice()
+                                  const waves = days[waveDayIndex].waves.slice()
+                                  const groups = normalizeWaveGroups(waves[waveIndex])
+                                  groups[groupIndex] = { ...groups[groupIndex], enemyTypeId: event.target.value as UnitType }
+                                  waves[waveIndex] = { ...waves[waveIndex], groups }
+                                  days[waveDayIndex] = { ...days[waveDayIndex], waves }
+                                  return { ...level, days }
+                                })
+                              }
+                            >
+                              {Object.keys(UNIT_DEFS).map((unitType) => (
+                                <option key={unitType} value={unitType}>{unitType}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            <span className="muted">Count</span>
+                            <input
+                              value={group.count}
+                              onChange={(event) =>
+                                patchSelectedLevel((level) => {
+                                  const days = level.days.slice()
+                                  const waves = days[waveDayIndex].waves.slice()
+                                  const groups = normalizeWaveGroups(waves[waveIndex])
+                                  groups[groupIndex] = {
+                                    ...groups[groupIndex],
+                                    count: Math.max(1, parseNumberInput(event.target.value, group.count))
+                                  }
+                                  waves[waveIndex] = { ...waves[waveIndex], groups }
+                                  days[waveDayIndex] = { ...days[waveDayIndex], waves }
+                                  return { ...level, days }
+                                })
+                              }
+                            />
+                          </label>
+                          <label>
+                            <span className="muted">Traits (comma separated IDs)</span>
+                            <input
+                              value={(group.traits ?? []).join(',')}
+                              onChange={(event) =>
+                                patchSelectedLevel((level) => {
+                                  const days = level.days.slice()
+                                  const waves = days[waveDayIndex].waves.slice()
+                                  const groups = normalizeWaveGroups(waves[waveIndex])
+                                  groups[groupIndex] = {
+                                    ...groups[groupIndex],
+                                    traits: parseCsvList(event.target.value).filter((id): id is EnemyTraitId => enemyTraitIds.includes(id))
+                                  }
+                                  waves[waveIndex] = { ...waves[waveIndex], groups }
+                                  days[waveDayIndex] = { ...days[waveDayIndex], waves }
+                                  return { ...level, days }
+                                })
+                              }
+                            />
+                          </label>
+                          <label>
+                            <span className="muted">Elite Chance (0..1)</span>
+                            <input
+                              value={group.eliteChance ?? ''}
+                              onChange={(event) =>
+                                patchSelectedLevel((level) => {
+                                  const days = level.days.slice()
+                                  const waves = days[waveDayIndex].waves.slice()
+                                  const groups = normalizeWaveGroups(waves[waveIndex])
+                                  groups[groupIndex] = {
+                                    ...groups[groupIndex],
+                                    eliteChance: parseOptionalNumberInput(event.target.value)
+                                  }
+                                  waves[waveIndex] = { ...waves[waveIndex], groups }
+                                  days[waveDayIndex] = { ...days[waveDayIndex], waves }
+                                  return { ...level, days }
+                                })
+                              }
+                            />
+                          </label>
+                          <button
+                            className="btn ghost"
+                            onClick={() =>
+                              patchSelectedLevel((level) => {
+                                const days = level.days.slice()
+                                const waves = days[waveDayIndex].waves.slice()
+                                const groups = normalizeWaveGroups(waves[waveIndex]).filter((_, idx) => idx !== groupIndex)
+                                waves[waveIndex] = { ...waves[waveIndex], groups: groups.length > 0 ? groups : undefined }
+                                days[waveDayIndex] = { ...days[waveDayIndex], waves }
+                                return { ...level, days }
+                              })
+                            }
+                          >
+                            Remove Advanced Group
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
               <button
                 className="btn success"
                 onClick={() =>
@@ -1329,6 +1563,996 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBack, onPlaytest }) => {
               >
                 Add Wave
               </button>
+            </div>
+          )}
+
+          {activeTab === 'night_meta' && (
+            <div className="dashboard-stack">
+              <div className="dashboard-row-card">
+                <h3>Night Modifier Pools</h3>
+                <div className="button-row">
+                  <button
+                    className="btn"
+                    onClick={() =>
+                      patchSelectedLevel((level) => ({
+                        ...level,
+                        nightModifiers: DEFAULT_NIGHT_MODIFIERS.map((entry) => ({ ...entry, effects: { ...entry.effects } }))
+                      }))
+                    }
+                  >
+                    Reset Night Modifiers to Defaults
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() =>
+                      patchSelectedLevel((level) => ({
+                        ...level,
+                        nightModifiers: [
+                          ...(level.nightModifiers ?? []),
+                          {
+                            id: `modifier_${(level.nightModifiers ?? []).length + 1}`,
+                            name: 'New Modifier',
+                            description: 'Custom night modifier.',
+                            rewardMultiplier: 1,
+                            effects: {}
+                          }
+                        ]
+                      }))
+                    }
+                  >
+                    Add Night Modifier
+                  </button>
+                </div>
+                {(nightModifiers ?? []).map((modifier, modifierIndex) => (
+                  <div key={`${modifier.id}_${modifierIndex}`} className="dashboard-row-card">
+                    <div className="dashboard-inline-grid">
+                      <label>
+                        <span className="muted">ID</span>
+                        <input
+                          value={modifier.id}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.nightModifiers ?? []).slice()
+                              next[modifierIndex] = { ...next[modifierIndex], id: event.target.value }
+                              return { ...level, nightModifiers: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">Name</span>
+                        <input
+                          value={modifier.name}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.nightModifiers ?? []).slice()
+                              next[modifierIndex] = { ...next[modifierIndex], name: event.target.value }
+                              return { ...level, nightModifiers: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">Reward Multiplier</span>
+                        <input
+                          value={modifier.rewardMultiplier}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.nightModifiers ?? []).slice()
+                              next[modifierIndex] = {
+                                ...next[modifierIndex],
+                                rewardMultiplier: parseNumberInput(event.target.value, modifier.rewardMultiplier)
+                              }
+                              return { ...level, nightModifiers: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">Icon Key</span>
+                        <input
+                          value={modifier.icon ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.nightModifiers ?? []).slice()
+                              next[modifierIndex] = {
+                                ...next[modifierIndex],
+                                icon: event.target.value.trim() || undefined
+                              }
+                              return { ...level, nightModifiers: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="dashboard-full-width">
+                        <span className="muted">Description</span>
+                        <input
+                          value={modifier.description}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.nightModifiers ?? []).slice()
+                              next[modifierIndex] = { ...next[modifierIndex], description: event.target.value }
+                              return { ...level, nightModifiers: next }
+                            })
+                          }
+                        />
+                      </label>
+                    </div>
+                    <div className="dashboard-inline-grid">
+                      <label>
+                        <span className="muted">enemyCountMultiplier (delta)</span>
+                        <input
+                          value={modifier.effects.enemyCountMultiplier ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.nightModifiers ?? []).slice()
+                              const effects = { ...next[modifierIndex].effects, enemyCountMultiplier: parseOptionalNumberInput(event.target.value) }
+                              next[modifierIndex] = { ...next[modifierIndex], effects }
+                              return { ...level, nightModifiers: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">enemyMoveSpeedMultiplier (delta)</span>
+                        <input
+                          value={modifier.effects.enemyMoveSpeedMultiplier ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.nightModifiers ?? []).slice()
+                              const effects = {
+                                ...next[modifierIndex].effects,
+                                enemyMoveSpeedMultiplier: parseOptionalNumberInput(event.target.value)
+                              }
+                              next[modifierIndex] = { ...next[modifierIndex], effects }
+                              return { ...level, nightModifiers: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">enemyHpMultiplier (delta)</span>
+                        <input
+                          value={modifier.effects.enemyHpMultiplier ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.nightModifiers ?? []).slice()
+                              const effects = { ...next[modifierIndex].effects, enemyHpMultiplier: parseOptionalNumberInput(event.target.value) }
+                              next[modifierIndex] = { ...next[modifierIndex], effects }
+                              return { ...level, nightModifiers: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">goldStartPenalty</span>
+                        <input
+                          value={modifier.effects.goldStartPenalty ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.nightModifiers ?? []).slice()
+                              const effects = { ...next[modifierIndex].effects, goldStartPenalty: parseOptionalNumberInput(event.target.value) }
+                              next[modifierIndex] = { ...next[modifierIndex], effects }
+                              return { ...level, nightModifiers: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">towersDisabled</span>
+                        <select
+                          value={modifier.effects.towersDisabled ? 'true' : 'false'}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.nightModifiers ?? []).slice()
+                              const effects = { ...next[modifierIndex].effects, towersDisabled: event.target.value === 'true' }
+                              next[modifierIndex] = { ...next[modifierIndex], effects }
+                              return { ...level, nightModifiers: next }
+                            })
+                          }
+                        >
+                          <option value="false">false</option>
+                          <option value="true">true</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span className="muted">addExtraSpawnBorder</span>
+                        <select
+                          value={modifier.effects.addExtraSpawnBorder ? 'true' : 'false'}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.nightModifiers ?? []).slice()
+                              const effects = { ...next[modifierIndex].effects, addExtraSpawnBorder: event.target.value === 'true' }
+                              next[modifierIndex] = { ...next[modifierIndex], effects }
+                              return { ...level, nightModifiers: next }
+                            })
+                          }
+                        >
+                          <option value="false">false</option>
+                          <option value="true">true</option>
+                        </select>
+                      </label>
+                    </div>
+                    <button
+                      className="btn ghost"
+                      onClick={() =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          nightModifiers: (level.nightModifiers ?? []).filter((_, index) => index !== modifierIndex),
+                          allowedNightModifiersByNight: Object.entries(level.allowedNightModifiersByNight ?? {}).reduce<Record<number, NightModifierId[]>>(
+                            (acc, [nightKey, ids]) => {
+                              const nightIndex = Number(nightKey)
+                              const nextIds = ids.filter((id) => id !== modifier.id)
+                              acc[nightIndex] = nextIds
+                              return acc
+                            },
+                            {}
+                          )
+                        }))
+                      }
+                    >
+                      Remove Night Modifier
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="dashboard-row-card">
+                <h3>Allowed Night Modifiers by Night Index</h3>
+                <div className="muted">Configure which modifier IDs can appear each night.</div>
+                {(availableNightIndices.length > 0 ? availableNightIndices : [1]).map((nightIndex) => {
+                  const allowedForNight = selectedLevel.allowedNightModifiersByNight?.[nightIndex] ?? []
+                  return (
+                    <div key={`allowed_night_${nightIndex}`} className="dashboard-row-card">
+                      <h3>Night {nightIndex}</h3>
+                      <div className="dashboard-inline-grid">
+                        {nightModifierIds.map((modifierId) => {
+                          const checked = allowedForNight.includes(modifierId)
+                          return (
+                            <label key={`allowed_${nightIndex}_${modifierId}`}>
+                              <span className="muted">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(event) =>
+                                    patchSelectedLevel((level) => {
+                                      const nextMap = { ...(level.allowedNightModifiersByNight ?? {}) }
+                                      const previousIds = nextMap[nightIndex] ?? []
+                                      nextMap[nightIndex] = event.target.checked
+                                        ? Array.from(new Set([...previousIds, modifierId]))
+                                        : previousIds.filter((id) => id !== modifierId)
+                                      return { ...level, allowedNightModifiersByNight: nextMap }
+                                    })
+                                  }
+                                />
+                                {' '}
+                                {modifierId}
+                              </span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div className="dashboard-row-card">
+                <h3>Perks</h3>
+                <div className="dashboard-inline-grid">
+                  <label>
+                    <span className="muted">perkChoicesPerNight</span>
+                    <input
+                      value={selectedLevel.perkChoicesPerNight ?? 3}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          perkChoicesPerNight: Math.max(1, parseNumberInput(event.target.value, level.perkChoicesPerNight ?? 3))
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span className="muted">perkMaxCount</span>
+                    <input
+                      value={selectedLevel.perkMaxCount ?? 5}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          perkMaxCount: Math.max(1, parseNumberInput(event.target.value, level.perkMaxCount ?? 5))
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="button-row">
+                  <button
+                    className="btn"
+                    onClick={() =>
+                      patchSelectedLevel((level) => ({
+                        ...level,
+                        perks: DEFAULT_PERKS.map((entry) => ({ ...entry, effects: { ...entry.effects } })),
+                        perkPool: DEFAULT_PERKS.map((entry) => entry.id)
+                      }))
+                    }
+                  >
+                    Reset Perks to Defaults
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() =>
+                      patchSelectedLevel((level) => ({
+                        ...level,
+                        perks: [
+                          ...(level.perks ?? []),
+                          {
+                            id: `perk_${(level.perks ?? []).length + 1}`,
+                            name: 'New Perk',
+                            description: 'Custom run perk.',
+                            effects: {}
+                          }
+                        ]
+                      }))
+                    }
+                  >
+                    Add Perk
+                  </button>
+                </div>
+                <div className="dashboard-row-card">
+                  <h3>Perk Pool</h3>
+                  <div className="dashboard-inline-grid">
+                    {perkIds.map((perkId) => (
+                      <label key={`perk_pool_${perkId}`}>
+                        <span className="muted">
+                          <input
+                            type="checkbox"
+                            checked={(selectedLevel.perkPool ?? []).includes(perkId)}
+                            onChange={(event) =>
+                              patchSelectedLevel((level) => {
+                                const pool = level.perkPool ?? []
+                                const nextPool = event.target.checked
+                                  ? Array.from(new Set([...pool, perkId]))
+                                  : pool.filter((id) => id !== perkId)
+                                return { ...level, perkPool: nextPool as PerkId[] }
+                              })
+                            }
+                          />
+                          {' '}
+                          {perkId}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                {(perks ?? []).map((perk, perkIndex) => (
+                  <div key={`${perk.id}_${perkIndex}`} className="dashboard-row-card">
+                    <div className="dashboard-inline-grid">
+                      <label>
+                        <span className="muted">ID</span>
+                        <input
+                          value={perk.id}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.perks ?? []).slice()
+                              next[perkIndex] = { ...next[perkIndex], id: event.target.value }
+                              return { ...level, perks: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">Name</span>
+                        <input
+                          value={perk.name}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.perks ?? []).slice()
+                              next[perkIndex] = { ...next[perkIndex], name: event.target.value }
+                              return { ...level, perks: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">maxStacks</span>
+                        <input
+                          value={perk.maxStacks ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.perks ?? []).slice()
+                              next[perkIndex] = { ...next[perkIndex], maxStacks: parseOptionalNumberInput(event.target.value) }
+                              return { ...level, perks: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">Icon Key</span>
+                        <input
+                          value={perk.icon ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.perks ?? []).slice()
+                              next[perkIndex] = {
+                                ...next[perkIndex],
+                                icon: event.target.value.trim() || undefined
+                              }
+                              return { ...level, perks: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="dashboard-full-width">
+                        <span className="muted">Description</span>
+                        <input
+                          value={perk.description}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.perks ?? []).slice()
+                              next[perkIndex] = { ...next[perkIndex], description: event.target.value }
+                              return { ...level, perks: next }
+                            })
+                          }
+                        />
+                      </label>
+                    </div>
+                    <div className="dashboard-inline-grid">
+                      <label>
+                        <span className="muted">towerRangeMultiplier (delta)</span>
+                        <input
+                          value={perk.effects.towerRangeMultiplier ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.perks ?? []).slice()
+                              next[perkIndex] = {
+                                ...next[perkIndex],
+                                effects: {
+                                  ...next[perkIndex].effects,
+                                  towerRangeMultiplier: parseOptionalNumberInput(event.target.value)
+                                }
+                              }
+                              return { ...level, perks: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">towerDamageMultiplier (delta)</span>
+                        <input
+                          value={perk.effects.towerDamageMultiplier ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.perks ?? []).slice()
+                              next[perkIndex] = {
+                                ...next[perkIndex],
+                                effects: {
+                                  ...next[perkIndex].effects,
+                                  towerDamageMultiplier: parseOptionalNumberInput(event.target.value)
+                                }
+                              }
+                              return { ...level, perks: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">goldRewardMultiplier (delta)</span>
+                        <input
+                          value={perk.effects.goldRewardMultiplier ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.perks ?? []).slice()
+                              next[perkIndex] = {
+                                ...next[perkIndex],
+                                effects: {
+                                  ...next[perkIndex].effects,
+                                  goldRewardMultiplier: parseOptionalNumberInput(event.target.value)
+                                }
+                              }
+                              return { ...level, perks: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">buildingUpgradeCostMultiplier (delta)</span>
+                        <input
+                          value={perk.effects.buildingUpgradeCostMultiplier ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.perks ?? []).slice()
+                              next[perkIndex] = {
+                                ...next[perkIndex],
+                                effects: {
+                                  ...next[perkIndex].effects,
+                                  buildingUpgradeCostMultiplier: parseOptionalNumberInput(event.target.value)
+                                }
+                              }
+                              return { ...level, perks: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">rangedUnitsDamageMultiplier (delta)</span>
+                        <input
+                          value={perk.effects.rangedUnitsDamageMultiplier ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.perks ?? []).slice()
+                              next[perkIndex] = {
+                                ...next[perkIndex],
+                                effects: {
+                                  ...next[perkIndex].effects,
+                                  rangedUnitsDamageMultiplier: parseOptionalNumberInput(event.target.value)
+                                }
+                              }
+                              return { ...level, perks: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">wallHpMultiplier (delta)</span>
+                        <input
+                          value={perk.effects.wallHpMultiplier ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.perks ?? []).slice()
+                              next[perkIndex] = {
+                                ...next[perkIndex],
+                                effects: {
+                                  ...next[perkIndex].effects,
+                                  wallHpMultiplier: parseOptionalNumberInput(event.target.value)
+                                }
+                              }
+                              return { ...level, perks: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">endOfNightBonusGoldPerStrongholdLevel</span>
+                        <input
+                          value={perk.effects.endOfNightBonusGoldPerStrongholdLevel ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.perks ?? []).slice()
+                              next[perkIndex] = {
+                                ...next[perkIndex],
+                                effects: {
+                                  ...next[perkIndex].effects,
+                                  endOfNightBonusGoldPerStrongholdLevel: parseOptionalNumberInput(event.target.value)
+                                }
+                              }
+                              return { ...level, perks: next }
+                            })
+                          }
+                        />
+                      </label>
+                    </div>
+                    <button
+                      className="btn ghost"
+                      onClick={() =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          perks: (level.perks ?? []).filter((_, index) => index !== perkIndex),
+                          perkPool: (level.perkPool ?? []).filter((id) => id !== perk.id)
+                        }))
+                      }
+                    >
+                      Remove Perk
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="dashboard-row-card">
+                <h3>Enemy Traits</h3>
+                <div className="button-row">
+                  <button
+                    className="btn"
+                    onClick={() =>
+                      patchSelectedLevel((level) => ({
+                        ...level,
+                        enemyTraits: DEFAULT_ENEMY_TRAITS.map((entry) => ({
+                          ...entry,
+                          effects: {
+                            ...entry.effects,
+                            onDeathExplosion: entry.effects.onDeathExplosion ? { ...entry.effects.onDeathExplosion } : undefined
+                          }
+                        }))
+                      }))
+                    }
+                  >
+                    Reset Traits to Defaults
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() =>
+                      patchSelectedLevel((level) => ({
+                        ...level,
+                        enemyTraits: [
+                          ...(level.enemyTraits ?? []),
+                          {
+                            id: `trait_${(level.enemyTraits ?? []).length + 1}`,
+                            name: 'New Trait',
+                            description: 'Custom enemy trait.',
+                            effects: {}
+                          }
+                        ]
+                      }))
+                    }
+                  >
+                    Add Enemy Trait
+                  </button>
+                </div>
+                {(enemyTraits ?? []).map((trait, traitIndex) => (
+                  <div key={`${trait.id}_${traitIndex}`} className="dashboard-row-card">
+                    <div className="dashboard-inline-grid">
+                      <label>
+                        <span className="muted">ID</span>
+                        <input
+                          value={trait.id}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.enemyTraits ?? []).slice()
+                              next[traitIndex] = { ...next[traitIndex], id: event.target.value }
+                              return { ...level, enemyTraits: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">Name</span>
+                        <input
+                          value={trait.name}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.enemyTraits ?? []).slice()
+                              next[traitIndex] = { ...next[traitIndex], name: event.target.value }
+                              return { ...level, enemyTraits: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">Icon Key</span>
+                        <input
+                          value={trait.icon ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.enemyTraits ?? []).slice()
+                              next[traitIndex] = {
+                                ...next[traitIndex],
+                                icon: event.target.value.trim() || undefined
+                              }
+                              return { ...level, enemyTraits: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="dashboard-full-width">
+                        <span className="muted">Description</span>
+                        <input
+                          value={trait.description}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.enemyTraits ?? []).slice()
+                              next[traitIndex] = { ...next[traitIndex], description: event.target.value }
+                              return { ...level, enemyTraits: next }
+                            })
+                          }
+                        />
+                      </label>
+                    </div>
+                    <div className="dashboard-inline-grid">
+                      <label>
+                        <span className="muted">rangedDamageTakenMultiplier</span>
+                        <input
+                          value={trait.effects.rangedDamageTakenMultiplier ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.enemyTraits ?? []).slice()
+                              next[traitIndex] = {
+                                ...next[traitIndex],
+                                effects: {
+                                  ...next[traitIndex].effects,
+                                  rangedDamageTakenMultiplier: parseOptionalNumberInput(event.target.value)
+                                }
+                              }
+                              return { ...level, enemyTraits: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">onDeathExplosion.radius</span>
+                        <input
+                          value={trait.effects.onDeathExplosion?.radius ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.enemyTraits ?? []).slice()
+                              const existing = next[traitIndex].effects.onDeathExplosion ?? { radius: 0, damage: 0 }
+                              next[traitIndex] = {
+                                ...next[traitIndex],
+                                effects: {
+                                  ...next[traitIndex].effects,
+                                  onDeathExplosion: {
+                                    ...existing,
+                                    radius: parseNumberInput(event.target.value, existing.radius)
+                                  }
+                                }
+                              }
+                              return { ...level, enemyTraits: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">onDeathExplosion.damage</span>
+                        <input
+                          value={trait.effects.onDeathExplosion?.damage ?? ''}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.enemyTraits ?? []).slice()
+                              const existing = next[traitIndex].effects.onDeathExplosion ?? { radius: 0, damage: 0 }
+                              next[traitIndex] = {
+                                ...next[traitIndex],
+                                effects: {
+                                  ...next[traitIndex].effects,
+                                  onDeathExplosion: {
+                                    ...existing,
+                                    damage: parseNumberInput(event.target.value, existing.damage)
+                                  }
+                                }
+                              }
+                              return { ...level, enemyTraits: next }
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="muted">targetingPriority</span>
+                        <select
+                          value={trait.effects.targetingPriority ?? 'DEFAULT'}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.enemyTraits ?? []).slice()
+                              next[traitIndex] = {
+                                ...next[traitIndex],
+                                effects: {
+                                  ...next[traitIndex].effects,
+                                  targetingPriority: event.target.value === 'TOWERS_FIRST' ? 'TOWERS_FIRST' : 'DEFAULT'
+                                }
+                              }
+                              return { ...level, enemyTraits: next }
+                            })
+                          }
+                        >
+                          <option value="DEFAULT">DEFAULT</option>
+                          <option value="TOWERS_FIRST">TOWERS_FIRST</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span className="muted">ignoresWalls</span>
+                        <select
+                          value={trait.effects.ignoresWalls ? 'true' : 'false'}
+                          onChange={(event) =>
+                            patchSelectedLevel((level) => {
+                              const next = (level.enemyTraits ?? []).slice()
+                              next[traitIndex] = {
+                                ...next[traitIndex],
+                                effects: {
+                                  ...next[traitIndex].effects,
+                                  ignoresWalls: event.target.value === 'true'
+                                }
+                              }
+                              return { ...level, enemyTraits: next }
+                            })
+                          }
+                        >
+                          <option value="false">false</option>
+                          <option value="true">true</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div className="button-row">
+                      <button
+                        className="btn ghost"
+                        onClick={() =>
+                          patchSelectedLevel((level) => {
+                            const next = (level.enemyTraits ?? []).slice()
+                            next[traitIndex] = {
+                              ...next[traitIndex],
+                              effects: {
+                                ...next[traitIndex].effects,
+                                onDeathExplosion: undefined
+                              }
+                            }
+                            return { ...level, enemyTraits: next }
+                          })
+                        }
+                      >
+                        Clear Explosion Effect
+                      </button>
+                      <button
+                        className="btn ghost"
+                        onClick={() =>
+                          patchSelectedLevel((level) => ({
+                            ...level,
+                            enemyTraits: (level.enemyTraits ?? []).filter((_, index) => index !== traitIndex)
+                          }))
+                        }
+                      >
+                        Remove Trait
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="dashboard-row-card">
+                <h3>Elite Variant Config</h3>
+                <div className="button-row">
+                  <button
+                    className="btn"
+                    onClick={() =>
+                      patchSelectedLevel((level) => ({
+                        ...level,
+                        eliteConfig: {
+                          ...DEFAULT_ELITE_CONFIG,
+                          outline: { ...DEFAULT_ELITE_CONFIG.outline }
+                        }
+                      }))
+                    }
+                  >
+                    Reset Elite Config to Defaults
+                  </button>
+                </div>
+                <div className="dashboard-inline-grid">
+                  <label>
+                    <span className="muted">enabled</span>
+                    <select
+                      value={(selectedLevel.eliteConfig?.enabled ?? DEFAULT_ELITE_CONFIG.enabled) ? 'true' : 'false'}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          eliteConfig: {
+                            ...(level.eliteConfig ?? DEFAULT_ELITE_CONFIG),
+                            enabled: event.target.value === 'true'
+                          }
+                        }))
+                      }
+                    >
+                      <option value="false">false</option>
+                      <option value="true">true</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span className="muted">hpMultiplier</span>
+                    <input
+                      value={selectedLevel.eliteConfig?.hpMultiplier ?? DEFAULT_ELITE_CONFIG.hpMultiplier}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          eliteConfig: {
+                            ...(level.eliteConfig ?? DEFAULT_ELITE_CONFIG),
+                            hpMultiplier: parseNumberInput(event.target.value, level.eliteConfig?.hpMultiplier ?? DEFAULT_ELITE_CONFIG.hpMultiplier)
+                          }
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span className="muted">damageMultiplier</span>
+                    <input
+                      value={selectedLevel.eliteConfig?.damageMultiplier ?? DEFAULT_ELITE_CONFIG.damageMultiplier}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          eliteConfig: {
+                            ...(level.eliteConfig ?? DEFAULT_ELITE_CONFIG),
+                            damageMultiplier: parseNumberInput(
+                              event.target.value,
+                              level.eliteConfig?.damageMultiplier ?? DEFAULT_ELITE_CONFIG.damageMultiplier
+                            )
+                          }
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span className="muted">moveSpeedMultiplier</span>
+                    <input
+                      value={selectedLevel.eliteConfig?.moveSpeedMultiplier ?? ''}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          eliteConfig: {
+                            ...(level.eliteConfig ?? DEFAULT_ELITE_CONFIG),
+                            moveSpeedMultiplier: parseOptionalNumberInput(event.target.value)
+                          }
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span className="muted">outline.enabled</span>
+                    <select
+                      value={(selectedLevel.eliteConfig?.outline?.enabled ?? DEFAULT_ELITE_CONFIG.outline.enabled) ? 'true' : 'false'}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          eliteConfig: {
+                            ...(level.eliteConfig ?? DEFAULT_ELITE_CONFIG),
+                            outline: {
+                              ...(level.eliteConfig?.outline ?? DEFAULT_ELITE_CONFIG.outline),
+                              enabled: event.target.value === 'true'
+                            }
+                          }
+                        }))
+                      }
+                    >
+                      <option value="false">false</option>
+                      <option value="true">true</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span className="muted">outline.color</span>
+                    <select
+                      value={selectedLevel.eliteConfig?.outline?.color ?? DEFAULT_ELITE_CONFIG.outline.color ?? 'YELLOW'}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          eliteConfig: {
+                            ...(level.eliteConfig ?? DEFAULT_ELITE_CONFIG),
+                            outline: {
+                              ...(level.eliteConfig?.outline ?? DEFAULT_ELITE_CONFIG.outline),
+                              color: event.target.value === 'YELLOW' ? 'YELLOW' : undefined
+                            }
+                          }
+                        }))
+                      }
+                    >
+                      <option value="YELLOW">YELLOW</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span className="muted">announceInIntel</span>
+                    <select
+                      value={(selectedLevel.eliteConfig?.announceInIntel ?? DEFAULT_ELITE_CONFIG.announceInIntel) ? 'true' : 'false'}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          eliteConfig: {
+                            ...(level.eliteConfig ?? DEFAULT_ELITE_CONFIG),
+                            announceInIntel: event.target.value === 'true'
+                          }
+                        }))
+                      }
+                    >
+                      <option value="false">false</option>
+                      <option value="true">true</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span className="muted">icon</span>
+                    <input
+                      value={selectedLevel.eliteConfig?.icon ?? ''}
+                      onChange={(event) =>
+                        patchSelectedLevel((level) => ({
+                          ...level,
+                          eliteConfig: {
+                            ...(level.eliteConfig ?? DEFAULT_ELITE_CONFIG),
+                            icon: event.target.value.trim() || undefined
+                          }
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+              </div>
             </div>
           )}
 
