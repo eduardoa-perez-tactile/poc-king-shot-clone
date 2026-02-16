@@ -1,80 +1,260 @@
-You are Codex working on our Kingshot-like single-player browser RTS (Babylon.js 3D + React UI overlay). Implement a new “Geometric Sci-Fi Minimal” render style inspired by the provided reference image.
+You are Codex working in the Kingshot-like browser RTS roguelike project (Babylon.js 3D + React UI). Implement 4 features inspired by Thronefall: (1) Night Modifiers (risk/reward) chosen before each battle cycle, (2) Per-Night Perks (choose 1 of 3) during the run, (3) Enemy Traits applied per-wave, (6) Elite Variants (stat multipliers + outline + pre-night icon).
 
-GOAL (visual):
-- World looks like a dense, modular grid of cubes/rectangular prisms with hard 90° edges.
-- Dark desaturated bluish/teal metallic base environment.
-- Minimal palette: dark base + bright white emissive + red emissive accents.
-- Visual hierarchy via scale (Stronghold biggest, buildings medium, units small; heroes/bosses larger).
-- Thin emissive light bars/strips + occasional vertical beams (spawn indicators).
-- Subtle bloom and depth of field to emphasize emissive areas.
+HARD CONSTRAINTS
+- No per-frame React rerenders. Use event-driven state (signals/store) and Babylon scene state.
+- All systems must be data-driven and editable from our existing dashboard level config (JSON).
+- Deterministic with seeded RNG per run + per day/wave (for debugging/replays).
+- Minimal new art: use existing labels/icons and simple materials/overlays (outline, tint, icon billboard).
+- Keep existing loop: Main Menu → Mission Select → Map Scene → Battle Cry → real-time waves → Build Phase.
 
-CONSTRAINTS:
-- Keep geometry primitive-only: Box/Plane/Cylinder only (prefer Box).
-- No complex meshes, no bevels, no textures required.
-- Use instancing/thin instances where possible for performance; avoid per-frame React rerenders.
-- Labels remain 2D (React overlay) or Babylon GUI; but meshes stay simple.
+DELIVERABLES
+1) Data schema additions (TypeScript types) for:
+   - NightModifiers, Perks, EnemyTraits, EliteConfig
+   - LevelConfig changes (where chosen, when applied)
+2) UI flows (React components) with minimal styling:
+   - Pre-battle “Night Setup” modal: choose Night Modifiers (1 max; later can support multiple)
+   - Post-battle or end-of-day “Perk Choice” modal: pick 1 of 3 random perks
+   - “Next Night Intel” panel: shows next wave’s spawn borders + distinct enemy types + trait icons + elite warning icon if applicable
+3) Runtime integration:
+   - Apply night modifier effects to wave generation + reward calculation
+   - Apply perks as run-scoped buffs (active list), some stacking, some unique
+   - Apply enemy traits at spawn time (component flags; affects damage, movement, targeting, on-death)
+   - Elite variant selection at spawn time: use multipliers + outline; announce in pre-night intel
+4) Testing + debug tools:
+   - Seed display + “reroll” dev button
+   - Toggle to force specific modifier/perk/trait/elite for testing
+   - Unit tests for selection logic + deterministic outputs
 
-TASKS:
-1) MATERIAL SYSTEM (Babylon PBR)
-- Create a small shared material library:
-  A) baseMetalDark: PBRMaterial with dark bluish/teal albedo, matte/rough look (high roughness), low metallic.
-  B) emissiveWhite: PBRMaterial (or StandardMaterial) with strong emissiveColor (white), minimal albedo.
-  C) emissiveRed: same but emissive red.
-  D) ghostGlass (optional): PBRMaterial with slight transparency (alpha 0.8–0.9) for buildings so user can see behind.
-- Ensure materials are reusable and cached (no per-entity material creation unless needed).
-- Provide helper functions like:
-  - getBaseMaterial(scene)
-  - getEmissiveMaterial(scene, color)
-  - getGhostMaterial(scene)
+--------------------------------------------------------------------------------
+FEATURE (1): NIGHT MODIFIERS (risk/reward)
+- Concept: before pressing Battle Cry, player picks ONE modifier for the upcoming battle cycle (night).
+- Modifiers increase difficulty and increase rewards.
+- Implement 6 initial modifiers (simple and safe):
+  A) "More Hordes": enemyCountMultiplier +0.25, rewardMultiplier +0.20
+  B) "Fast March": enemyMoveSpeedMultiplier +0.20, rewardMultiplier +0.15
+  C) "Armored": enemyHpMultiplier +0.20, rewardMultiplier +0.15
+  D) "No Towers Tonight": towersDisabled=true, rewardMultiplier +0.35
+  E) "Leaky Purse": goldStartPenalty=-X (e.g. -20), rewardMultiplier +0.30
+  F) "Double Spawn": addExtraSpawnBorder=true, rewardMultiplier +0.25
+- Choice happens each night; clears after battle ends.
+- Reward multiplier applies to end-of-night gold ONLY (keep other systems unchanged).
+- Data-driven: dashboard can enable/disable modifiers per level and set allowed list per night index.
 
-2) POST-PROCESS LOOK (DefaultRenderingPipeline)
-- Add BABYLON.DefaultRenderingPipeline attached to the main camera.
-- Enable bloom and tune it for emissive highlights (bloom on; moderate weight/threshold; don’t overblow).
-- Enable mild depth of field for “cinematic” feel (small blur; focus around mid-scene).
-- Enable FXAA if needed.
-(Reference: Babylon DefaultRenderingPipeline supports bloom/DOF/FXAA/image processing.) 
+Schema:
+type NightModifierId = string;
+interface NightModifierDef {
+  id: NightModifierId;
+  name: string;
+  description: string;
+  rewardMultiplier: number; // e.g. 1.20
+  effects: {
+    enemyCountMultiplier?: number;
+    enemyMoveSpeedMultiplier?: number;
+    enemyHpMultiplier?: number;
+    towersDisabled?: boolean;
+    goldStartPenalty?: number;
+    addExtraSpawnBorder?: boolean;
+  };
+  icon?: string; // UI icon key
+}
+LevelConfig: allowedNightModifiersByNight?: Record<number, NightModifierId[]>; // night index 1..N
+RunState: activeNightModifier?: NightModifierId
 
-3) GEOMETRY RULES (apply across map, buildings, units, indicators)
-- Stronghold:
-  - Single Box mesh, largest scale on map.
-  - Slight emissive edge/strip effect: add 1 thin child box as a “light bar” OR use a second box as a strip (still primitive-only). If you must keep strictly 1 mesh, then use emissive material + GUI overlay ring, but prefer a thin child “strip” box.
-- Buildings (pads):
-  - Use single Box with ghostGlass material (optional) and a thin emissive strip box to indicate level.
-  - Level strip color: white for levels; intensity increases with level.
-- Towers:
-  - Box mesh, taller than other buildings.
-  - Add thin white emissive strip.
-- Units:
-  - Single Box each (Infantry small cube; Cavalry elongated box; Heroes taller box; Miniboss/Boss larger).
-  - Color coding only via emissive accents or albedo tint; keep palette restrained.
-- Obstacles:
-  - Low-height rectangular prisms using baseMetalDark.
+Implementation:
+- Add a NightSetupModal that opens when player hits Battle Cry (or a "Prepare Night" button).
+- Player selects 1 modifier (or none if level allows).
+- Store selection in RunState.activeNightModifier and lock it for that battle cycle.
+- In battle start:
+  - Apply effects to WavePlanner / EnemySpawner:
+    - count multiplier adjusts spawn counts
+    - speed/hp multipliers applied to spawned enemy stats
+    - towersDisabled gates tower AI + tower purchase/activation for that night only
+    - addExtraSpawnBorder forces WavePlanner to include a second border if available
+  - Apply rewardMultiplier to gold awarded at end of night.
 
-4) SPAWN INDICATORS (next-wave border spawns)
-- For each next-wave spawn border point, render a thin vertical beam:
-  - Very thin tall box (or cylinder) with emissiveRed material, optionally with animated emissive intensity (pulse).
-  - Keep in a pool; enable/disable per wave to avoid create/destroy.
+--------------------------------------------------------------------------------
+FEATURE (2): PER-NIGHT PERKS (choose 1 of 3)
+- After each completed night (or at start of build phase), show PerkChoiceModal.
+- Offer 3 random perks not already maxed/locked. Player picks 1. Perks persist for the run.
+- Cap: player can hold up to 5 perks like Thronefall (configurable).
+- Perks are run-scoped buffs applied via a central BuffSystem.
 
-5) PERFORMANCE IMPLEMENTATION
-- Batch repeated environment blocks (decorative grid greebles) using thin instances:
-  - Create one source Box mesh “greebleBlock” and thinInstanceAdd with many matrices.
-  - Same for small “light bar” strips if repeated.
-(Reference: Babylon thin instances are optimized vs many separate meshes.)
+Initial perks (keep simple):
+P1) "Arcane Towers": towerRangeMultiplier +0.20, towerDamageMultiplier +0.33
+P2) "Treasure Hunter": goldRewardMultiplier +0.15
+P3) "Architects Council": buildingUpgradeCostMultiplier -0.10
+P4) "Ranged Drill": rangedUnitsDamageMultiplier +0.15
+P5) "Thick Walls": wallHpMultiplier +0.25
+P6) "Interest": endOfNightBonusGold + (strongholdLevel * 5)
 
-6) INTEGRATION POINTS
-- Where to apply:
-  - Map scene initialization: set up pipeline + material cache.
-  - Entity factories (Stronghold, Building, Unit, Obstacle, SpawnIndicator): update to use primitives + shared materials.
-- Do not break gameplay logic. Only replace visuals.
+Schema:
+type PerkId = string;
+interface PerkDef {
+  id: PerkId;
+  name: string;
+  description: string;
+  maxStacks?: number; // default 1
+  effects: {
+    towerRangeMultiplier?: number;
+    towerDamageMultiplier?: number;
+    goldRewardMultiplier?: number;
+    buildingUpgradeCostMultiplier?: number;
+    rangedUnitsDamageMultiplier?: number;
+    wallHpMultiplier?: number;
+    endOfNightBonusGoldPerStrongholdLevel?: number;
+  };
+  icon?: string;
+}
+RunState: perks: Record<PerkId, { stacks: number }>;
+LevelConfig: perkPool?: PerkId[]; perkChoicesPerNight?: number (default 3); perkMaxCount?: number (default 5)
 
-DELIVERABLES:
-- Code changes in the Babylon scene setup + entity factories to enforce this style.
-- A “StyleConfig” object with palette + roughness/metallic/emissiveIntensity parameters for quick tweaking.
-- Ensure everything runs with our orthographic RTS camera.
+Implementation:
+- Deterministic perk offering:
+  - rng = makeRng(runSeed, "perkOffer", nightIndex)
+  - candidates = perkPool filtered by stack availability and not exceeding perkMaxCount rules
+  - pick N without replacement; if insufficient, allow duplicates only if perk is stackable
+- Apply perk effects through BuffSystem:
+  - Provide functions: getTowerDamageMultiplier(), getGoldRewardMultiplier(), etc.
+  - Combine multipliers multiplicatively where sensible; document it.
 
-NOTES:
-- Keep DOF subtle; bloom should highlight emissive strips and beams.
-- No textures needed; lighting + emissive should carry the look.
-- Use pooled meshes/VFX; avoid allocating each wave.
+UI:
+- PerkChoiceModal appears at night end. Shows 3 cards with icon/name/desc.
+- Player selects one; update RunState; close modal; proceed to build phase.
 
-IMPLEMENT NOW.
+--------------------------------------------------------------------------------
+FEATURE (3): ENEMY TRAITS (per-wave)
+- Each wave definition can specify trait(s) applied to all spawns or to a subset.
+- Traits modify behavior/stats in obvious ways; must be readable with a small icon above enemies.
+
+Initial traits:
+T1) "Shielded": rangedDamageTakenMultiplier = 0.75
+T2) "Explosive": onDeathExplosionRadius=R, onDeathDamage=D (affects player units only)
+T3) "Tower Hunter": targetingPriority = TowersFirst (for enemies that have target selection)
+T4) "Unstoppable": ignoresWalls=true (pathing can pass through walls; still collides with units if you have that)
+
+Schema:
+type EnemyTraitId = string;
+interface EnemyTraitDef {
+  id: EnemyTraitId;
+  name: string;
+  description: string;
+  icon?: string;
+  effects: {
+    rangedDamageTakenMultiplier?: number;
+    onDeathExplosion?: { radius: number; damage: number; };
+    targetingPriority?: "DEFAULT" | "TOWERS_FIRST";
+    ignoresWalls?: boolean;
+  };
+}
+WaveConfig additions:
+interface WaveConfig {
+  // existing...
+  traits?: EnemyTraitId[];             // applies to all spawns in wave unless overridden
+  eliteChance?: number;               // can combine with feature 6
+  groups?: Array<{ enemyTypeId: string; count: number; traits?: EnemyTraitId[]; eliteChance?: number; }>;
+}
+
+Implementation:
+- At spawn time, attach trait component(s) to enemy entity:
+  - EnemyTraitsComponent { traits: EnemyTraitId[] }
+- Damage system:
+  - If Shielded: apply multiplier when damage source is ranged
+- Death system:
+  - If Explosive: spawn pooled explosion VFX + apply AoE damage
+- Targeting:
+  - If Tower Hunter: pick tower targets first when choosing destination/attack target
+- Pathing:
+  - If Unstoppable: pathing treats walls as non-blocking; still allow wall HP to exist but enemy doesn’t collide/attack unless it’s already in their path logic (document expected behavior).
+
+UI:
+- Enemy billboard: show up to 2 small trait icons stacked above the existing label.
+- Next Night Intel panel lists distinct trait icons per wave.
+
+--------------------------------------------------------------------------------
+FEATURE (6): ELITE VARIANTS
+- Elites are stronger versions of any enemy type; behavior unchanged.
+- Based on Thronefall: health x4 and damage x3, plus yellow outline and a pre-night warning icon. (Use these defaults but keep configurable.) :contentReference[oaicite:0]{index=0}
+
+Schema:
+interface EliteConfig {
+  enabled: boolean;
+  hpMultiplier: number;     // default 4
+  damageMultiplier: number; // default 3
+  moveSpeedMultiplier?: number; // optional
+  outline: { enabled: boolean; color?: "YELLOW"; }; // keep simple; use Babylon highlight layer
+  announceInIntel: boolean; // true
+  icon?: string;            // UI icon key
+}
+WaveConfig: eliteChance?: number; groups[].eliteChance?: number
+LevelConfig: eliteConfig?: EliteConfig
+
+Implementation:
+- Spawn roll:
+  - rng = makeRng(runSeed, "eliteRoll", nightIndex, waveIndex, spawnIndex)
+  - if rng.nextFloat() < eliteChance → isElite = true
+- Apply multipliers to enemy runtime stats:
+  - enemy.maxHp *= hpMultiplier; enemy.hp = maxHp
+  - enemy.damage *= damageMultiplier
+- Visual:
+  - Use Babylon HighlightLayer OR emissive edge/outline material (whichever you already have) to add a yellow outline for elites. :contentReference[oaicite:1]{index=1}
+  - Add small “elite” icon billboard above elite enemies.
+- Pre-night intel:
+  - If any group has eliteChance>0 or elites rolled deterministically for next night (preferred):
+    - Show elite warning icon next to affected enemy types.
+  - Keep it deterministic: you can “pre-roll” the next night spawns when generating the NightPlan.
+
+--------------------------------------------------------------------------------
+ARCHITECTURE NOTES (IMPORTANT)
+- Create a "NightPlan" object when entering build phase for the NEXT night:
+  - Contains: selected spawn borders, waves (enemy types + counts + traits + elite flags), reward multiplier preview
+- This supports your existing “next wave spawn indicator” feature and lets UI show accurate intel.
+
+Add/Update Systems:
+- RunStateStore (Zustand or your current store):
+  - runSeed, nightIndex, activeNightModifier, perks, nextNightPlan
+- NightPlanner:
+  - buildNextNightPlan(levelConfig, runState, rng)
+- BuffSystem:
+  - computes aggregated multipliers from perks + night modifier
+- EnemySpawner:
+  - consumes NightPlan → spawns enemies with trait + elite components
+- RewardSystem:
+  - computes gold = baseGold * (nightModifier.rewardMultiplier) * (perks.goldRewardMultiplier)
+- UI:
+  - NightSetupModal (before battle)
+  - PerkChoiceModal (after battle)
+  - NextNightIntelPanel (during build phase)
+
+--------------------------------------------------------------------------------
+IMPLEMENTATION STEPS (DO IN ORDER)
+1) Add TS types + JSON schema updates for LevelConfig/WaveConfig.
+2) Add deterministic RNG helper (seeded) and integrate into run creation + night planning.
+3) Implement NightPlan generation:
+   - incorporate spawn borders, enemy groups, traits, elite pre-roll (optional but recommended)
+4) Implement NightSetupModal and wiring to set activeNightModifier before battle start.
+5) Apply modifier effects in spawning + tower disabling + reward multiplier.
+6) Implement PerkChoiceModal at end-of-night; perk selection deterministic offering.
+7) Implement BuffSystem and route all relevant stat queries through it (towers/units/walls/rewards).
+8) Implement EnemyTraits logic: shielded, explosive, tower hunter, unstoppable.
+9) Implement Elite variants: stat multipliers + outline + icon + intel warning.
+10) Add debug controls + unit tests for determinism.
+
+--------------------------------------------------------------------------------
+ACCEPTANCE CRITERIA
+- Player can start a night, choose a Night Modifier, and see its effects reflected in:
+  - enemy stats/counts/spawns (depending on modifier)
+  - reward multiplier (gold) at end of night
+- After finishing night, player is offered 3 perks, picks 1, perk persists and affects subsequent nights.
+- Enemy waves can include traits; traits change gameplay and display icons above enemies and in intel.
+- Elite enemies spawn according to chance or pre-roll, have yellow outline, and are warned in intel. :contentReference[oaicite:2]{index=2}
+- No per-frame React rerenders introduced; all updates event-driven.
+- Determinism verified by test: same seed => same modifier/perk offerings, same night plan, same elite rolls.
+
+--------------------------------------------------------------------------------
+CODE QUALITY
+- Keep changes modular; avoid cross-system coupling.
+- Prefer pure functions for planning/selection logic.
+- Add inline docs explaining multiplier stacking rules.
+- Use object pooling for VFX (explosion) and billboards, no per-spawn allocations in hot loops.
+
+Now implement all of the above in our codebase.
