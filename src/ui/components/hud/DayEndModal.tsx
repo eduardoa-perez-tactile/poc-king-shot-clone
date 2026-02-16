@@ -13,9 +13,10 @@ export const DayEndModal: React.FC<{
   progressLabel: string
   progressValue: number
   progressTarget: number
+  nextEnemyTypes?: string[]
   ctaLabel?: string
   onNextDay: () => void
-}> = ({ dayNumber, breakdown, progressLabel, progressValue, progressTarget, ctaLabel, onNextDay }) => {
+}> = ({ dayNumber, breakdown, progressLabel, progressValue, progressTarget, nextEnemyTypes, ctaLabel, onNextDay }) => {
   const reduceMotion = useMotionSettings()
   return (
     <motion.div
@@ -30,7 +31,8 @@ export const DayEndModal: React.FC<{
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.96, opacity: 0 }}
         transition={{ duration: reduceMotion ? 0 : 0.2, ease: 'easeOut' }}
-        className="w-full max-w-xl rounded-3xl border border-white/10 bg-surface/95 p-6 shadow-soft"
+        className="w-full max-w-xl rounded-3xl border border-white/10 bg-surface p-6 shadow-soft"
+        data-testid="day-summary-modal"
       >
         <div className="space-y-2">
           <div className="text-2xl font-semibold text-text">Survived Day {dayNumber}</div>
@@ -68,6 +70,22 @@ export const DayEndModal: React.FC<{
             </div>
           </Card>
         </div>
+        {nextEnemyTypes && nextEnemyTypes.length > 0 && (
+          <Card className="mt-4 p-4" data-testid="day-summary-next-enemies">
+            <div className="text-sm font-semibold text-text">Next Wave Intel</div>
+            <div className="mt-2 text-xs text-muted">Distinct enemy types expected next cycle:</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {nextEnemyTypes.map((enemyName) => (
+                <span
+                  key={enemyName}
+                  className="rounded-full border border-cyan-200/40 bg-cyan-950 px-2 py-1 text-[11px] text-cyan-100"
+                >
+                  {enemyName}
+                </span>
+              ))}
+            </div>
+          </Card>
+        )}
         <div className="mt-6 flex justify-end">
           <Button variant="primary" size="lg" onClick={onNextDay}>
             {ctaLabel ?? 'Start Next Day'}

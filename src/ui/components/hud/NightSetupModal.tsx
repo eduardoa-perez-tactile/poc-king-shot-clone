@@ -35,7 +35,7 @@ export const NightSetupModal: React.FC<{
         {allowNone && (
           <button
             type="button"
-            className={`w-full rounded-2xl border px-3 py-2 text-left text-sm ${selected ? 'border-white/10 bg-surface/60 text-muted' : 'border-cyan-300/60 bg-cyan-400/10 text-text'}`}
+            className={`w-full rounded-2xl border px-3 py-2 text-left text-sm ${selected ? 'border-white/10 bg-surface text-muted' : 'border-cyan-300/60 bg-cyan-950 text-text'}`}
             onClick={() => setSelected(undefined)}
           >
             <div className="font-semibold">No Modifier</div>
@@ -46,7 +46,7 @@ export const NightSetupModal: React.FC<{
           <button
             key={modifier.id}
             type="button"
-            className={`w-full rounded-2xl border px-3 py-2 text-left text-sm ${selected === modifier.id ? 'border-cyan-300/70 bg-cyan-400/10 text-text' : 'border-white/10 bg-surface/70 text-text'}`}
+            className={`w-full rounded-2xl border px-3 py-2 text-left text-sm ${selected === modifier.id ? 'border-cyan-300/70 bg-cyan-950 text-text' : 'border-white/10 bg-surface text-text'}`}
             onClick={() => setSelected(modifier.id)}
           >
             <div className="flex items-center justify-between gap-2">
@@ -58,7 +58,7 @@ export const NightSetupModal: React.FC<{
         ))}
       </div>
 
-      <div className="mt-1 rounded-xl border border-white/10 bg-surface/70 px-3 py-2 text-xs text-muted">
+      <div className="mt-1 rounded-xl border border-white/10 bg-surface px-3 py-2 text-xs text-muted">
         Selected: <span className="text-text">{selectedDef ? selectedDef.name : 'No modifier'}</span>
       </div>
 

@@ -20,7 +20,7 @@ export const Tooltip: React.FC<{
       {children}
       <span
         className={cn(
-          'pointer-events-none absolute z-50 whitespace-nowrap rounded-xl border border-white/10 bg-surface/90 px-3 py-2 text-xs text-text shadow-soft opacity-0 transition group-hover:opacity-100',
+          'pointer-events-none absolute z-50 whitespace-nowrap rounded-xl border border-white/10 bg-surface px-3 py-2 text-xs text-text shadow-soft opacity-0 transition group-hover:opacity-100',
           sideClass,
           className
         )}

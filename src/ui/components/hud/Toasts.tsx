@@ -24,7 +24,7 @@ export const Toasts: React.FC = () => {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: reduceMotion ? 0 : 0.18 }}
-            className="relative overflow-hidden rounded-2xl border border-white/10 bg-surface/90 p-3 shadow-soft"
+            className="relative overflow-hidden rounded-2xl border border-white/10 bg-surface p-3 shadow-soft"
             onClick={() => uiActions.dismissToast(toast.id)}
           >
             <div className="flex items-start gap-2 text-sm text-text">

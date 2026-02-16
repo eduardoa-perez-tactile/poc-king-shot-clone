@@ -33,7 +33,7 @@ export const NightDebugPanel: React.FC<{
   if (!import.meta.env.DEV) return null
 
   return (
-    <div className="pointer-events-auto fixed right-4 top-24 z-30 w-[280px] rounded-2xl border border-white/10 bg-surface/90 p-3 text-xs text-muted shadow-soft">
+    <div className="pointer-events-auto fixed right-4 top-24 z-30 w-[280px] rounded-2xl border border-white/10 bg-surface p-3 text-xs text-muted shadow-soft">
       <div className="mb-2 font-semibold text-text">Night Debug</div>
       <div className="mb-2">Seed: <span className="text-text">{runSeed}</span></div>
       <Button size="sm" variant="secondary" className="mb-3 w-full" onClick={onRerollSeed}>Reroll Seed</Button>

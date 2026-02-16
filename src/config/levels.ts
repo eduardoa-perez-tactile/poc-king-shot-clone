@@ -1,5 +1,8 @@
 import { getPlaytestLevel } from '../game/runtime/playtest'
 import { getTuningOverrideById, getTuningOverrides } from '../game/tuning/tuningStore'
+import { TUTORIAL_LEVEL_RAW } from '../levels/tutorial_01'
+import { getTutorialScriptForLevelId } from '../tutorial/tutorialScripts'
+import type { TutorialScript } from '../tutorial/tutorialTypes'
 import {
   BuildingPad,
   DayPlan,
@@ -298,7 +301,21 @@ const ensureMinimumTowerPads = (level: LevelDefinition): LevelDefinition => {
   }
 }
 
+type RuntimeLevelDefinition = LevelDefinition & {
+  tutorialScript?: TutorialScript
+}
+
+const withTutorialScript = <T extends LevelDefinition>(level: T): T & { tutorialScript?: TutorialScript } => {
+  const tutorialScript = getTutorialScriptForLevelId(level.id)
+  if (!tutorialScript) return level as T & { tutorialScript?: TutorialScript }
+  return {
+    ...level,
+    tutorialScript
+  }
+}
+
 const RAW_LEVELS = [
+  TUTORIAL_LEVEL_RAW,
   {
     id: 'level_1',
     name: 'Frontier Dawn',
@@ -592,29 +609,31 @@ const RAW_LEVELS = [
   }
 ]
 
-export const BASE_LEVELS: LevelDefinition[] = RAW_LEVELS.map((raw) => ensureMinimumTowerPads(migrateLevelDefinition(raw)))
+export const BASE_LEVELS: RuntimeLevelDefinition[] = RAW_LEVELS.map((raw) =>
+  withTutorialScript(ensureMinimumTowerPads(migrateLevelDefinition(raw)))
+)
 
 export const getBaseLevels = () => BASE_LEVELS.slice()
 
-export const getLevels = (): LevelDefinition[] => {
+export const getLevels = (): RuntimeLevelDefinition[] => {
   const overrides = getTuningOverrides()
-  const baseResolved = BASE_LEVELS.map((base) => ensureMinimumTowerPads(overrides[base.id] ?? base))
+  const baseResolved = BASE_LEVELS.map((base) => withTutorialScript(ensureMinimumTowerPads(overrides[base.id] ?? base)))
   const extraOverrides = Object.keys(overrides)
     .filter((id) => !BASE_LEVELS.some((level) => level.id === id))
-    .map((id) => ensureMinimumTowerPads(overrides[id]))
+    .map((id) => withTutorialScript(ensureMinimumTowerPads(overrides[id])))
   return [...baseResolved, ...extraOverrides]
 }
 
 // Legacy export kept for compatibility. Prefer getLevels() for runtime-aware lookup.
-export const LEVELS: LevelDefinition[] = getLevels()
+export const LEVELS: RuntimeLevelDefinition[] = getLevels()
 
 export const getBaseLevelById = (levelId: string) => BASE_LEVELS.find((level) => level.id === levelId)
 
 export const getLevelById = (levelId: string) => {
   const playtest = getPlaytestLevel()
-  if (playtest && playtest.id === levelId) return playtest
+  if (playtest && playtest.id === levelId) return withTutorialScript(playtest)
   const override = getTuningOverrideById(levelId)
-  if (override) return override
+  if (override) return withTutorialScript(override)
   return getBaseLevelById(levelId)
 }
 

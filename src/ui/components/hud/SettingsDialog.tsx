@@ -14,7 +14,7 @@ export const SettingsDialog: React.FC = () => {
       description="Tune input feel and visual intensity."
       footer={<Button variant="primary" onClick={() => uiActions.closeSettings()}>Done</Button>}
     >
-      <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-surface/70 px-3 py-2">
+      <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-surface px-3 py-2">
         <div>
           <div className="text-sm font-semibold text-text">Reduced Motion</div>
           <div className="text-xs text-muted">Minimize HUD animations.</div>
@@ -23,7 +23,7 @@ export const SettingsDialog: React.FC = () => {
           {settings.reducedMotion ? 'On' : 'Off'}
         </Button>
       </div>
-      <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-surface/70 px-3 py-2">
+      <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-surface px-3 py-2">
         <div>
           <div className="text-sm font-semibold text-text">Sound</div>
           <div className="text-xs text-muted">Interface clicks and alerts.</div>
@@ -32,7 +32,7 @@ export const SettingsDialog: React.FC = () => {
           {settings.sound ? 'On' : 'Off'}
         </Button>
       </div>
-      <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-surface/70 px-3 py-2">
+      <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-surface px-3 py-2">
         <div>
           <div className="text-sm font-semibold text-text">Unit Labels</div>
           <div className="text-xs text-muted">Show identifiers above squads and heroes.</div>

@@ -8,6 +8,7 @@ import { LoseScreen } from './components/LoseScreen'
 import { Dashboard } from './screens/Dashboard/Dashboard'
 import { clearPlaytestLevel, isPlaytestReturnEnabled, setPlaytestLevel } from '../game/runtime/playtest'
 import { validateLevelDefinition } from '../game/types/LevelDefinition'
+import { isTutorialCompleted } from '../tutorial/tutorialProgress'
 import { WORLD_MISSIONS } from './worldMapData'
 import { applyMissionResult, clearWorldProgression, loadWorldProgression, saveWorldProgression } from './worldProgression'
 
@@ -17,17 +18,41 @@ export const App: React.FC = () => {
   const [scene, setScene] = useState<Scene>('mainMenu')
   const [currentMissionId, setCurrentMissionId] = useState<string | null>(null)
   const [runSource, setRunSource] = useState<'normal' | 'dashboard'>('normal')
+  const [tutorialReplayRequested, setTutorialReplayRequested] = useState(false)
   const { activeRun, runPhase, startRun, abandonRun, retryRun, clearAll } = useRunStore()
   const dashboardEnabled = import.meta.env.DEV || new URLSearchParams(window.location.search).get('dev') === '1'
 
-  const handlePlay = () => setScene('worldMap')
+  const startTutorialRun = (replay: boolean) => {
+    clearPlaytestLevel()
+    setRunSource('normal')
+    setTutorialReplayRequested(replay)
+    setCurrentMissionId(null)
+    startRun('tutorial_01')
+    setScene('run')
+  }
+
+  const handlePlay = () => {
+    if (!isTutorialCompleted()) {
+      startTutorialRun(false)
+      return
+    }
+    setTutorialReplayRequested(false)
+    setScene('worldMap')
+  }
+
+  const handleReplayTutorial = () => {
+    startTutorialRun(true)
+  }
+
   const handleContinue = () => {
     if (!activeRun) return
     setRunSource(isPlaytestReturnEnabled() ? 'dashboard' : 'normal')
+    setTutorialReplayRequested((prev) => (activeRun.levelId === 'tutorial_01' ? prev : false))
     setScene('run')
   }
   const handleReset = () => {
     clearPlaytestLevel()
+    setTutorialReplayRequested(false)
     clearAll()
     clearWorldProgression()
     setCurrentMissionId(null)
@@ -47,6 +72,7 @@ export const App: React.FC = () => {
     }
 
     abandonRun()
+    setTutorialReplayRequested(false)
     setCurrentMissionId(null)
     setScene('worldMap')
   }
@@ -57,6 +83,7 @@ export const App: React.FC = () => {
         canContinue={Boolean(activeRun)}
         canOpenDashboard={dashboardEnabled}
         onPlay={handlePlay}
+        onReplayTutorial={handleReplayTutorial}
         onContinue={handleContinue}
         onDashboard={() => setScene('dashboard')}
         onReset={handleReset}
@@ -73,6 +100,7 @@ export const App: React.FC = () => {
           if (!validation.isValid && !force) return
           setPlaytestLevel(level, true)
           setRunSource('dashboard')
+          setTutorialReplayRequested(false)
           setCurrentMissionId(null)
           startRun(level.id)
           setScene('run')
@@ -88,10 +116,12 @@ export const App: React.FC = () => {
         onStart={(missionId, levelId) => {
           clearPlaytestLevel()
           setRunSource('normal')
+          setTutorialReplayRequested(false)
           setCurrentMissionId(missionId)
           startRun(levelId)
           setScene('run')
         }}
+        onReplayTutorial={handleReplayTutorial}
       />
     )
   }
@@ -102,6 +132,7 @@ export const App: React.FC = () => {
         canContinue={false}
         canOpenDashboard={dashboardEnabled}
         onPlay={handlePlay}
+        onReplayTutorial={handleReplayTutorial}
         onContinue={() => {}}
         onDashboard={() => setScene('dashboard')}
         onReset={handleReset}
@@ -115,6 +146,7 @@ export const App: React.FC = () => {
         onLevelSelect={() => {
           if (runSource === 'dashboard') {
             clearPlaytestLevel()
+            setTutorialReplayRequested(false)
             setCurrentMissionId(null)
             abandonRun()
             setScene('dashboard')
@@ -136,6 +168,7 @@ export const App: React.FC = () => {
         onLevelSelect={() => {
           if (runSource === 'dashboard') {
             clearPlaytestLevel()
+            setTutorialReplayRequested(false)
             setCurrentMissionId(null)
             abandonRun()
             setScene('dashboard')
@@ -152,6 +185,16 @@ export const App: React.FC = () => {
       onExit={() => {
         clearPlaytestLevel()
         setRunSource('normal')
+        setTutorialReplayRequested(false)
+        setCurrentMissionId(null)
+        abandonRun()
+        setScene('worldMap')
+      }}
+      tutorialReplay={tutorialReplayRequested}
+      onTutorialSkip={() => {
+        clearPlaytestLevel()
+        setRunSource('normal')
+        setTutorialReplayRequested(false)
         setCurrentMissionId(null)
         abandonRun()
         setScene('worldMap')
@@ -160,6 +203,7 @@ export const App: React.FC = () => {
         runSource === 'dashboard'
           ? () => {
               clearPlaytestLevel()
+              setTutorialReplayRequested(false)
               setCurrentMissionId(null)
               abandonRun()
               setScene('dashboard')

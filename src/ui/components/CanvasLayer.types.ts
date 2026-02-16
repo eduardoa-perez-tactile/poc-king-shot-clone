@@ -53,4 +53,8 @@ export interface CanvasLayerProps {
   showUnitLabels?: boolean
   onEliteWarning?: (message: string) => void
   nextBattlePreview?: NextBattlePreview
+  onHeroMoved?: (payload: { dx: number; dy: number }) => void
+  onUnitRecallUsed?: () => void
+  onWaveStarted?: (payload: { waveIndex: number }) => void
+  onTowerAttack?: (payload: { sourceId?: string; targetId?: string }) => void
 }

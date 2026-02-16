@@ -20,7 +20,7 @@ export const Tabs: React.FC<{ value: string; onValueChange: (next: string) => vo
 )
 
 export const TabsList: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({ className, ...props }) => (
-  <div className={cn('inline-flex rounded-2xl border border-white/10 bg-surface/70 p-1', className)} {...props} />
+  <div className={cn('inline-flex rounded-2xl border border-white/10 bg-surface p-1', className)} {...props} />
 )
 
 export const TabsTrigger: React.FC<React.ButtonHTMLAttributes<HTMLButtonElement> & { value: string }> = ({

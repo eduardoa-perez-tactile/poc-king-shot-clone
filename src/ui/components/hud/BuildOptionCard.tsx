@@ -12,13 +12,14 @@ export const BuildOptionCard: React.FC<{
   locked?: boolean
   lockedReason?: string
   onBuild: () => void
-}> = ({ title, description, cost, canAfford, locked, lockedReason, onBuild }) => {
+  testId?: string
+}> = ({ title, description, cost, canAfford, locked, lockedReason, onBuild, testId }) => {
   const isLocked = Boolean(locked)
   const content = (
     <Card
       className={[
         'flex h-full flex-col justify-between gap-3 p-4 transition',
-        isLocked ? 'border-white/5 bg-slate-900/50 opacity-70' : 'hover:-translate-y-0.5 hover:border-white/20 hover:shadow-lift'
+        isLocked ? 'border-white/5 bg-slate-900 opacity-70' : 'hover:-translate-y-0.5 hover:border-white/20 hover:shadow-lift'
       ].join(' ')}
     >
       <div>
@@ -37,6 +38,7 @@ export const BuildOptionCard: React.FC<{
         size="sm"
         disabled={!canAfford || isLocked}
         onClick={onBuild}
+        data-testid={testId}
       >
         Build
       </Button>

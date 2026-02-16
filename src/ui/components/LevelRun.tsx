@@ -3,7 +3,7 @@ import { BuildingId, BUILDING_DEFS } from '../../config/buildings'
 import { ELITE_DEFS } from '../../config/elites'
 import { HERO_RECRUIT_DEFS, HeroRecruitId } from '../../config/heroes'
 import { ENEMY_TRAIT_ICON_LABELS, NightModifierId, PerkId } from '../../config/nightContent'
-import { getLevelById } from '../../config/levels'
+import { getLevelById, LevelDefinition } from '../../config/levels'
 import { UnitType, UNIT_DEFS } from '../../config/units'
 import { getHQBonusHp, getIncomeBreakdown, getSquadCap, getUnitCost, getUnitPurchaseCap } from '../../run/economy'
 import { getEnemyTraitDefs, getPerkDefs, getPerkOffersForNight, getAllowedNightModifiersForNight, getNightModifierDefs } from '../../run/nightSystems'
@@ -43,12 +43,17 @@ import { Tooltip } from './ui/Tooltip'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { uiActions, useUiStore } from '../store/uiStore'
 import type { SelectionInfo } from '../store/uiStore'
+import { TutorialOverlay } from '../TutorialOverlay'
 import { useMotionSettings } from '../hooks/useMotionSettings'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Activity, AlertTriangle, ArrowUp, Building2, Crosshair, Grid3x3, Swords } from 'lucide-react'
 import { getStrongholdHqBaseHp } from '../../config/stronghold'
 import { isBuildingAllowedOnPad, isUnitProducerBuilding } from '../../game/rules/progression'
 import type { CombatResult } from '../../rts/types'
+import { TutorialManager } from '../../tutorial/TutorialManager'
+import { emitTutorialEvent } from '../../tutorial/tutorialEventBus'
+import { isTutorialCompleted } from '../../tutorial/tutorialProgress'
+import type { TutorialManagerSnapshot, TutorialScript, TutorialWorldAnchor } from '../../tutorial/tutorialTypes'
 
 const SQUAD_SPAWN_OFFSETS = [
   { x: -90, y: -70 },
@@ -87,7 +92,12 @@ const describeLevelEffects = (id: BuildingId, level: number) => {
   return parts.join(' · ')
 }
 
-export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => void }> = ({ onExit, onBackToDashboard }) => {
+export const LevelRun: React.FC<{
+  onExit: () => void
+  onBackToDashboard?: () => void
+  tutorialReplay?: boolean
+  onTutorialSkip?: () => void
+}> = ({ onExit, onBackToDashboard, tutorialReplay = false, onTutorialSkip }) => {
   const {
     activeRun,
     runPhase,
@@ -125,6 +135,13 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
   if (!activeRun) return null
   const level = getLevelById(activeRun.levelId)
   if (!level) return null
+  const tutorialScript = (level as LevelDefinition & { tutorialScript?: TutorialScript }).tutorialScript
+  const tutorialShouldRun = Boolean(tutorialScript) && (tutorialReplay || !isTutorialCompleted())
+  const tutorialManager = useMemo(
+    () => (tutorialShouldRun && tutorialScript ? new TutorialManager(tutorialScript, { initialPhase: 'build' }) : null),
+    [tutorialScript, tutorialShouldRun]
+  )
+  const [tutorialSnapshot, setTutorialSnapshot] = useState<TutorialManagerSnapshot | null>(null)
 
   const combatDefinition = useMemo(() => buildCombatDefinition(activeRun), [activeRun])
   const nextBattlePreview = combatDefinition.nextBattlePreview
@@ -203,6 +220,23 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
       hasEliteVariant: (combatDefinition.eliteConfig?.announceInIntel ?? true) ? wave.hasEliteVariant : false
     }))
   }, [combatDefinition.eliteConfig?.announceInIntel, nextBattlePreview?.previewWaves, traitNameById])
+
+  const summaryEnemyTypes = useMemo(() => {
+    const ids = nextBattlePreview?.previewEnemyTypesDistinct ?? []
+    return Array.from(
+      new Set(
+        ids
+          .map((id) => {
+            const unit = UNIT_DEFS[id as UnitType]
+            if (unit) return unit.name
+            const elite = ELITE_DEFS[id as keyof typeof ELITE_DEFS]
+            if (elite) return elite.name
+            return level.enemies.catalog.find((entry) => entry.id === id)?.name ?? id
+          })
+          .filter((name) => Boolean(name))
+      )
+    )
+  }, [level.enemies.catalog, nextBattlePreview?.previewEnemyTypesDistinct])
 
   const perkChoicePending =
     runPhase === 'day_end' &&
@@ -286,6 +320,24 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
     }
   }, [])
 
+  useEffect(() => {
+    if (!tutorialManager) {
+      setTutorialSnapshot(null)
+      return
+    }
+    const unsubscribe = tutorialManager.subscribe((next) => {
+      setTutorialSnapshot(next)
+    })
+    return () => {
+      unsubscribe()
+      tutorialManager.dispose()
+    }
+  }, [tutorialManager])
+
+  useEffect(() => {
+    emitTutorialEvent('PHASE_CHANGED', { phase: runPhase })
+  }, [runPhase])
+
   const addToast = useCallback((message: string, variant: 'default' | 'danger' | 'success' = 'default') => {
     uiActions.pushToast({ message, variant, duration: 2400 })
   }, [])
@@ -297,6 +349,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
     }
     uiActions.setSelectedPad(padId)
     uiActions.setPanelOpen(true)
+    emitTutorialEvent('PAD_SELECTED', { padId })
   }, [addToast, runPhase])
 
   const handleBuild = (padId: string, buildingId: BuildingId) => {
@@ -324,6 +377,13 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
       return
     }
     buyBuilding(buildingId, padId)
+    emitTutorialEvent('BUILDING_BUILT', { padId, buildingType: buildingId })
+    if (buildingId === 'watchtower') {
+      emitTutorialEvent('TOWER_PLACED', { padId })
+    }
+    if (buildingId === 'wall') {
+      emitTutorialEvent('WALL_PLACED', { padId })
+    }
     uiActions.setSelectedPad(padId)
   }
 
@@ -346,6 +406,10 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
       return
     }
     upgradeBuilding(padId)
+    emitTutorialEvent('BUILDING_UPGRADED', { padId, buildingId: building.id, level: building.level + 1 })
+    if (building.id === 'watchtower') {
+      emitTutorialEvent('TOWER_UPGRADED', { padId, level: building.level + 1 })
+    }
   }
 
   const findSpawnPosition = useCallback((padId: string) => {
@@ -447,7 +511,53 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
     settingsOpen ||
     pauseOpen ||
     nightSetupOpen ||
-    perkChoicePending
+    perkChoicePending ||
+    Boolean(tutorialSnapshot?.blockInput)
+
+  const spawnIndicatorEventKeyRef = useRef<string | null>(null)
+  const summaryOpenEventKeyRef = useRef<string | null>(null)
+  const summaryEnemyTypesEventKeyRef = useRef<string | null>(null)
+  const tutorialCompletionToastRef = useRef(false)
+
+  useEffect(() => {
+    if (runPhase !== 'build') return
+    const borders = nextBattlePreview?.previewEdges ?? []
+    if (borders.length === 0) return
+    const key = `${activeRun.dayNumber}:${borders.join(',')}`
+    if (spawnIndicatorEventKeyRef.current === key) return
+    spawnIndicatorEventKeyRef.current = key
+    emitTutorialEvent('WAVE_SPAWN_INDICATOR_SHOWN', { borders })
+  }, [activeRun.dayNumber, nextBattlePreview?.previewEdges, runPhase])
+
+  useEffect(() => {
+    if (!nightSetupOpen) return
+    // Fallback trigger: if the player opened Night Setup via the battle button,
+    // mark the battle cry intent even if the click event was missed.
+    emitTutorialEvent('UI_BATTLE_CRY_CLICKED', {})
+  }, [nightSetupOpen])
+
+  useEffect(() => {
+    if (!dayEndModalVisible) return
+    const key = `summary:${activeRun.dayNumber}`
+    if (summaryOpenEventKeyRef.current !== key) {
+      summaryOpenEventKeyRef.current = key
+      emitTutorialEvent('DAY_SUMMARY_OPENED', { dayNumber: activeRun.dayNumber })
+    }
+  }, [activeRun.dayNumber, dayEndModalVisible])
+
+  useEffect(() => {
+    if (!dayEndModalVisible || summaryEnemyTypes.length === 0) return
+    const key = `next:${activeRun.dayNumber}:${summaryEnemyTypes.join(',')}`
+    if (summaryEnemyTypesEventKeyRef.current === key) return
+    summaryEnemyTypesEventKeyRef.current = key
+    emitTutorialEvent('NEXT_WAVE_ENEMY_TYPES_SHOWN', { enemyTypes: summaryEnemyTypes })
+  }, [activeRun.dayNumber, dayEndModalVisible, summaryEnemyTypes])
+
+  useEffect(() => {
+    if (!tutorialSnapshot?.completed || tutorialCompletionToastRef.current) return
+    tutorialCompletionToastRef.current = true
+    addToast('Tutorial completed. You can replay it from Missions.', 'success')
+  }, [addToast, tutorialSnapshot?.completed])
 
   const goal = level.goals[0]
   const goalProgressRaw = goal ? activeRun.goalsProgress[goal.id] : 0
@@ -531,7 +641,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
             />
 
             {unitDef && !isUnitProducerBuilding(activeBuilding.id) && (
-              <div className="rounded-2xl border border-white/10 bg-surface/70 p-3">
+              <div className="rounded-2xl border border-white/10 bg-surface p-3">
                 <div className="text-xs font-semibold text-text">Unit Shop</div>
                 <div className="mt-2 flex items-center justify-between text-sm text-text">
                   <span>{unitDef.name} Squad</span>
@@ -565,7 +675,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
             )}
 
             {unitDef && isUnitProducerBuilding(activeBuilding.id) && (
-              <div className="rounded-2xl border border-white/10 bg-surface/70 p-3">
+              <div className="rounded-2xl border border-white/10 bg-surface p-3">
                 <div className="text-xs font-semibold text-text">Auto-Producer</div>
                 <div className="mt-1 text-xs text-muted">
                   On build: +{Math.max(0, Math.floor(level.producerDefaults.unitsOnBuild))} squads
@@ -580,7 +690,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
             )}
 
             {def.heroRecruiter && (
-              <div className="rounded-2xl border border-white/10 bg-surface/70 p-3">
+              <div className="rounded-2xl border border-white/10 bg-surface p-3">
                 <div className="flex items-center justify-between text-xs font-semibold text-text">
                   <span>Hero Summons</span>
                   <span className="text-muted">Summon used: {activeBuilding.heroSummonUsed ?? 0}/{def.heroRecruiter.summonLimit}</span>
@@ -600,7 +710,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
                             ? `Need ${hero.cost - activeRun.gold} more gold.`
                             : 'Summon hero.'
                     return (
-                      <div key={hero.id} className="rounded-xl border border-white/10 bg-slate-950/40 p-3">
+                      <div key={hero.id} className="rounded-xl border border-white/10 bg-slate-950 p-3">
                         <div className="flex items-center justify-between text-sm text-text">
                           <span>{hero.name}</span>
                           <span>{hero.cost} gold</span>
@@ -657,6 +767,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
                 canAfford={canAfford && runPhase === 'build' && !isLocked}
                 locked={isLocked}
                 lockedReason={lockedReason}
+                testId={`build-option-${id}`}
                 onBuild={() => handleBuild(activePad.id, id)}
               />
             )
@@ -772,7 +883,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
           <div className="text-xs text-muted">Selected {selection.units.length} squads</div>
           <div className="space-y-2">
             {selection.units.map((unit) => (
-              <div key={unit.id} className="rounded-2xl border border-white/10 bg-surface/70 px-3 py-2">
+              <div key={unit.id} className="rounded-2xl border border-white/10 bg-surface px-3 py-2">
                 <div className="flex items-center justify-between text-xs text-text">
                   <span>{unit.name}</span>
                   <span>{Math.round(unit.hp)}/{Math.round(unit.maxHp)}</span>
@@ -789,10 +900,10 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
 
     return (
       <div className="space-y-3 text-xs text-muted">
-        <div className="rounded-2xl border border-white/10 bg-surface/70 px-3 py-2">
+        <div className="rounded-2xl border border-white/10 bg-surface px-3 py-2">
           {objective}
         </div>
-        <div className="rounded-2xl border border-white/10 bg-surface/70 px-3 py-2">
+        <div className="rounded-2xl border border-white/10 bg-surface px-3 py-2">
           {isMobile ? 'Tap pads to build. Select squads to command.' : 'Hover pads to build. Select squads to issue orders.'}
         </div>
       </div>
@@ -802,6 +913,9 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
   const handleSelectionChange = useCallback((next: SelectionInfo) => {
     uiActions.setSelection(next)
     if (next.kind !== 'none') uiActions.setSelectedPad(null)
+    if (next.kind === 'stronghold') {
+      emitTutorialEvent('STRONGHOLD_SELECTED', {})
+    }
   }, [])
 
   const handleTelemetry = useCallback((data: CanvasTelemetry) => {
@@ -843,10 +957,13 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
       addToast(runPhase === 'battle_cry' ? 'Battle cry in progress.' : 'Already in combat.', 'default')
       return
     }
+    emitTutorialEvent('UI_BATTLE_CRY_CLICKED', {})
     setNightSetupOpen(true)
   }, [addToast, runPhase])
 
   const handleNightSetupConfirm = useCallback((modifierId?: string) => {
+    // Ensure tutorial progression even if the initial battle button event was missed.
+    emitTutorialEvent('UI_BATTLE_CRY_CLICKED', {})
     setNightSetupOpen(false)
     startCombatWithNightModifier(modifierId as NightModifierId | undefined)
   }, [startCombatWithNightModifier])
@@ -887,6 +1004,69 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
       destroyedWallPadIds: result.destroyedWallPadIds
     })
   }, [resolveCombat])
+
+  const handleHeroMoved = useCallback((payload: { dx: number; dy: number }) => {
+    emitTutorialEvent('HERO_MOVED', payload)
+  }, [])
+
+  const handleUnitRecallUsed = useCallback(() => {
+    emitTutorialEvent('UNIT_RECALL_USED', {})
+  }, [])
+
+  const handleWaveStarted = useCallback((payload: { waveIndex: number }) => {
+    emitTutorialEvent('ENEMY_WAVE_STARTED', payload)
+  }, [])
+
+  const handleTowerAttack = useCallback((payload: { sourceId?: string; targetId?: string }) => {
+    emitTutorialEvent('TOWER_ATTACKED', payload)
+  }, [])
+
+  const handleTutorialNext = useCallback(() => {
+    tutorialManager?.next()
+  }, [tutorialManager])
+
+  const handleTutorialSkip = useCallback(() => {
+    if (tutorialManager) {
+      tutorialManager.skip()
+    } else {
+      emitTutorialEvent('TUTORIAL_SKIPPED', {})
+    }
+    addToast('Tutorial skipped. You can replay it from Missions.', 'default')
+    if (onTutorialSkip) {
+      onTutorialSkip()
+      return
+    }
+    onExit()
+  }, [addToast, onExit, onTutorialSkip, tutorialManager])
+
+  const resolveTutorialWorldPoint = useCallback((anchor: TutorialWorldAnchor) => {
+    if (anchor.target === 'stronghold') {
+      return { x: level.map.playerHQ.x, y: level.map.playerHQ.y }
+    }
+    if (anchor.target === 'hero') {
+      const hero = telemetry?.playerUnits.find((entry) => entry.kind === 'hero')
+      if (!hero) return null
+      return { x: hero.x, y: hero.y }
+    }
+    if (anchor.target === 'pad' && anchor.padId) {
+      const pad = level.buildingPads.find((entry) => entry.id === anchor.padId)
+      return pad ? { x: pad.x, y: pad.y } : null
+    }
+    return null
+  }, [level.buildingPads, level.map.playerHQ.x, level.map.playerHQ.y, telemetry?.playerUnits])
+
+  const projectTutorialWorldToScreen = useCallback((point: { x: number; y: number }) => {
+    if (!telemetry) return null
+    const { x, y, viewW, viewH } = telemetry.camera
+    if (!Number.isFinite(viewW) || !Number.isFinite(viewH) || viewW <= 0 || viewH <= 0) return null
+    const nx = (point.x - x) / viewW
+    const ny = (point.y - y) / viewH
+    if (!Number.isFinite(nx) || !Number.isFinite(ny)) return null
+    return {
+      x: nx * window.innerWidth,
+      y: ny * window.innerHeight
+    }
+  }, [telemetry])
 
   const panelTitle = activePad
     ? activeBuilding
@@ -930,6 +1110,10 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
           showUnitLabels={showUnitLabels}
           onEliteWarning={handleEliteWarning}
           nextBattlePreview={nextBattlePreview}
+          onHeroMoved={handleHeroMoved}
+          onUnitRecallUsed={handleUnitRecallUsed}
+          onWaveStarted={handleWaveStarted}
+          onTowerAttack={handleTowerAttack}
         />
 
       <div className="pointer-events-none absolute inset-0 z-10 flex flex-col">
@@ -1036,6 +1220,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
               cooldown={0}
               readyIn={0}
               disabled={runPhase !== 'build' && runPhase !== 'combat'}
+              testId="ability-rally-button"
               onClick={() => canvasRef.current?.rallyUnits()}
             />
           </div>
@@ -1079,10 +1264,11 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
                 'relative w-full overflow-hidden rounded-2xl px-6 py-3 text-base font-semibold',
                 runPhase === 'build'
                   ? `bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-500 text-slate-950 shadow-glow ${reduceMotion ? '' : 'battle-glow battle-shine'}`
-                  : 'bg-surface/80 text-muted border border-white/10'
+                  : 'bg-surface text-muted border border-white/10'
               ].join(' ')}
               onClick={handleBattleCry}
               disabled={runPhase !== 'build'}
+              data-testid="battle-cry-button"
               whileHover={reduceMotion ? {} : { scale: 1.02 }}
               whileTap={reduceMotion ? {} : { scale: 0.98 }}
               transition={{ duration: reduceMotion ? 0 : 0.18 }}
@@ -1101,6 +1287,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
             progressLabel={goal?.label ?? 'Mission progress'}
             progressValue={progressValue}
             progressTarget={progressTarget}
+            nextEnemyTypes={summaryEnemyTypes}
             ctaLabel={perkChoicePending ? 'Continue to Perk Choice' : 'Start Next Day'}
             onNextDay={handleStartNextDay}
           />
@@ -1136,6 +1323,16 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
         onOpenChange={setIntelOpen}
       />
 
+      {tutorialSnapshot?.active && (
+        <TutorialOverlay
+          snapshot={tutorialSnapshot}
+          resolveWorldPoint={resolveTutorialWorldPoint}
+          projectWorldToScreen={projectTutorialWorldToScreen}
+          onNext={handleTutorialNext}
+          onSkip={handleTutorialSkip}
+        />
+      )}
+
       {(runPhase === 'build' || runPhase === 'day_end') && (
         <NightDebugPanel
           runSeed={activeRun.runSeed}
@@ -1153,7 +1350,7 @@ export const LevelRun: React.FC<{ onExit: () => void; onBackToDashboard?: () => 
 
       {pauseOpen && (
         <div className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center bg-black/70 px-4">
-          <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-surface/95 p-5 shadow-soft">
+          <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-surface p-5 shadow-soft">
             <div className="text-lg font-semibold text-text">Paused</div>
             <div className="mt-2 text-sm text-muted">Resume or adjust your plan.</div>
             <div className="mt-4 flex flex-col gap-2">

@@ -15,7 +15,8 @@ const missionById = new Map(WORLD_MISSIONS.map((mission) => [mission.id, mission
 export const WorldMapMissionSelect: React.FC<{
   onBack: () => void
   onStart: (missionId: string, levelId: string) => void
-}> = ({ onBack, onStart }) => {
+  onReplayTutorial?: () => void
+}> = ({ onBack, onStart, onReplayTutorial }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const sceneRef = useRef<WorldMapSceneController | null>(null)
@@ -157,6 +158,7 @@ export const WorldMapMissionSelect: React.FC<{
         lockedReason={lockedReason}
         lockedMessage={lockedMessage}
         onStart={handleStart}
+        onReplayTutorial={onReplayTutorial}
         onBack={onBack}
       />
     </div>

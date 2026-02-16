@@ -1,0 +1,118 @@
+You are Codex working in an existing single-player browser RTS roguelike project (“Kingshot-like”). Tech: Babylon.js (3D scene with ortho RTS camera), React UI overlay, raycasting input. No per-frame React rerenders; use shared meshes/instancing; pooled VFX.
+
+TASK: Implement a “Tutorial Level” as the first playable level. The tutorial is a guided experience that teaches the player the core loop and controls via on-screen popups. The tutorial is NOT a separate mode: it is a LevelDefinition with scripted steps and UI prompts that appear contextually during phases (Map/Day loop, Battle, Build phase, End-of-day summary).
+
+GOALS / WHAT TO TEACH
+1) World/Map basics: Stronghold (HQ) and build pads
+2) Starting Battle: press “Battle Cry” to begin wave combat
+3) Hero movement with keyboard arrow keys (NOT camera)
+4) Recall units to hero with key ‘T’ (use fixed points around hero)
+5) Build Phase: click pads/buildings to open panels, build/upgrade within constraints
+6) Towers basics: place/upgrade and they ranged attack
+7) Wall basics: place wall to block path; walls have HP
+8) Enemy borders/spawn indicators: show next wave spawn locations on borders during build/day
+9) End-of-day: gold earned + next wave distinct enemy types summary screen
+
+DESIGN REQUIREMENTS
+- Tutorial runs only once by default (persist flag in local storage / player profile).
+- Allow “Skip Tutorial” button at any time; if skipped, mark tutorial as completed and return to Mission Select.
+- Popups should be lightweight, non-blocking by default, but some steps can be “gated” (must perform action to proceed).
+- Popups must anchor near the relevant UI element or world object when possible (e.g., Battle Cry button, Stronghold, a build pad).
+- Steps should advance via explicit triggers (events), not timers, except for short “auto-advance” delays after success (<= 1s).
+- Must work with existing day loop phases: Main Menu → Mission Select → Map Scene (Battle Phase) → Build Phase → Summary.
+- Do not introduce heavy dependencies; implement with existing React + Babylon patterns.
+
+IMPLEMENTATION PLAN
+A) Add Tutorial scripting system:
+- Create a TutorialManager that loads for a given level if level.tutorialScript exists.
+- TutorialScript is a list of steps with:
+  - id, phase (e.g., “MAP”, “BATTLE”, “BUILD”, “SUMMARY”)
+  - text (title/body), optional image/icon
+  - anchor: { type: “ui”, selector/testId } OR { type: “world”, entityId/padId } OR “none”
+  - gating: { required: boolean, blockInput?: boolean }
+  - completeWhen: one or more conditions (event-driven)
+  - onStart/onComplete hooks (optional)
+- TutorialManager listens to game events and advances step state.
+
+B) Event system integration:
+- Ensure there is a centralized EventBus (or add a simple one) used by gameplay systems.
+- Emit events for tutorial triggers:
+  - PHASE_CHANGED({phase})
+  - UI_BATTLE_CRY_CLICKED()
+  - HERO_MOVED({dx,dy}) (emit when arrow keys move hero at least once)
+  - UNIT_RECALL_USED()
+  - PAD_SELECTED({padId})
+  - BUILDING_BUILT({padId, buildingType})
+  - BUILDING_UPGRADED({buildingId, level})
+  - TOWER_PLACED / TOWER_UPGRADED
+  - WALL_PLACED
+  - WAVE_SPAWN_INDICATOR_SHOWN({borders})
+  - ENEMY_WAVE_STARTED({waveIndex})
+  - DAY_SUMMARY_OPENED()
+  - NEXT_WAVE_ENEMY_TYPES_SHOWN()
+  - TUTORIAL_SKIPPED()
+  - TUTORIAL_COMPLETED()
+
+C) React UI components:
+- Add <TutorialOverlay /> mounted above the normal UI.
+- It renders:
+  - popup card with title/body
+  - “Next” button only if step is not gated (or if gated but allow manual proceed)
+  - “Skip Tutorial” always available
+  - “Highlight” effect around anchor:
+    - UI anchor: use a translucent spotlight rectangle around target element (find by data-testid).
+    - World anchor: draw a simple ring/outline mesh at world position (pooled), or an on-screen marker projected from world coords.
+- Optionally block clicks outside popup for certain steps (blockInput).
+
+D) Tutorial level content:
+- Create a new LevelDefinition: TUTORIAL_LEVEL (id: “tutorial_01”).
+- Layout:
+  - Stronghold in center
+  - At least 4 tower-only pads
+  - 1 barracks pad, 1 archer pad
+  - 1 wall pad (or wall placement UI enabled)
+  - Minimal enemies: Wave 1: small melee group from one border; Wave 2: slightly bigger, demonstrate multi-border indicator but only one border active; no miniboss in wave 1.
+- During Build Phase show next wave border indicators.
+- During Summary show distinct enemy types for next wave.
+
+E) Tutorial step script (example sequence)
+1. (MAP/BUILD) “Welcome” explain goal: survive waves, build between waves. Anchor: none.
+2. (MAP/BUILD) “This is your Stronghold” anchor: world Stronghold entity. Complete when player clicks stronghold or closes popup.
+3. (MAP/BUILD) “Build pads” anchor: a nearby pad. Gate: require PAD_SELECTED.
+4. (MAP/BUILD) “Build a Tower” anchor: build panel tower option. Gate: require TOWER_PLACED.
+5. (MAP/BUILD) “Wave spawn direction” anchor: border indicator UI/world. Gate: require WAVE_SPAWN_INDICATOR_SHOWN or player acknowledges.
+6. (MAP) “Start battle with Battle Cry” anchor: Battle Cry button. Gate: UI_BATTLE_CRY_CLICKED.
+7. (BATTLE) “Move hero with arrow keys” anchor: hero world position. Gate: HERO_MOVED (distance threshold).
+8. (BATTLE) “Recall units with T” anchor: on-screen hint near hero. Gate: UNIT_RECALL_USED.
+9. (BATTLE) “Towers attack automatically” anchor: placed tower. Auto-complete after first tower attack event OR after 3 seconds of combat if attack event not available.
+10. (BUILD) “Spend gold: build barracks or archers” anchor: a producer pad. Gate: BUILDING_BUILT of Barracks or Archer.
+11. (BUILD) “Place a wall to block” anchor: wall placement UI or wall pad. Gate: WALL_PLACED.
+12. (SUMMARY) “Day summary + next wave types” anchor: summary panel. Gate: NEXT_WAVE_ENEMY_TYPES_SHOWN.
+13. (MAP/BUILD) “You’re ready” final step. On complete: set tutorial completed flag.
+
+F) Persistence:
+- Store boolean tutorialCompleted in player profile/localStorage.
+- In Main Menu / Mission Select:
+  - If not completed: default “Play” starts tutorial_01.
+  - Provide “Replay Tutorial” option (does NOT change completion flag unless completed already).
+
+DELIVERABLES (DO THESE CHANGES IN CODE)
+1) Add TutorialScript types + TutorialManager (TS).
+2) Hook into phase manager + UI actions to emit events.
+3) Implement TutorialOverlay React component with anchoring + highlight + skip.
+4) Create tutorial_01 LevelDefinition and register it as first level.
+5) Add persistence for tutorial completion + skip flow.
+6) Add minimal tests or debug logging to validate step progression.
+
+CONSTRAINTS / NOTES
+- Keep everything deterministic and event-driven.
+- Don’t add per-frame React updates; use state updates only on step changes and relevant UI interactions.
+- Highlight rendering should be cheap; reuse meshes/markers via pooling.
+- Follow existing project folder conventions; if unknown, create:
+  - src/tutorial/TutorialManager.ts
+  - src/tutorial/tutorialTypes.ts
+  - src/tutorial/tutorialScripts/tutorial_01.ts
+  - src/ui/TutorialOverlay.tsx
+  - src/levels/tutorial_01.ts
+
+Now implement it.

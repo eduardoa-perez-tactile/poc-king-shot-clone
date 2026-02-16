@@ -64,7 +64,11 @@ export const CanvasLayer2D = React.memo(
     selectedPadId,
     padUnlockLevels,
     showUnitLabels,
-    onEliteWarning
+    onEliteWarning,
+    onHeroMoved,
+    onUnitRecallUsed,
+    onWaveStarted,
+    onTowerAttack
   }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const containerRef = useRef<HTMLDivElement>(null)
@@ -95,6 +99,10 @@ export const CanvasLayer2D = React.memo(
     const onTelemetryRef = useRef(onTelemetry)
     const onPauseToggleRef = useRef(onPauseToggle)
     const onEliteWarningRef = useRef(onEliteWarning)
+    const onHeroMovedRef = useRef(onHeroMoved)
+    const onUnitRecallUsedRef = useRef(onUnitRecallUsed)
+    const onWaveStartedRef = useRef(onWaveStarted)
+    const onTowerAttackRef = useRef(onTowerAttack)
     const inputBlockedRef = useRef(Boolean(inputBlocked))
     const lastTelemetryRef = useRef<CanvasTelemetry | null>(null)
     const lastTelemetryAt = useRef(0)
@@ -124,6 +132,13 @@ export const CanvasLayer2D = React.memo(
     useEffect(() => {
       onEliteWarningRef.current = onEliteWarning
     }, [onEliteWarning])
+
+    useEffect(() => {
+      onHeroMovedRef.current = onHeroMoved
+      onUnitRecallUsedRef.current = onUnitRecallUsed
+      onWaveStartedRef.current = onWaveStarted
+      onTowerAttackRef.current = onTowerAttack
+    }, [onHeroMoved, onUnitRecallUsed, onWaveStarted, onTowerAttack])
 
     useEffect(() => {
       inputBlockedRef.current = Boolean(inputBlocked)
@@ -213,6 +228,7 @@ export const CanvasLayer2D = React.memo(
     const rallyToHero = () => {
       const rallied = rallyFriendlyToHero(simRef.current, createGridForState(simRef.current))
       simRef.current = rallied.state
+      onUnitRecallUsedRef.current?.()
     }
 
     useImperativeHandle(ref, () => ({
@@ -374,21 +390,25 @@ export const CanvasLayer2D = React.memo(
         if (isGameplayKeyboardBlockedByFocus()) return
         if (event.key === 'ArrowUp') {
           playerInputRef.current.up = true
+          onHeroMovedRef.current?.({ dx: 0, dy: -1 })
           event.preventDefault()
           return
         }
         if (event.key === 'ArrowDown') {
           playerInputRef.current.down = true
+          onHeroMovedRef.current?.({ dx: 0, dy: 1 })
           event.preventDefault()
           return
         }
         if (event.key === 'ArrowLeft') {
           playerInputRef.current.left = true
+          onHeroMovedRef.current?.({ dx: -1, dy: 0 })
           event.preventDefault()
           return
         }
         if (event.key === 'ArrowRight') {
           playerInputRef.current.right = true
+          onHeroMovedRef.current?.({ dx: 1, dy: 0 })
           event.preventDefault()
           return
         }
@@ -474,16 +494,27 @@ export const CanvasLayer2D = React.memo(
 
         if (!pausedRef.current) {
           while (acc >= FIXED_DT) {
+            const prevState = simRef.current
             const next = stepSim(
-              simRef.current,
+              prevState,
               FIXED_DT,
               gridRef.current,
               phaseRef.current === 'combat' ? 'combat' : 'build',
               playerInputRef.current
             )
+            const previousProjectileIds = new Set(prevState.projectiles.map((proj) => proj.id))
+            const towerProjectile = next.projectiles.find((proj) => {
+              if (previousProjectileIds.has(proj.id)) return false
+              const source = next.entities.find((entity) => entity.id === proj.sourceId)
+              return source?.kind === 'tower'
+            })
+            if (towerProjectile) {
+              onTowerAttackRef.current?.({ sourceId: towerProjectile.sourceId, targetId: towerProjectile.targetId })
+            }
             simRef.current = next
             if (next.waveIndex !== lastWaveIndexRef.current) {
               for (let i = lastWaveIndexRef.current; i < next.waveIndex; i += 1) {
+                onWaveStartedRef.current?.({ waveIndex: i })
                 const wave = combatRef.current.waves[i]
                 if (wave?.elite) {
                   const message = wave.elite === 'boss' ? 'BOSS WAVE!' : 'Mini Boss Approaching!'
