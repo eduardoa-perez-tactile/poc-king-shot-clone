@@ -86,7 +86,7 @@ export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({
     }
   }, [uiAnchorRect, worldAnchorScreenPoint])
 
-  if (!snapshot || !snapshot.active) return null
+  if (!snapshot || !snapshot.active || !step) return null
 
   return (
     <div className="pointer-events-none fixed inset-0 z-[60]" data-testid="tutorial-overlay">
@@ -119,43 +119,29 @@ export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({
       )}
 
       <div
-        className="pointer-events-auto absolute z-[62] w-[min(360px,calc(100vw-24px))] rounded-2xl border border-white/15 bg-surface/95 p-4 shadow-soft"
+        className="pointer-events-auto absolute z-[62] w-[min(360px,calc(100vw-24px))] rounded-2xl border border-cyan-300/35 bg-slate-950 p-4 shadow-soft"
         style={cardStyle}
       >
-        {step ? (
-          <>
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-sm font-semibold text-cyan-200">Tutorial</div>
-              <Button variant="ghost" size="sm" onClick={onSkip} data-testid="tutorial-skip-button">
-                Skip
-              </Button>
-            </div>
-            <h3 className="mt-1 text-lg font-semibold text-text">{step.text.title}</h3>
-            <p className="mt-2 text-sm text-muted">{step.text.body}</p>
-            <div className="mt-4 flex justify-end gap-2">
-              {!snapshot.canManualAdvance && (
-                <Button variant="ghost" size="sm" onClick={onSkip}>
-                  Skip Tutorial
-                </Button>
-              )}
-              {snapshot.canManualAdvance && (
-                <Button variant="primary" size="sm" onClick={onNext} data-testid="tutorial-next-button">
-                  Next
-                </Button>
-              )}
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-sm font-semibold text-cyan-200">Tutorial</div>
-              <Button variant="ghost" size="sm" onClick={onSkip} data-testid="tutorial-skip-button">
-                Skip
-              </Button>
-            </div>
-            <p className="mt-2 text-sm text-muted">Follow the objective. Tutorial prompts will appear when the next phase starts.</p>
-          </>
-        )}
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-cyan-200">Tutorial</div>
+          <Button variant="ghost" size="sm" onClick={onSkip} data-testid="tutorial-skip-button">
+            Skip
+          </Button>
+        </div>
+        <h3 className="mt-1 text-lg font-semibold text-text">{step.text.title}</h3>
+        <p className="mt-2 text-sm text-muted">{step.text.body}</p>
+        <div className="mt-4 flex justify-end gap-2">
+          {!snapshot.canManualAdvance && (
+            <Button variant="ghost" size="sm" onClick={onSkip}>
+              Skip Tutorial
+            </Button>
+          )}
+          {snapshot.canManualAdvance && (
+            <Button variant="primary" size="sm" onClick={onNext} data-testid="tutorial-next-button">
+              Next
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   )

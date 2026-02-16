@@ -118,6 +118,38 @@ export const TUTORIAL_LEVEL_RAW = {
   goals: [
     { id: 'goal_tutorial_survive_2', type: 'survive_days', label: 'Survive until Day 2', target: 2 }
   ],
+  nightModifiers: [
+    {
+      id: 'tutorial_low_risk_i',
+      name: 'Skirmish Tax',
+      description: 'Slightly more enemies for a small score multiplier.',
+      rewardMultiplier: 1.05,
+      effects: {
+        enemyCountMultiplier: 0.06
+      }
+    },
+    {
+      id: 'tutorial_low_risk_ii',
+      name: 'Reinforced Scouts',
+      description: 'Enemies are a bit tougher for a medium score multiplier.',
+      rewardMultiplier: 1.1,
+      effects: {
+        enemyHpMultiplier: 0.08
+      }
+    },
+    {
+      id: 'tutorial_low_risk_iii',
+      name: 'Rapid Advance',
+      description: 'Enemies move faster for the highest tutorial multiplier.',
+      rewardMultiplier: 1.15,
+      effects: {
+        enemyMoveSpeedMultiplier: 0.1
+      }
+    }
+  ],
+  allowedNightModifiersByNight: {
+    1: ['tutorial_low_risk_i', 'tutorial_low_risk_ii', 'tutorial_low_risk_iii']
+  },
   days: [
     {
       day: 1,

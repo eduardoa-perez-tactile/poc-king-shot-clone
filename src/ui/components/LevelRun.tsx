@@ -530,6 +530,13 @@ export const LevelRun: React.FC<{
   }, [activeRun.dayNumber, nextBattlePreview?.previewEdges, runPhase])
 
   useEffect(() => {
+    if (!nightSetupOpen) return
+    // Fallback trigger: if the player opened Night Setup via the battle button,
+    // mark the battle cry intent even if the click event was missed.
+    emitTutorialEvent('UI_BATTLE_CRY_CLICKED', {})
+  }, [nightSetupOpen])
+
+  useEffect(() => {
     if (!dayEndModalVisible) return
     const key = `summary:${activeRun.dayNumber}`
     if (summaryOpenEventKeyRef.current !== key) {
@@ -950,10 +957,12 @@ export const LevelRun: React.FC<{
       addToast(runPhase === 'battle_cry' ? 'Battle cry in progress.' : 'Already in combat.', 'default')
       return
     }
+    emitTutorialEvent('UI_BATTLE_CRY_CLICKED', {})
     setNightSetupOpen(true)
   }, [addToast, runPhase])
 
   const handleNightSetupConfirm = useCallback((modifierId?: string) => {
+    // Ensure tutorial progression even if the initial battle button event was missed.
     emitTutorialEvent('UI_BATTLE_CRY_CLICKED', {})
     setNightSetupOpen(false)
     startCombatWithNightModifier(modifierId as NightModifierId | undefined)

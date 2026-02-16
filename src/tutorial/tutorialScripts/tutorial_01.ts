@@ -69,16 +69,17 @@ export const TUTORIAL_01_SCRIPT: TutorialScript = [
   },
   {
     id: 'tutorial_battle_cry',
-    phase: 'BUILD',
+    phase: ['BUILD', 'BATTLE'],
     text: {
       title: 'Start the Battle',
       body: 'Press Battle Cry to begin wave combat.'
     },
     anchor: { type: 'ui', testId: 'battle-cry-button' },
-    gating: { required: true },
+    gating: { required: true, allowManualAdvance: true },
     completeWhen: {
-      all: [{ event: 'UI_BATTLE_CRY_CLICKED' }]
-    }
+      any: [{ event: 'UI_BATTLE_CRY_CLICKED' }, { event: 'ENEMY_WAVE_STARTED' }]
+    },
+    autoAdvanceAfterMs: 100
   },
   {
     id: 'tutorial_move_hero',
