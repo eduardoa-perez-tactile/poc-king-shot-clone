@@ -108,7 +108,7 @@ export const TUTORIAL_LEVEL_RAW = {
   id: 'tutorial_01',
   name: 'Frontier Drill',
   description: 'Guided tutorial: learn controls, construction, and the day-night defense loop.',
-  startGold: 340,
+  startGold: 1000,
   dayRewardGold: 30,
   dayRewardScale: 3,
   heroLoadout: TUTORIAL_HERO,

@@ -20,7 +20,7 @@ export const App: React.FC = () => {
   const [runSource, setRunSource] = useState<'normal' | 'dashboard'>('normal')
   const [tutorialReplayRequested, setTutorialReplayRequested] = useState(false)
   const { activeRun, runPhase, startRun, abandonRun, retryRun, clearAll } = useRunStore()
-  const dashboardEnabled = import.meta.env.DEV || new URLSearchParams(window.location.search).get('dev') === '1'
+  const dashboardEnabled = true
 
   const startTutorialRun = (replay: boolean) => {
     clearPlaytestLevel()
