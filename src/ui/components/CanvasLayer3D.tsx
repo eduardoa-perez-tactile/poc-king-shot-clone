@@ -1,4 +1,4 @@
-import React, { useEffect, useImperativeHandle, useMemo, useRef } from 'react'
+import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import {
   buildCombatResult,
   createGridForCombat,
@@ -20,6 +20,7 @@ import { UNIT_DEFS } from '../../config/units'
 import type { Grid } from '../../rts/pathfinding'
 import type { CanvasHandle, CanvasLayerProps, CanvasTelemetry } from './CanvasLayer.types'
 import { isGameplayKeyboardBlockedByFocus } from '../../rts/input/focusGuard'
+import { UnitHudLayer, type UnitHudRuntime } from '../UnitHudLayer'
 
 const FIXED_DT = 1 / 30
 type CanvasWithRendererMarker = HTMLCanvasElement & { __rts3dDispose?: () => void }
@@ -99,6 +100,7 @@ export const CanvasLayer3D = React.memo(
     const combatRef = useRef(combat)
     const runRef = useRef(run)
     const showLabelsRef = useRef(Boolean(showUnitLabels))
+    const [hudRuntime, setHudRuntime] = useState<UnitHudRuntime | null>(null)
 
     useEffect(() => {
       padsRef.current = buildingPads
@@ -274,6 +276,14 @@ export const CanvasLayer3D = React.memo(
       }
       const renderer = initRenderer3D(canvas, combatRef.current.map)
       rendererRef.current = renderer
+      setHudRuntime({
+        scene: renderer.scene,
+        camera: renderer.camera,
+        engine: renderer.engine,
+        unitManager: {
+          getActiveUnits: renderer.getActiveUnits
+        }
+      })
       const controller = new CameraController({
         scene: renderer.scene,
         camera: renderer.camera,
@@ -292,6 +302,7 @@ export const CanvasLayer3D = React.memo(
       cameraControllerRef.current = controller
 
       const dispose = () => {
+        setHudRuntime(null)
         controller.dispose()
         cameraControllerRef.current = null
         renderer.dispose()
@@ -917,6 +928,7 @@ export const CanvasLayer3D = React.memo(
           }}
           aria-label={`RTS canvas ${label}`}
         />
+        <UnitHudLayer runtime={hudRuntime} />
         <div
           ref={dragBoxElRef}
           style={{

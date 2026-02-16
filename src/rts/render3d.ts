@@ -7,6 +7,7 @@ import { Color3, Color4 } from '@babylonjs/core/Maths/math.color'
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh'
 import { Mesh } from '@babylonjs/core/Meshes/mesh'
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder'
+import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import '@babylonjs/core/Meshes/thinInstanceMesh'
 import { Material } from '@babylonjs/core/Materials/material'
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial'
@@ -41,8 +42,6 @@ const BASE_UNIT_HEIGHT = 2
 const BASE_UNIT_RADIUS = 1
 const BASE_BUILDING_HEIGHT = 10
 const LABEL_TEXTURE_SIZE = 384
-const HEALTH_BAR_HEIGHT = 1.2
-const HEALTH_BAR_DEPTH = 2.2
 const DAMAGE_LABEL_FONT = 96
 const DAMAGE_LABEL_SCALE = 1.5
 const PROJECTILE_SCALE = 3
@@ -72,18 +71,28 @@ interface ThinGroup {
   baseColor: Color3
 }
 
-interface BarGroup {
-  mesh: Mesh
-  matrices: Float32Array
-  colors: Float32Array
-  capacity: number
-  baseColor: Color3
-}
-
 interface LabelMesh {
   mesh: Mesh
   texture: DynamicTexture
   text: string
+}
+
+export interface UnitHudEntity {
+  id: string
+  typeName: string
+  level: number
+  hp: number
+  hpMax: number
+  isAlive: boolean
+  mesh: Mesh | TransformNode
+  hudOffsetY: number
+  isSelected?: boolean
+  getHudWorldPosition: () => Vector3
+}
+
+interface UnitHudInternal extends UnitHudEntity {
+  _frameToken: number
+  _worldPos: Vector3
 }
 
 export interface Render3DOverlays {
@@ -125,6 +134,7 @@ export interface Renderer3D {
   dispose: () => void
   setMap: (map: SimState['combat']['map']) => void
   getPickContext: () => PickContext3D
+  getActiveUnits: () => readonly UnitHudEntity[]
   projectToScreen: (pos: Vec2) => { x: number; y: number } | null
   getViewPolygon: () => Vec2[] | null
 }
@@ -325,15 +335,9 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   const hqHoverMaterial = createMaterial(scene, Color3.FromHexString('#facc15'), 0.7)
   const projectileMaterial = createMaterial(scene, Color3.FromHexString('#f97316'), 0.8)
   const invasionMarkerMaterial = createMaterial(scene, Color3.FromHexString('#ef4444'), 0.95)
-  const healthBgMaterial = createMaterial(scene, Color3.FromHexString('#0f172a'), 0.2)
-  const healthPlayerMaterial = createMaterial(scene, Color3.FromHexString('#22c55e'), 0.5)
-  const healthEnemyMaterial = createMaterial(scene, Color3.FromHexString('#ef4444'), 0.5)
   invasionMarkerMaterial.useVertexColor = true
   invasionMarkerMaterial.alpha = 0.92
   invasionMarkerMaterial.backFaceCulling = false
-  healthBgMaterial.backFaceCulling = false
-  healthPlayerMaterial.backFaceCulling = false
-  healthEnemyMaterial.backFaceCulling = false
 
   const primitiveMode = VISUAL_MODE === 'primitive'
   /*
@@ -361,6 +365,10 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   const labelMeshes = new Map<string, LabelMesh>()
   const traitIconMeshes = new Map<string, LabelMesh>()
   const eliteIconMeshes = new Map<string, LabelMesh>()
+  const hudAnchors = new Map<string, TransformNode>()
+  const hudUnits = new Map<string, UnitHudInternal>()
+  const activeHudUnits: UnitHudEntity[] = []
+  let hudFrameToken = 0
   const damageLabels: LabelMesh[] = []
   const selectionRings: Mesh[] = []
   const rangeRings: Mesh[] = []
@@ -370,39 +378,6 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   let prevEffectKeys = new Set<string>()
   let prevProjectileIds = new Set<string>()
   const prevEntities = new Map<string, EntityState>()
-
-  const healthBgGroup: BarGroup = {
-    mesh: MeshBuilder.CreateBox('health_bg', { size: 1 }, scene),
-    matrices: new Float32Array(0),
-    colors: new Float32Array(0),
-    capacity: 0,
-    baseColor: healthBgMaterial.diffuseColor
-  }
-  healthBgGroup.mesh.material = healthBgMaterial
-  healthBgGroup.mesh.isPickable = false
-  healthBgGroup.mesh.thinInstanceEnablePicking = false
-
-  const healthPlayerGroup: BarGroup = {
-    mesh: MeshBuilder.CreateBox('health_player', { size: 1 }, scene),
-    matrices: new Float32Array(0),
-    colors: new Float32Array(0),
-    capacity: 0,
-    baseColor: healthPlayerMaterial.diffuseColor
-  }
-  healthPlayerGroup.mesh.material = healthPlayerMaterial
-  healthPlayerGroup.mesh.isPickable = false
-  healthPlayerGroup.mesh.thinInstanceEnablePicking = false
-
-  const healthEnemyGroup: BarGroup = {
-    mesh: MeshBuilder.CreateBox('health_enemy', { size: 1 }, scene),
-    matrices: new Float32Array(0),
-    colors: new Float32Array(0),
-    capacity: 0,
-    baseColor: healthEnemyMaterial.diffuseColor
-  }
-  healthEnemyGroup.mesh.material = healthEnemyMaterial
-  healthEnemyGroup.mesh.isPickable = false
-  healthEnemyGroup.mesh.thinInstanceEnablePicking = false
 
   const projectileGroup: ThinGroup = {
     mesh: MeshBuilder.CreateSphere('projectile_base', { diameter: 2 }, scene),
@@ -608,6 +583,76 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     return entry
   }
 
+  const shouldShowUnitHud = (entity: EntityState) =>
+    entity.kind !== 'hq' && !entity.isStructure
+
+  const ensureHudAnchor = (id: string) => {
+    const existing = hudAnchors.get(id)
+    if (existing) return existing
+    const node = new TransformNode(`hud_anchor_${id}`, scene)
+    hudAnchors.set(id, node)
+    return node
+  }
+
+  const ensureHudUnit = (entity: EntityState, anchor: TransformNode): UnitHudInternal => {
+    const existing = hudUnits.get(entity.id)
+    if (existing) {
+      existing.mesh = anchor
+      return existing
+    }
+    const next: UnitHudInternal = {
+      id: entity.id,
+      typeName: entity.typeName,
+      level: entity.level,
+      hp: entity.hp,
+      hpMax: entity.maxHp,
+      isAlive: entity.hp > 0,
+      mesh: anchor,
+      hudOffsetY: entity.hudOffsetY,
+      isSelected: false,
+      _frameToken: -1,
+      _worldPos: new Vector3(),
+      getHudWorldPosition: () => {
+        const pos = next.mesh.getAbsolutePosition()
+        next._worldPos.copyFromFloats(pos.x, pos.y + next.hudOffsetY, pos.z)
+        return next._worldPos
+      }
+    }
+    hudUnits.set(entity.id, next)
+    return next
+  }
+
+  const updateHudUnits = (sim: SimState, selection: string[]) => {
+    activeHudUnits.length = 0
+    hudFrameToken += 1
+
+    sim.entities.forEach((entity) => {
+      if (!shouldShowUnitHud(entity)) return
+      const anchor = ensureHudAnchor(entity.id)
+      anchor.position.set(entity.pos.x, 0, entity.pos.y)
+      const unit = ensureHudUnit(entity, anchor)
+      unit.typeName = entity.typeName
+      unit.level = Math.max(1, Math.floor(entity.level))
+      unit.hp = entity.hp
+      unit.hpMax = entity.maxHp
+      unit.hudOffsetY = entity.hudOffsetY
+      unit.isAlive = entity.hp > 0
+      unit.isSelected = selection.includes(entity.id)
+      unit._frameToken = hudFrameToken
+      activeHudUnits.push(unit)
+    })
+
+    hudUnits.forEach((entry, id) => {
+      if (entry._frameToken === hudFrameToken) return
+      const anchor = hudAnchors.get(id)
+      if (anchor) {
+        anchor.dispose()
+        hudAnchors.delete(id)
+      }
+      hudUnits.delete(id)
+    })
+  }
+
   const updateThinGroup = (group: ThinGroup, entities: EntityState[], time: number) => {
     const count = entities.length
     if (count > group.capacity) {
@@ -635,55 +680,6 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     group.mesh.thinInstanceSetBuffer('color', group.colors, 4, false)
     group.mesh.thinInstanceCount = count
     group.mesh.thinInstanceRefreshBoundingInfo(true)
-  }
-
-  const updateBars = (group: BarGroup, entries: Array<{ pos: Vec2; width: number; hpPct: number; yOffset: number }>) => {
-    const count = entries.length
-    if (count > group.capacity) {
-      const nextCap = Math.max(count, group.capacity + 16)
-      group.capacity = nextCap
-      group.matrices = new Float32Array(nextCap * 16)
-      group.colors = new Float32Array(nextCap * 4)
-    }
-    entries.forEach((entry, index) => {
-      const scale = new Vector3(entry.width, HEALTH_BAR_HEIGHT, HEALTH_BAR_DEPTH)
-      const pos = new Vector3(entry.pos.x, entry.yOffset, entry.pos.y)
-      const matrix = Matrix.Compose(scale, Quaternion.Identity(), pos)
-      matrix.copyToArray(group.matrices, index * 16)
-      group.colors[index * 4 + 0] = group.baseColor.r
-      group.colors[index * 4 + 1] = group.baseColor.g
-      group.colors[index * 4 + 2] = group.baseColor.b
-      group.colors[index * 4 + 3] = 1
-    })
-    group.mesh.thinInstanceSetBuffer('matrix', group.matrices, 16, false)
-    group.mesh.thinInstanceSetBuffer('color', group.colors, 4, false)
-    group.mesh.thinInstanceCount = count
-    group.mesh.thinInstanceRefreshBoundingInfo(true)
-  }
-
-  const updateHealthBars = (sim: SimState) => {
-    const all = sim.entities.filter((entity) => entity.kind !== 'tower')
-    const bgEntries = all.map((entity) => ({
-      pos: entity.pos,
-      width: Math.max(16, entity.radius * 2.8),
-      hpPct: Math.max(0, Math.min(1, entity.hp / entity.maxHp)),
-      yOffset: entity.radius * 1.1 + 18
-    }))
-    const playerEntries = all.filter((entity) => entity.team === 'player').map((entity) => ({
-      pos: entity.pos,
-      width: Math.max(16, entity.radius * 2.8) * Math.max(0, Math.min(1, entity.hp / entity.maxHp)),
-      hpPct: Math.max(0, Math.min(1, entity.hp / entity.maxHp)),
-      yOffset: entity.radius * 1.1 + 18
-    }))
-    const enemyEntries = all.filter((entity) => entity.team === 'enemy').map((entity) => ({
-      pos: entity.pos,
-      width: Math.max(16, entity.radius * 2.8) * Math.max(0, Math.min(1, entity.hp / entity.maxHp)),
-      hpPct: Math.max(0, Math.min(1, entity.hp / entity.maxHp)),
-      yOffset: entity.radius * 1.1 + 18
-    }))
-    updateBars(healthBgGroup, bgEntries)
-    updateBars(healthPlayerGroup, playerEntries)
-    updateBars(healthEnemyGroup, enemyEntries)
   }
 
   const updateProjectiles = (projectiles: SimState['projectiles']) => {
@@ -1191,7 +1187,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     updateProjectiles(input.sim.projectiles)
     updateSelection(input.sim, input.selection)
     updateRanges(input.sim, input.selection, input.overlays.selectedPadId)
-    updateHealthBars(input.sim)
+    updateHudUnits(input.sim, input.selection)
     updateInvasionIndicators(input.overlays.nextBattlePreview, input.phase, input.sim.time)
     updateHqHover(input.sim, input.overlays.hoveredHq)
     updateLabels(input.sim, Boolean(input.options?.showLabels))
@@ -1218,6 +1214,10 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   }
 
   const dispose = () => {
+    hudAnchors.forEach((anchor) => anchor.dispose())
+    hudAnchors.clear()
+    hudUnits.clear()
+    activeHudUnits.length = 0
     primitiveFactory.dispose()
     scene.dispose()
     engine.dispose()
@@ -1233,6 +1233,8 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     scene,
     resolveThinInstance: (groupKey, index) => unitGroups.get(groupKey)?.ids[index] ?? null
   })
+
+  const getActiveUnits = () => activeHudUnits as readonly UnitHudEntity[]
 
   const projectToScreen = (pos: Vec2) => {
     const level = engine.getHardwareScalingLevel()
@@ -1281,6 +1283,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     dispose,
     setMap,
     getPickContext,
+    getActiveUnits,
     projectToScreen,
     getViewPolygon
   }

@@ -38,8 +38,11 @@ export interface EntityState {
   id: string
   team: Team
   kind: EntityKind
+  typeName: string
+  level: number
   pos: Vec2
   radius: number
+  hudOffsetY: number
   tier: EntityTier
   idLabel?: string
   hp: number
