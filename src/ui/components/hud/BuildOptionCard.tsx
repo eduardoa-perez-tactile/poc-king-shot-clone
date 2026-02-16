@@ -12,7 +12,8 @@ export const BuildOptionCard: React.FC<{
   locked?: boolean
   lockedReason?: string
   onBuild: () => void
-}> = ({ title, description, cost, canAfford, locked, lockedReason, onBuild }) => {
+  testId?: string
+}> = ({ title, description, cost, canAfford, locked, lockedReason, onBuild, testId }) => {
   const isLocked = Boolean(locked)
   const content = (
     <Card
@@ -37,6 +38,7 @@ export const BuildOptionCard: React.FC<{
         size="sm"
         disabled={!canAfford || isLocked}
         onClick={onBuild}
+        data-testid={testId}
       >
         Build
       </Button>

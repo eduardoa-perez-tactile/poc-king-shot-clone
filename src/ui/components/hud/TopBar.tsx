@@ -84,7 +84,7 @@ export const TopBar: React.FC<{
           </Button>
         )}
         {onIntel && (
-          <Button variant="ghost" size="sm" onClick={onIntel} disabled={intelDisabled}>
+          <Button variant="ghost" size="sm" onClick={onIntel} disabled={intelDisabled} data-testid="intel-button">
             <Radar className="h-4 w-4" />
             <span className="hidden sm:inline">Intel</span>
           </Button>

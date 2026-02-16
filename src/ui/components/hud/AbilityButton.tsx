@@ -10,8 +10,9 @@ export const AbilityButton: React.FC<{
   cooldown: number
   readyIn: number
   disabled?: boolean
+  testId?: string
   onClick?: () => void
-}> = ({ name, description, keyHint, cooldown, readyIn, disabled, onClick }) => {
+}> = ({ name, description, keyHint, cooldown, readyIn, disabled, testId, onClick }) => {
   const pct = cooldown > 0 ? Math.min(100, (readyIn / cooldown) * 100) : 0
   const isReady = readyIn <= 0
   return (
@@ -30,6 +31,7 @@ export const AbilityButton: React.FC<{
           size="lg"
           disabled={disabled || !isReady}
           onClick={onClick}
+          data-testid={testId}
           className={cn('relative h-16 w-16 rounded-2xl p-0 text-xs font-semibold', isReady && 'shadow-glow')}
         >
           {keyHint}

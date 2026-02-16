@@ -19,6 +19,7 @@ export const MissionSelectPanel: React.FC<{
   lockedReason?: string
   lockedMessage?: string | null
   onStart: () => void
+  onReplayTutorial?: () => void
   onBack: () => void
 }> = ({
   mission,
@@ -27,6 +28,7 @@ export const MissionSelectPanel: React.FC<{
   lockedReason,
   lockedMessage,
   onStart,
+  onReplayTutorial,
   onBack
 }) => {
   const canStart = Boolean(mission && missionState && missionState !== 'locked')
@@ -72,6 +74,9 @@ export const MissionSelectPanel: React.FC<{
 
           <div className="world-map-actions">
             <button className="btn success" disabled={!canStart} onClick={onStart}>Start Mission</button>
+            {onReplayTutorial && (
+              <button className="btn" onClick={onReplayTutorial}>Replay Tutorial</button>
+            )}
           </div>
         </>
       )}
