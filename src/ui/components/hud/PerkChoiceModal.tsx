@@ -26,7 +26,7 @@ export const PerkChoiceModal: React.FC<{
       <div className="mb-2 text-xs text-muted">Run Perks: {perkCount}/{perkMaxCount}</div>
       <div className="grid gap-3 sm:grid-cols-3">
         {offers.map((perk) => (
-          <div key={perk.id} className="rounded-2xl border border-white/10 bg-surface/70 p-3">
+          <div key={perk.id} className="rounded-2xl border border-white/10 bg-surface p-3">
             <div className="text-sm font-semibold text-text">{perk.name}</div>
             <div className="mt-1 text-xs text-muted">{perk.description}</div>
             <div className="mt-3">

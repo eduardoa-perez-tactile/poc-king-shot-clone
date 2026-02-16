@@ -641,7 +641,7 @@ export const LevelRun: React.FC<{
             />
 
             {unitDef && !isUnitProducerBuilding(activeBuilding.id) && (
-              <div className="rounded-2xl border border-white/10 bg-surface/70 p-3">
+              <div className="rounded-2xl border border-white/10 bg-surface p-3">
                 <div className="text-xs font-semibold text-text">Unit Shop</div>
                 <div className="mt-2 flex items-center justify-between text-sm text-text">
                   <span>{unitDef.name} Squad</span>
@@ -675,7 +675,7 @@ export const LevelRun: React.FC<{
             )}
 
             {unitDef && isUnitProducerBuilding(activeBuilding.id) && (
-              <div className="rounded-2xl border border-white/10 bg-surface/70 p-3">
+              <div className="rounded-2xl border border-white/10 bg-surface p-3">
                 <div className="text-xs font-semibold text-text">Auto-Producer</div>
                 <div className="mt-1 text-xs text-muted">
                   On build: +{Math.max(0, Math.floor(level.producerDefaults.unitsOnBuild))} squads
@@ -690,7 +690,7 @@ export const LevelRun: React.FC<{
             )}
 
             {def.heroRecruiter && (
-              <div className="rounded-2xl border border-white/10 bg-surface/70 p-3">
+              <div className="rounded-2xl border border-white/10 bg-surface p-3">
                 <div className="flex items-center justify-between text-xs font-semibold text-text">
                   <span>Hero Summons</span>
                   <span className="text-muted">Summon used: {activeBuilding.heroSummonUsed ?? 0}/{def.heroRecruiter.summonLimit}</span>
@@ -710,7 +710,7 @@ export const LevelRun: React.FC<{
                             ? `Need ${hero.cost - activeRun.gold} more gold.`
                             : 'Summon hero.'
                     return (
-                      <div key={hero.id} className="rounded-xl border border-white/10 bg-slate-950/40 p-3">
+                      <div key={hero.id} className="rounded-xl border border-white/10 bg-slate-950 p-3">
                         <div className="flex items-center justify-between text-sm text-text">
                           <span>{hero.name}</span>
                           <span>{hero.cost} gold</span>
@@ -883,7 +883,7 @@ export const LevelRun: React.FC<{
           <div className="text-xs text-muted">Selected {selection.units.length} squads</div>
           <div className="space-y-2">
             {selection.units.map((unit) => (
-              <div key={unit.id} className="rounded-2xl border border-white/10 bg-surface/70 px-3 py-2">
+              <div key={unit.id} className="rounded-2xl border border-white/10 bg-surface px-3 py-2">
                 <div className="flex items-center justify-between text-xs text-text">
                   <span>{unit.name}</span>
                   <span>{Math.round(unit.hp)}/{Math.round(unit.maxHp)}</span>
@@ -900,10 +900,10 @@ export const LevelRun: React.FC<{
 
     return (
       <div className="space-y-3 text-xs text-muted">
-        <div className="rounded-2xl border border-white/10 bg-surface/70 px-3 py-2">
+        <div className="rounded-2xl border border-white/10 bg-surface px-3 py-2">
           {objective}
         </div>
-        <div className="rounded-2xl border border-white/10 bg-surface/70 px-3 py-2">
+        <div className="rounded-2xl border border-white/10 bg-surface px-3 py-2">
           {isMobile ? 'Tap pads to build. Select squads to command.' : 'Hover pads to build. Select squads to issue orders.'}
         </div>
       </div>
@@ -1264,7 +1264,7 @@ export const LevelRun: React.FC<{
                 'relative w-full overflow-hidden rounded-2xl px-6 py-3 text-base font-semibold',
                 runPhase === 'build'
                   ? `bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-500 text-slate-950 shadow-glow ${reduceMotion ? '' : 'battle-glow battle-shine'}`
-                  : 'bg-surface/80 text-muted border border-white/10'
+                  : 'bg-surface text-muted border border-white/10'
               ].join(' ')}
               onClick={handleBattleCry}
               disabled={runPhase !== 'build'}
@@ -1350,7 +1350,7 @@ export const LevelRun: React.FC<{
 
       {pauseOpen && (
         <div className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center bg-black/70 px-4">
-          <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-surface/95 p-5 shadow-soft">
+          <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-surface p-5 shadow-soft">
             <div className="text-lg font-semibold text-text">Paused</div>
             <div className="mt-2 text-sm text-muted">Resume or adjust your plan.</div>
             <div className="mt-4 flex flex-col gap-2">

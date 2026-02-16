@@ -49,7 +49,7 @@ export const Dialog: React.FC<{
   if (!open) return null
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 px-4" role="dialog" aria-modal="true">
-      <div ref={containerRef} className={cn('w-full max-w-md rounded-3xl border border-white/10 bg-surface/90 p-5 shadow-soft', className)}>
+      <div ref={containerRef} className={cn('w-full max-w-md rounded-3xl border border-white/10 bg-surface p-5 shadow-soft', className)}>
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-text">{title}</h2>

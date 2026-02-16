@@ -36,7 +36,7 @@ export const TopBar: React.FC<{
   onExit
 }) => {
   return (
-    <div className="pointer-events-auto flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-white/10 bg-surface/80 px-4 py-3 shadow-soft backdrop-blur">
+    <div className="pointer-events-auto flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-white/10 bg-surface px-4 py-3 shadow-soft">
       <div className="flex min-w-[220px] flex-1 items-center gap-3">
         <div>
           <div className="text-lg font-semibold text-text">{mission}</div>
@@ -44,7 +44,7 @@ export const TopBar: React.FC<{
             <span>Day {day}</span>
             <PhaseBadge phase={phase} />
             <Tooltip content={strongholdSummary ?? `Stronghold Lv${strongholdLevel}`}>
-              <span className="rounded-full border border-white/10 bg-surface/70 px-2 py-0.5 text-[11px] text-text">
+              <span className="rounded-full border border-white/10 bg-surface px-2 py-0.5 text-[11px] text-text">
                 Stronghold Lv{strongholdLevel}
               </span>
             </Tooltip>
@@ -53,11 +53,11 @@ export const TopBar: React.FC<{
       </div>
 
       <div className="hidden flex-[2] items-center justify-center gap-3 text-sm text-text lg:flex">
-        <div className="rounded-2xl border border-white/10 bg-surface/70 px-3 py-2">
+        <div className="rounded-2xl border border-white/10 bg-surface px-3 py-2">
           <span className="text-muted">Objective:</span> {objective}
         </div>
         {waveLabel && (
-          <div className="rounded-2xl border border-white/10 bg-surface/70 px-3 py-2 text-muted">{waveLabel}</div>
+          <div className="rounded-2xl border border-white/10 bg-surface px-3 py-2 text-muted">{waveLabel}</div>
         )}
       </div>
 

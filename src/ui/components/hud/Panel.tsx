@@ -30,11 +30,11 @@ export const Panel: React.FC<{
       variants={variants}
       transition={{ duration: reduceMotion ? 0 : 0.18, ease: 'easeOut' }}
       className={[
-        'pointer-events-auto z-20 flex max-h-[82vh] w-full flex-col rounded-3xl border border-white/10 bg-surface/90 shadow-soft backdrop-blur',
+        'pointer-events-auto z-20 flex max-h-[82vh] w-full flex-col rounded-3xl border border-white/10 bg-surface shadow-soft',
         isMobile ? 'fixed bottom-0 left-0 right-0 mx-auto max-w-full pb-[env(safe-area-inset-bottom)]' : 'max-w-[360px]'
       ].join(' ')}
     >
-      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-white/10 bg-surface/95 px-4 py-3">
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-white/10 bg-surface px-4 py-3">
         <div>
           <div className="text-sm font-semibold text-text">{title}</div>
           {subtitle && <div className="text-xs text-muted">{subtitle}</div>}

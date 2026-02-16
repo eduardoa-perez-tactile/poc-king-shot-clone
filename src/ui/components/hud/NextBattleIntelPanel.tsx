@@ -57,7 +57,7 @@ export const NextBattleIntelPanel: React.FC<{
       onOpenChange={onOpenChange}
       className="max-w-2xl"
     >
-      <div className="rounded-2xl border border-white/10 bg-surface/70 px-3 py-2">
+      <div className="rounded-2xl border border-white/10 bg-surface px-3 py-2">
         <div className="text-xs text-muted">Expected Entry Borders</div>
         <div className="mt-1 flex items-center gap-2 text-sm text-text">
           <Shield className="h-4 w-4 text-accent" />
@@ -74,7 +74,7 @@ export const NextBattleIntelPanel: React.FC<{
         <div className="space-y-2">
           <div className="text-xs font-semibold uppercase tracking-wide text-muted">Wave Intel</div>
           {waves.map((wave, index) => (
-            <div key={`${wave.id}_${index}`} className="rounded-2xl border border-white/10 bg-surface/70 px-3 py-2">
+            <div key={`${wave.id}_${index}`} className="rounded-2xl border border-white/10 bg-surface px-3 py-2">
               <div className="flex items-center justify-between text-sm text-text">
                 <span>{wave.id}</span>
                 {wave.hasEliteVariant && (
@@ -88,7 +88,7 @@ export const NextBattleIntelPanel: React.FC<{
               <div className="mt-1 flex flex-wrap gap-1">
                 {wave.traitLabels.length > 0 ? (
                   wave.traitLabels.map((label) => (
-                    <span key={`${wave.id}_${label}`} className="rounded-md border border-white/10 bg-black/25 px-2 py-0.5 text-[10px] text-text">
+                    <span key={`${wave.id}_${label}`} className="rounded-md border border-white/10 bg-slate-900 px-2 py-0.5 text-[10px] text-text">
                       {label}
                     </span>
                   ))
@@ -106,7 +106,7 @@ export const NextBattleIntelPanel: React.FC<{
           <div className="space-y-2">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted">Distinct Enemy Types</div>
             {units.map((entry) => (
-              <div key={entry.id} className="rounded-2xl border border-white/10 bg-surface/70 px-3 py-2">
+              <div key={entry.id} className="rounded-2xl border border-white/10 bg-surface px-3 py-2">
                 <div className="flex items-center justify-between gap-2 text-sm text-text">
                   <div className="flex items-center gap-2">
                     {kindIcon[entry.kind]}
@@ -124,7 +124,7 @@ export const NextBattleIntelPanel: React.FC<{
           <div className="space-y-2">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted">Boss Threats</div>
             {elites.map((entry) => (
-              <div key={entry.id} className="rounded-2xl border border-white/10 bg-surface/70 px-3 py-2">
+              <div key={entry.id} className="rounded-2xl border border-white/10 bg-surface px-3 py-2">
                 <div className="flex items-center justify-between gap-2 text-sm text-text">
                   <div className="flex items-center gap-2">
                     {kindIcon[entry.kind]}

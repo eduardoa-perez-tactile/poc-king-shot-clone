@@ -81,7 +81,7 @@ export const MiniMap: React.FC<{
   return (
     <button
       type="button"
-      className="pointer-events-auto rounded-2xl border border-white/10 bg-surface/80 p-2 shadow-soft"
+      className="pointer-events-auto rounded-2xl border border-white/10 bg-surface p-2 shadow-soft"
       onClick={(event) => {
         if (!view || !onNavigate || !canvasRef.current) return
         const rect = canvasRef.current.getBoundingClientRect()

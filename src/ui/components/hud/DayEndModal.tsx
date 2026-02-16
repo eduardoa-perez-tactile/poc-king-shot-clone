@@ -31,7 +31,7 @@ export const DayEndModal: React.FC<{
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.96, opacity: 0 }}
         transition={{ duration: reduceMotion ? 0 : 0.2, ease: 'easeOut' }}
-        className="w-full max-w-xl rounded-3xl border border-white/10 bg-surface/95 p-6 shadow-soft"
+        className="w-full max-w-xl rounded-3xl border border-white/10 bg-surface p-6 shadow-soft"
         data-testid="day-summary-modal"
       >
         <div className="space-y-2">
@@ -78,7 +78,7 @@ export const DayEndModal: React.FC<{
               {nextEnemyTypes.map((enemyName) => (
                 <span
                   key={enemyName}
-                  className="rounded-full border border-cyan-200/40 bg-cyan-400/10 px-2 py-1 text-[11px] text-cyan-100"
+                  className="rounded-full border border-cyan-200/40 bg-cyan-950 px-2 py-1 text-[11px] text-cyan-100"
                 >
                   {enemyName}
                 </span>

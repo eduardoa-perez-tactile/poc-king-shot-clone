@@ -19,7 +19,7 @@ export const BuildOptionCard: React.FC<{
     <Card
       className={[
         'flex h-full flex-col justify-between gap-3 p-4 transition',
-        isLocked ? 'border-white/5 bg-slate-900/50 opacity-70' : 'hover:-translate-y-0.5 hover:border-white/20 hover:shadow-lift'
+        isLocked ? 'border-white/5 bg-slate-900 opacity-70' : 'hover:-translate-y-0.5 hover:border-white/20 hover:shadow-lift'
       ].join(' ')}
     >
       <div>
