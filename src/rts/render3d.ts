@@ -45,10 +45,6 @@ const LABEL_TEXTURE_SIZE = 384
 const DAMAGE_LABEL_FONT = 96
 const DAMAGE_LABEL_SCALE = 1.5
 const PROJECTILE_SCALE = 3
-const BUILDING_LABEL_FONT = 112
-const BUILDING_LABEL_SCALE = 3.1
-const UNIT_LABEL_FONT = 124
-const UNIT_LABEL_SCALE = 2.6
 const TRAIT_ICON_FONT = 102
 const TRAIT_ICON_SCALE = 1.45
 const ELITE_ICON_FONT = 98
@@ -220,38 +216,6 @@ const getGroupColor = (team: EntityState['team'], kind: EntityState['kind']) => 
   return Color3.FromHexString('#94a3b8')
 }
 
-const buildLabelMap = (sim: SimState) => {
-  const labelMap = new Map<string, string>()
-  const grouped: Record<'infantry' | 'archer' | 'cavalry' | 'hero', EntityState[]> = {
-    infantry: [],
-    archer: [],
-    cavalry: [],
-    hero: []
-  }
-  sim.entities.forEach((entity) => {
-    if (entity.kind === 'hq') return
-    if (entity.team === 'player') {
-      if (entity.kind === 'hero') grouped.hero.push(entity)
-      if (entity.kind === 'infantry') grouped.infantry.push(entity)
-      if (entity.kind === 'archer') grouped.archer.push(entity)
-      if (entity.kind === 'cavalry') grouped.cavalry.push(entity)
-    } else if (entity.tier === 'boss' || entity.tier === 'miniBoss') {
-      if (entity.idLabel) labelMap.set(entity.id, entity.idLabel)
-    }
-  })
-
-  ;(Object.keys(grouped) as Array<keyof typeof grouped>).forEach((key) => {
-    const list = grouped[key].sort((a, b) => a.id.localeCompare(b.id))
-    list.forEach((entity, index) => {
-      if (!entity.idLabel) return
-      const label = list.length > 1 ? `${entity.idLabel}${index + 1}` : entity.idLabel
-      labelMap.set(entity.id, label)
-    })
-  })
-
-  return labelMap
-}
-
 const getHeroVfxType = (entity?: EntityState): HeroVfxType => {
   if (!entity || entity.kind !== 'hero') return 'unknown'
   if (entity.heroId === 'mage' || entity.heroId === 'golem' || entity.heroId === 'dragon') return entity.heroId
@@ -358,11 +322,9 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
   let obstacles: AbstractMesh[] = []
   const padMeshes = new Map<string, Mesh>()
   const buildingMeshes = new Map<string, BuildingVisualInstance | BuildingPrimitiveVisual>()
-  const buildingLabels = new Map<string, LabelMesh>()
   const unitGroups = new Map<UnitGroupKey, ThinGroup>()
   const specialMeshes = new Map<string, SpecialUnitVisual>()
   const primitiveUnitMeshes = new Map<string, UnitPrimitiveVisual>()
-  const labelMeshes = new Map<string, LabelMesh>()
   const traitIconMeshes = new Map<string, LabelMesh>()
   const eliteIconMeshes = new Map<string, LabelMesh>()
   const hudAnchors = new Map<string, TransformNode>()
@@ -449,6 +411,8 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     const instance = primitiveMode
       ? primitiveFactory.createBuildingPrimitive(buildingId, PAD_SIZE, level, padId)
       : buildingFactory.create(buildingId, PAD_SIZE, level, padId)
+    if ('label' in instance) instance.label.setEnabled(false)
+    if ('levelBadge' in instance) instance.levelBadge.mesh.setEnabled(false)
     const pickMesh = 'mesh' in instance ? instance.mesh : instance.basePlate
     pickMesh.isPickable = true
     pickMesh.metadata = { kind: 'building', padId } as PickMeta
@@ -497,24 +461,6 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     const group: ThinGroup = { mesh, ids: [], matrices: new Float32Array(0), colors: new Float32Array(0), capacity: 0, baseColor: color }
     unitGroups.set(key, group)
     return group
-  }
-
-  const ensureBuildingLabel = (padId: string) => {
-    if (buildingLabels.has(padId)) return buildingLabels.get(padId)!
-    const { mesh, texture } = createLabel(scene, `building_label_${padId}`)
-    mesh.scaling = new Vector3(BUILDING_LABEL_SCALE, BUILDING_LABEL_SCALE, BUILDING_LABEL_SCALE)
-    const entry = { mesh, texture, text: '' }
-    buildingLabels.set(padId, entry)
-    return entry
-  }
-
-  const ensureUnitLabel = (id: string) => {
-    if (labelMeshes.has(id)) return labelMeshes.get(id)!
-    const { mesh, texture } = createLabel(scene, `label_${id}`)
-    mesh.scaling = new Vector3(UNIT_LABEL_SCALE, UNIT_LABEL_SCALE, UNIT_LABEL_SCALE)
-    const entry = { mesh, texture, text: '' }
-    labelMeshes.set(id, entry)
-    return entry
   }
 
   const ensureTraitIcon = (id: string) => {
@@ -594,21 +540,21 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     return node
   }
 
-  const ensureHudUnit = (entity: EntityState, anchor: TransformNode): UnitHudInternal => {
-    const existing = hudUnits.get(entity.id)
+  const ensureHudUnit = (id: string, mesh: Mesh | TransformNode): UnitHudInternal => {
+    const existing = hudUnits.get(id)
     if (existing) {
-      existing.mesh = anchor
+      existing.mesh = mesh
       return existing
     }
     const next: UnitHudInternal = {
-      id: entity.id,
-      typeName: entity.typeName,
-      level: entity.level,
-      hp: entity.hp,
-      hpMax: entity.maxHp,
-      isAlive: entity.hp > 0,
-      mesh: anchor,
-      hudOffsetY: entity.hudOffsetY,
+      id,
+      typeName: '',
+      level: 1,
+      hp: 0,
+      hpMax: 1,
+      isAlive: false,
+      mesh,
+      hudOffsetY: 0,
       isSelected: false,
       _frameToken: -1,
       _worldPos: new Vector3(),
@@ -618,28 +564,92 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
         return next._worldPos
       }
     }
-    hudUnits.set(entity.id, next)
+    hudUnits.set(id, next)
     return next
   }
 
-  const updateHudUnits = (sim: SimState, selection: string[]) => {
+  const updateHudUnits = (sim: SimState, selection: string[], overlays: Render3DOverlays) => {
     activeHudUnits.length = 0
     hudFrameToken += 1
+    const selectedUnits = new Set(selection)
+    const selectedBuildingKey = overlays.selectedPadId ? `building:${overlays.selectedPadId}` : null
+    const touchHud = (
+      id: string,
+      mesh: Mesh | TransformNode,
+      typeName: string,
+      level: number,
+      hp: number,
+      hpMax: number,
+      hudOffsetY: number,
+      isSelected: boolean
+    ) => {
+      const unit = ensureHudUnit(id, mesh)
+      unit.typeName = typeName
+      unit.level = Math.max(1, Math.floor(level))
+      unit.hp = hp
+      unit.hpMax = hpMax
+      unit.hudOffsetY = hudOffsetY
+      unit.isAlive = hp > 0
+      unit.isSelected = isSelected
+      unit._frameToken = hudFrameToken
+      activeHudUnits.push(unit)
+    }
 
     sim.entities.forEach((entity) => {
       if (!shouldShowUnitHud(entity)) return
       const anchor = ensureHudAnchor(entity.id)
       anchor.position.set(entity.pos.x, 0, entity.pos.y)
-      const unit = ensureHudUnit(entity, anchor)
-      unit.typeName = entity.typeName
-      unit.level = Math.max(1, Math.floor(entity.level))
-      unit.hp = entity.hp
-      unit.hpMax = entity.maxHp
-      unit.hudOffsetY = entity.hudOffsetY
-      unit.isAlive = entity.hp > 0
-      unit.isSelected = selection.includes(entity.id)
-      unit._frameToken = hudFrameToken
-      activeHudUnits.push(unit)
+      touchHud(
+        entity.id,
+        anchor,
+        entity.typeName,
+        entity.level,
+        entity.hp,
+        entity.maxHp,
+        entity.hudOffsetY,
+        selectedUnits.has(entity.id)
+      )
+    })
+
+    const hq = sim.entities.find((entity) => entity.kind === 'hq')
+    if (hq) {
+      const anchor = ensureHudAnchor(hq.id)
+      anchor.position.set(hq.pos.x, 0, hq.pos.y)
+      touchHud(
+        hq.id,
+        anchor,
+        hq.typeName,
+        hq.level,
+        hq.hp,
+        hq.maxHp,
+        hq.hudOffsetY,
+        false
+      )
+    }
+
+    const buildingByPad = new Map(overlays.buildings.map((entry) => [entry.padId, entry]))
+    const activeWallPads = new Set(
+      sim.entities
+        .filter((entry) => entry.kind === 'wall' && entry.hp > 0 && entry.structurePadId)
+        .map((entry) => entry.structurePadId as string)
+    )
+    overlays.pads.forEach((pad) => {
+      const building = buildingByPad.get(pad.id)
+      if (!building) return
+      if (building.id === 'wall' && !activeWallPads.has(pad.id)) return
+      const visual = buildingMeshes.get(pad.id)
+      if (!visual) return
+      const id = `building:${pad.id}`
+      touchHud(
+        id,
+        visual.root,
+        BUILDING_DEFS[building.id].name,
+        building.level,
+        building.hp,
+        building.maxHp,
+        Math.max(18, visual.height + 10),
+        selectedBuildingKey === id
+      )
     })
 
     hudUnits.forEach((entry, id) => {
@@ -754,34 +764,6 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     invasionMarkerGroup.mesh.thinInstanceSetBuffer('color', invasionMarkerGroup.colors, 4, false)
     invasionMarkerGroup.mesh.thinInstanceCount = count
     invasionMarkerGroup.mesh.thinInstanceRefreshBoundingInfo(true)
-  }
-
-  const updateLabels = (sim: SimState, showLabels: boolean) => {
-    if (primitiveMode) {
-      labelMeshes.forEach((entry) => entry.mesh.setEnabled(false))
-      return
-    }
-    if (!showLabels) {
-      labelMeshes.forEach((entry) => entry.mesh.setEnabled(false))
-      return
-    }
-    const labelMap = buildLabelMap(sim)
-    const activeIds = new Set<string>()
-    labelMap.forEach((label, id) => {
-      const entity = sim.entities.find((entry) => entry.id === id)
-      if (!entity) return
-      const entry = ensureUnitLabel(id)
-      activeIds.add(id)
-      if (entry.text !== label) {
-        drawLabel(entry.texture, label, '#f8fafc', UNIT_LABEL_FONT)
-        entry.text = label
-      }
-      entry.mesh.position = new Vector3(entity.pos.x, entity.radius + 12, entity.pos.y)
-      entry.mesh.setEnabled(true)
-    })
-    labelMeshes.forEach((entry, id) => {
-      if (!activeIds.has(id)) entry.mesh.setEnabled(false)
-    })
   }
 
   const updateTraitIcons = (sim: SimState) => {
@@ -996,6 +978,7 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
         activeIds.add(entity.id)
         visual.mesh.position.set(entity.pos.x, visual.height / 2, entity.pos.y)
         visual.setEnabled(true)
+        visual.label.setEnabled(false)
       })
       primitiveUnitMeshes.forEach((mesh, id) => {
         if (!activeIds.has(id)) {
@@ -1056,24 +1039,11 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
         instance.root.rotation.y = pad.rotation ?? 0
         instance.setLevel(building.level)
         instance.setEnabled(true)
-        if (!primitiveMode) {
-          const label = ensureBuildingLabel(pad.id)
-          const name = BUILDING_DEFS[building.id].name
-          if (label.text !== name) {
-            drawLabel(label.texture, name, '#e2e8f0', BUILDING_LABEL_FONT)
-            label.text = name
-          }
-          label.mesh.position = new Vector3(pad.x, instance.height + 18, pad.y)
-          label.mesh.setEnabled(true)
-        } else {
-          const label = buildingLabels.get(pad.id)
-          if (label) label.mesh.setEnabled(false)
-        }
+        if ('label' in instance) instance.label.setEnabled(false)
+        if ('levelBadge' in instance) instance.levelBadge.mesh.setEnabled(false)
       } else {
         const mesh = buildingMeshes.get(pad.id)
         if (mesh) mesh.setEnabled(false)
-        const label = buildingLabels.get(pad.id)
-        if (label) label.mesh.setEnabled(false)
       }
     })
     buildingMeshes.forEach((mesh, padId) => {
@@ -1081,13 +1051,6 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
         mesh.setEnabled(false)
       }
     })
-    if (!primitiveMode) {
-      buildingLabels.forEach((label, padId) => {
-        if (!activeBuildingPads.has(padId)) {
-          label.mesh.setEnabled(false)
-        }
-      })
-    }
   }
 
   const updateHqHover = (sim: SimState, hovered: boolean | undefined) => {
@@ -1187,10 +1150,9 @@ export const initRenderer3D = (canvas: HTMLCanvasElement, map: SimState['combat'
     updateProjectiles(input.sim.projectiles)
     updateSelection(input.sim, input.selection)
     updateRanges(input.sim, input.selection, input.overlays.selectedPadId)
-    updateHudUnits(input.sim, input.selection)
+    updateHudUnits(input.sim, input.selection, input.overlays)
     updateInvasionIndicators(input.overlays.nextBattlePreview, input.phase, input.sim.time)
     updateHqHover(input.sim, input.overlays.hoveredHq)
-    updateLabels(input.sim, Boolean(input.options?.showLabels))
     updateTraitIcons(input.sim)
     updateEliteIcons(input.sim)
     updateDamageNumbers(input.sim)
