@@ -1,0 +1,4 @@
+interface:
+  display_name: "Level Balance Tuning"
+  short_description: "Tune level economy, waves, and progression safely"
+  default_prompt: "Balance mission pacing and economy while preserving data-driven systems."

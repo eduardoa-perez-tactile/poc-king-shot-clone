@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dashboard Level Tooling"
+  short_description: "Build and maintain level dashboard editing workflows"
+  default_prompt: "Implement this dashboard workflow change while preserving validation, persistence, and playtest safety."
