@@ -1,0 +1,4 @@
+interface:
+  display_name: "HUD Feature Delivery"
+  short_description: "Ship HUD features with safe phase and state wiring"
+  default_prompt: "Implement the HUD change with clear phase gating, responsive behavior, and verification."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Wave Spawn Debugging"
+  short_description: "Debug border spawn transforms and invasion preview"
+  default_prompt: "Trace and fix spawn-edge behavior from level data to preview rendering."
